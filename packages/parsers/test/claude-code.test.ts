@@ -68,7 +68,7 @@ describe("scanClaudeCodeLogs", () => {
     expect(e.metadata.origin?.client).toBe("claude-vscode");
   });
 
-  it("skips non-assistant lines, synthetic models, malformed JSON, and missing requestId", async () => {
+  it("skips non-assistant lines, synthetic models, malformed JSON, missing requestId, and missing usage block", async () => {
     const base = await makeBase();
     const synthetic = JSON.parse(ASSISTANT_LINE);
     synthetic.requestId = "req_syn";
@@ -80,6 +80,12 @@ describe("scanClaudeCodeLogs", () => {
       "not json {{{",
       JSON.stringify(synthetic),
       JSON.stringify(noRequestId),
+      JSON.stringify({
+        type: "assistant",
+        requestId: "req_nousage",
+        timestamp: "2026-06-01T12:00:00.000Z",
+        message: { model: "claude-opus-4-8" },
+      }),
       ASSISTANT_LINE,
     ]);
 
@@ -92,11 +98,13 @@ describe("scanClaudeCodeLogs", () => {
     const base = await makeBase();
     await writeSession(base, "p", "a.jsonl", [ASSISTANT_LINE]);
 
-    // File mtime is "now" (newer than since), so the file IS read; the
-    // event itself is then excluded by its timestamp.
+    // `since` is 1s in the future: the fixture's mtime is "now" so the file
+    // is skipped by the mtime guard, and even if it were read, the event's
+    // 2026-06-01 timestamp fails `occurredAt > since`. Either path must
+    // yield zero events, with no dependence on what year the test runs in.
     const events = await scanClaudeCodeLogs({
       basePath: base,
-      since: new Date("2026-06-02T00:00:00Z"),
+      since: new Date(Date.now() + 1000),
     });
 
     expect(events).toHaveLength(0);
@@ -104,7 +112,7 @@ describe("scanClaudeCodeLogs", () => {
 
   it("returns [] when the base path does not exist", async () => {
     const events = await scanClaudeCodeLogs({
-      basePath: join(tmpdir(), "centrail-definitely-missing"),
+      basePath: join(await makeBase(), "nested-missing"),
     });
     expect(events).toEqual([]);
   });
@@ -117,6 +125,21 @@ describe("scanClaudeCodeLogs", () => {
     const events = await scanClaudeCodeLogs({ basePath: base });
 
     expect(events).toEqual([]);
+  });
+
+  it("defaults the 5m/1h cache split to 0 when cache_creation is absent", async () => {
+    const base = await makeBase();
+    const line = JSON.parse(ASSISTANT_LINE);
+    line.requestId = "req_nosplit";
+    delete line.message.usage.cache_creation;
+    await writeSession(base, "p", "a.jsonl", [JSON.stringify(line)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].cacheCreationTokens).toBe(300);
+    expect(events[0].cacheCreation5mTokens).toBe(0);
+    expect(events[0].cacheCreation1hTokens).toBe(0);
   });
 });
 
