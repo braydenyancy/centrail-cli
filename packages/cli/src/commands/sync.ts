@@ -1,9 +1,18 @@
 import {
+  matchEventsToCommits,
+  type AttributionEvent,
+  type EventAttribution,
   type ParsedUsageEvent,
   readClaudeCodeAccount,
   scanClaudeCodeLogs,
 } from "@centrail/parsers";
-import { readAuth, readState, writeState } from "../config.js";
+import { readAuth, readConfig, readState, writeState } from "../config.js";
+import {
+  readRepoCommits,
+  readRepoSize,
+  repoName,
+  resolveRepoRoot,
+} from "../git.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
@@ -102,6 +111,8 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
 
   await writeState({ lastSyncAt: startedAt.toISOString() });
 
+  await pushAttributions(auth, events);
+
   console.log(
     `Scanned ${events.length} · Inserted ${inserted} · Skipped ${skipped}` +
       (inboxCount > 0 ? ` · ${inboxCount} to review in Inbox` : ""),
@@ -110,4 +121,103 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
 
 function serializeEvent(e: ParsedUsageEvent): Record<string, unknown> {
   return { ...e, occurredAt: e.occurredAt.toISOString() };
+}
+
+type WireAttribution = {
+  externalId: string;
+  repoName: string;
+  commitSha: string;
+  committedAt: string;
+  branch: string | null;
+  linesAdded: number;
+  linesDeleted: number;
+  filesChanged: number;
+};
+
+// Group events by cwd -> repo, match each repo's events to its commits, and
+// POST the mapping. Git history never leaves the machine; only the derived
+// rows do. Failures here are logged, not thrown — attribution is best-effort
+// and must never brick a successful event sync.
+async function pushAttributions(
+  auth: { baseUrl: string; token: string },
+  events: ParsedUsageEvent[],
+): Promise<void> {
+  const config = await readConfig();
+  const deny = new Set(config.denyRepos);
+
+  // Bucket events by cwd; resolve each distinct cwd to a repo root once.
+  const byCwd = new Map<string, ParsedUsageEvent[]>();
+  for (const e of events) {
+    const cwd = e.metadata.cwd;
+    if (!cwd) continue;
+    (byCwd.get(cwd) ?? byCwd.set(cwd, []).get(cwd)!).push(e);
+  }
+
+  // repoRoot -> { name, events }
+  const byRepo = new Map<
+    string,
+    { name: string; events: ParsedUsageEvent[] }
+  >();
+  for (const [cwd, cwdEvents] of byCwd) {
+    const root = await resolveRepoRoot(cwd);
+    if (!root) continue;
+    const name = repoName(root);
+    if (deny.has(name)) continue;
+    const bucket = byRepo.get(root) ?? { name, events: [] };
+    bucket.events.push(...cwdEvents);
+    byRepo.set(root, bucket);
+  }
+  if (byRepo.size === 0) return;
+
+  const repos: { name: string; totalLoc: number | null; fileCount: number }[] = [];
+  const attributions: WireAttribution[] = [];
+
+  for (const [root, { name, events: repoEvents }] of byRepo) {
+    const commits = await readRepoCommits(root);
+    const size = await readRepoSize(root);
+    repos.push({ name, totalLoc: size.totalLoc, fileCount: size.fileCount });
+
+    const input: AttributionEvent[] = repoEvents.map((e) => ({
+      externalId: e.externalId,
+      occurredAt: e.occurredAt,
+    }));
+    const matched: EventAttribution[] = matchEventsToCommits(input, commits);
+    // gitBranch is per-event; look it up from the first event with that id.
+    const branchByExternalId = new Map(
+      repoEvents.map((e) => [e.externalId, e.metadata.gitBranch ?? null]),
+    );
+    for (const m of matched) {
+      attributions.push({
+        externalId: m.externalId,
+        repoName: name,
+        commitSha: m.sha,
+        committedAt: m.committedAt.toISOString(),
+        branch: branchByExternalId.get(m.externalId) ?? null,
+        linesAdded: m.linesAdded,
+        linesDeleted: m.linesDeleted,
+        filesChanged: m.filesChanged,
+      });
+    }
+  }
+
+  if (attributions.length === 0) return;
+
+  try {
+    const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${auth.token}`,
+      },
+      body: JSON.stringify({ repos, attributions }),
+    });
+    if (res.ok) {
+      const r = (await res.json()) as { linked: number };
+      console.log(`  ↳ Attributed ${r.linked} event(s) to commits.`);
+    } else {
+      console.warn(`  ⚠ Attribution skipped (${res.status}).`);
+    }
+  } catch (err) {
+    console.warn("  ⚠ Attribution request failed:", (err as Error).message);
+  }
 }
