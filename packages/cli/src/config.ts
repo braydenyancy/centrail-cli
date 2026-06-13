@@ -41,7 +41,9 @@ export async function readAuth(): Promise<AuthConfig | null> {
 
 export async function writeAuth(auth: AuthConfig): Promise<void> {
   await mkdir(CONFIG_DIR, { recursive: true });
-  await writeFile(AUTH_PATH, `${JSON.stringify(auth, null, 2)}\n`);
+  await writeFile(AUTH_PATH, `${JSON.stringify(auth, null, 2)}\n`, {
+    mode: 0o600,
+  });
   await chmod(AUTH_PATH, 0o600); // contains the bearer token
 }
 

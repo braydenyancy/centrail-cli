@@ -5,7 +5,9 @@ import {
 } from "@centrail/parsers";
 import { readAuth, readState, writeState } from "../config.js";
 
-const BATCH_SIZE = 500;
+// 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
+// events stays far below the 2MB body limit.
+const BATCH_SIZE = 250;
 
 type IngestResponse = {
   inserted: number;
@@ -24,7 +26,25 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
     !opts.full && state.lastSyncAt ? new Date(state.lastSyncAt) : undefined;
   const startedAt = new Date();
 
-  const events = await scanClaudeCodeLogs({ since });
+  const scanned = await scanClaudeCodeLogs({ since });
+
+  // Drop events the server would reject (clock-skewed or corrupt log lines)
+  // — one bad timestamp must not 400 the batch and brick sync forever.
+  const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
+  const maxOccurredAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const events = scanned.filter(
+    (e) =>
+      e.externalId.length > 0 &&
+      e.occurredAt >= minOccurredAt &&
+      e.occurredAt <= maxOccurredAt,
+  );
+  const dropped = scanned.length - events.length;
+  if (dropped > 0) {
+    console.warn(
+      `  ⚠ Skipped ${dropped} event${dropped === 1 ? "" : "s"} with out-of-range timestamps (corrupt or clock-skewed log lines).`,
+    );
+  }
+
   if (events.length === 0) {
     console.log(
       since
