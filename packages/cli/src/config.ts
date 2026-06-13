@@ -65,3 +65,31 @@ export async function writeState(state: SyncState): Promise<void> {
   await mkdir(CONFIG_DIR, { recursive: true });
   await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
 }
+
+const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+
+export type Config = {
+  denyRepos: string[]; // repo names (basenames) to never attribute
+};
+
+export async function readConfig(): Promise<Config> {
+  try {
+    const raw = JSON.parse(await readFile(CONFIG_PATH, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    const denyRepos = Array.isArray(raw.denyRepos)
+      ? raw.denyRepos.filter((r): r is string => typeof r === "string")
+      : [];
+    return { denyRepos };
+  } catch {
+    return { denyRepos: [] };
+  }
+}
+
+export async function addDenyRepo(name: string): Promise<void> {
+  const cfg = await readConfig();
+  if (!cfg.denyRepos.includes(name)) cfg.denyRepos.push(name);
+  await mkdir(CONFIG_DIR, { recursive: true });
+  await writeFile(CONFIG_PATH, `${JSON.stringify(cfg, null, 2)}\n`);
+}
