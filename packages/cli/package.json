@@ -1,0 +1,20 @@
+{
+  "name": "centrail",
+  "version": "0.1.0",
+  "description": "Sync your local AI agent usage (Claude Code) to centrail.org.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": { "centrail": "./dist/index.js" },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@centrail/parsers": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
