@@ -184,7 +184,7 @@ async function pushAttributions(
     const matched: EventAttribution[] = matchEventsToCommits(input, commits);
     // gitBranch is per-event; look it up from the first event with that id.
     const branchByExternalId = new Map(
-      repoEvents.map((e) => [e.externalId, e.metadata.gitBranch ?? null]),
+      repoEvents.map((e) => [e.externalId, e.metadata.gitBranch || null]),
     );
     for (const m of matched) {
       attributions.push({
@@ -202,20 +202,31 @@ async function pushAttributions(
 
   if (attributions.length === 0) return;
 
+  // Chunk attributions to stay under the server's 2000-per-batch cap.
+  // All repos are included in every chunk (small, referenced by attributions).
+  const ATTR_CHUNK = 1000;
+  let totalLinked = 0;
   try {
-    const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${auth.token}`,
-      },
-      body: JSON.stringify({ repos, attributions }),
-    });
-    if (res.ok) {
-      const r = (await res.json()) as { linked: number };
-      console.log(`  ↳ Attributed ${r.linked} event(s) to commits.`);
-    } else {
-      console.warn(`  ⚠ Attribution skipped (${res.status}).`);
+    for (let i = 0; i < attributions.length; i += ATTR_CHUNK) {
+      const chunk = attributions.slice(i, i + ATTR_CHUNK);
+      const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({ repos, attributions: chunk }),
+      });
+      if (res.ok) {
+        const r = (await res.json()) as { linked: number };
+        totalLinked += r.linked;
+      } else {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        console.warn(`  ⚠ Attribution chunk skipped (${res.status})${body?.error ? `: ${body.error}` : ""}.`);
+      }
+    }
+    if (totalLinked > 0) {
+      console.log(`  ↳ Attributed ${totalLinked} event(s) to commits.`);
     }
   } catch (err) {
     console.warn("  ⚠ Attribution request failed:", (err as Error).message);
