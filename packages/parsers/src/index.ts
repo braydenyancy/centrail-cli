@@ -3,7 +3,7 @@ export {
   scanClaudeCodeLogs,
   type ClaudeCodeAccount,
   type ParsedUsageEvent,
-} from "./claude-code.js";
+} from "./providers/claude-code.js";
 
 export {
   matchEventsToCommits,
@@ -11,4 +11,4 @@ export {
   type AttributionEvent,
   type EventAttribution,
   type RepoCommit,
-} from "./git-attribution.js";
+} from "./providers/git-attribution.js";
