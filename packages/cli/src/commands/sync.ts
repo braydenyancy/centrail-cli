@@ -8,6 +8,7 @@ import {
 } from "@centrail/parsers";
 import { readAuth, readConfig, readState, writeState } from "../config.js";
 import { versionHeaders } from "../version.js";
+import { assertSecureBaseUrl } from "../url.js";
 import {
   readRepoCommits,
   readRepoSize,
@@ -30,6 +31,7 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   if (!auth) {
     throw new Error("Not connected — run `centrail connect` first");
   }
+  assertSecureBaseUrl(auth.baseUrl);
 
   const state = await readState();
   const since =

@@ -3,6 +3,7 @@ import { homedir, hostname, platform } from "node:os";
 import { join } from "node:path";
 import { writeAuth } from "../config.js";
 import { versionHeaders } from "../version.js";
+import { assertSecureBaseUrl } from "../url.js";
 
 const DEFAULT_BASE_URL = "https://centrail.org";
 
@@ -18,6 +19,7 @@ type PollResponse = { status: string; token?: string };
 
 export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  assertSecureBaseUrl(baseUrl);
 
   const res = await fetch(`${baseUrl}/api/cli/pair`, {
     method: "POST",
