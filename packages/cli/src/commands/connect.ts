@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { homedir, hostname, platform } from "node:os";
 import { join } from "node:path";
 import { writeAuth } from "../config.js";
+import { versionHeaders } from "../version.js";
 
 const DEFAULT_BASE_URL = "https://centrail.org";
 
@@ -20,7 +21,7 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
 
   const res = await fetch(`${baseUrl}/api/cli/pair`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...versionHeaders() },
     body: JSON.stringify({ hostname: hostname(), platform: platform() }),
   });
   if (!res.ok) {
@@ -44,7 +45,7 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
     try {
       poll = await fetch(`${baseUrl}/api/cli/pair/poll`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...versionHeaders() },
         body: JSON.stringify({ pollToken: pair.pollToken }),
       });
     } catch {

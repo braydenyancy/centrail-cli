@@ -7,6 +7,7 @@ import {
   scanClaudeCodeLogs,
 } from "@centrail/parsers";
 import { readAuth, readConfig, readState, writeState } from "../config.js";
+import { versionHeaders } from "../version.js";
 import {
   readRepoCommits,
   readRepoSize,
@@ -79,6 +80,7 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${auth.token}`,
+        ...versionHeaders(),
       },
       body: JSON.stringify({
         source: { provider: "anthropic", kind: "local_logs" },
@@ -214,6 +216,7 @@ async function pushAttributions(
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${auth.token}`,
+          ...versionHeaders(),
         },
         body: JSON.stringify({ repos, attributions: chunk }),
       });
