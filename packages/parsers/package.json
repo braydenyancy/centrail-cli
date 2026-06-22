@@ -1,7 +1,7 @@
 {
   "name": "@centrail/parsers",
   "version": "0.1.0",
-  "description": "Local agent-CLI usage log parsers (Claude Code JSONL).",
+  "description": "Local AI coding-agent usage log parsers (Claude Code JSONL, GitHub Copilot CLI sessions).",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,7 +1,7 @@
 {
   "name": "centrail",
   "version": "0.1.0",
-  "description": "Sync your local AI agent usage (Claude Code) to centrail.org.",
+  "description": "Sync your local AI coding-agent usage (Claude Code, GitHub Copilot CLI) to centrail.org.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": { "centrail": "./dist/index.js" },
