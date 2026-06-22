@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 export type ParsedUsageEvent = {
   externalId: string; // Anthropic request id, used for dedup
-  provider: "anthropic";
+  provider: string;
   model: string;
   inputTokens: number;
   outputTokens: number;
