@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
-import { homedir, hostname, platform } from "node:os";
-import { join } from "node:path";
+import { hostname, platform } from "node:os";
+import { claudeProjectDirs } from "@centrail/parsers";
 import { writeAuth } from "../config.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
@@ -77,15 +77,25 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
 }
 
 async function reportDetectedLogs(): Promise<void> {
-  const dir = join(homedir(), ".claude", "projects");
-  try {
-    const entries = await readdir(dir);
+  const dirs = claudeProjectDirs();
+  const found: string[] = [];
+  let total = 0;
+  for (const dir of dirs) {
+    try {
+      const entries = await readdir(dir);
+      found.push(dir);
+      total += entries.length;
+    } catch {
+      // missing dir — skip
+    }
+  }
+  if (found.length > 0) {
     console.log(
-      `  ✓ Found Claude Code logs: ~/.claude/projects (${entries.length} project folders)`,
+      `  ✓ Found Claude Code logs: ${found.join(", ")} (${total} project folders)`,
     );
-  } catch {
+  } else {
     console.log(
-      "  ⚠ No Claude Code logs found at ~/.claude/projects — nothing to sync yet.",
+      `  ⚠ No Claude Code logs found (looked in ${dirs.join(", ")}) — nothing to sync yet.`,
     );
   }
 }

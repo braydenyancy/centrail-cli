@@ -1,8 +1,13 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { readClaudeCodeAccount, scanClaudeCodeLogs } from "../src/index.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  readClaudeCodeAccount,
+  scanClaudeCodeLogs,
+  claudeConfigDirs,
+  claudeProjectDirs,
+} from "../src/index.js";
 
 const ASSISTANT_LINE = JSON.stringify({
   type: "assistant",
@@ -175,5 +180,41 @@ describe("readClaudeCodeAccount", () => {
     const file = join(base, "claude.json");
     await writeFile(file, JSON.stringify({ somethingElse: true }));
     expect(await readClaudeCodeAccount(file)).toBeNull();
+  });
+});
+
+describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
+  const ORIG = process.env.CLAUDE_CONFIG_DIR;
+  afterEach(() => {
+    if (ORIG === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = ORIG;
+  });
+
+  it("defaults to ~/.claude and ~/.config/claude when unset", () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const dirs = claudeProjectDirs();
+    expect(dirs.some((d) => d.endsWith(join(".claude", "projects")))).toBe(true);
+    expect(dirs.some((d) => d.endsWith(join(".config", "claude", "projects")))).toBe(true);
+  });
+
+  it("honors CLAUDE_CONFIG_DIR, comma-separated and trimmed", () => {
+    process.env.CLAUDE_CONFIG_DIR = "/a/x ,  /b/y";
+    expect(claudeConfigDirs()).toEqual(["/a/x", "/b/y"]);
+    expect(claudeProjectDirs()).toEqual([
+      join("/a/x", "projects"),
+      join("/b/y", "projects"),
+    ]);
+  });
+
+  it("scanClaudeCodeLogs with no basePath reads from CLAUDE_CONFIG_DIR", async () => {
+    const cfg = await makeBase();
+    await writeSession(join(cfg, "projects"), "-Users-dev-myrepo", "a.jsonl", [
+      ASSISTANT_LINE,
+    ]);
+    process.env.CLAUDE_CONFIG_DIR = cfg;
+
+    const events = await scanClaudeCodeLogs({});
+
+    expect(events.map((e) => e.externalId)).toEqual(["req_001"]);
   });
 });

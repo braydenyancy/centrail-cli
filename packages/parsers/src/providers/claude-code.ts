@@ -47,15 +47,41 @@ export type ClaudeCodeAccount = {
   billingType?: string;
 };
 
-const DEFAULT_BASE_PATH = join(homedir(), ".claude", "projects");
-const ACCOUNT_FILE = join(homedir(), ".claude.json");
+// Claude Code stores session logs under <config-dir>/projects and its account
+// under <config-dir>/.claude.json. The config dir defaults to ~/.claude, but can
+// be relocated via CLAUDE_CONFIG_DIR (comma-separated for multi-account setups),
+// and some installs use ~/.config/claude. We resolve every candidate and read
+// each that exists — mirroring how Claude Code and ccusage locate the config.
+export function claudeConfigDirs(): string[] {
+  const env = process.env.CLAUDE_CONFIG_DIR;
+  if (env && env.trim()) {
+    return env
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [join(homedir(), ".claude"), join(homedir(), ".config", "claude")];
+}
 
-// Reads the currently-logged-in Claude Code account from ~/.claude.json.
-// Returns null if the file doesn't exist, can't be parsed, or has no
-// oauthAccount block (e.g. Claude Code was never signed in here).
-export async function readClaudeCodeAccount(
-  filePath: string = ACCOUNT_FILE,
-): Promise<ClaudeCodeAccount | null> {
+export function claudeProjectDirs(): string[] {
+  return claudeConfigDirs().map((d) => join(d, "projects"));
+}
+
+// Account-file candidates: <config-dir>/.claude.json when CLAUDE_CONFIG_DIR is
+// set, plus the classic ~/.claude.json (a sibling of ~/.claude, not inside it).
+function claudeAccountFiles(): string[] {
+  const env = process.env.CLAUDE_CONFIG_DIR;
+  const files: string[] = [];
+  if (env && env.trim()) {
+    for (const d of env.split(",").map((s) => s.trim()).filter(Boolean)) {
+      files.push(join(d, ".claude.json"));
+    }
+  }
+  files.push(join(homedir(), ".claude.json"));
+  return files;
+}
+
+async function readAccountFile(filePath: string): Promise<ClaudeCodeAccount | null> {
   try {
     const content = await readFile(filePath, "utf-8");
     const json = JSON.parse(content) as Record<string, unknown>;
@@ -72,15 +98,47 @@ export async function readClaudeCodeAccount(
   }
 }
 
+// Reads the currently-logged-in Claude Code account. With no argument, tries the
+// resolved candidate files (CLAUDE_CONFIG_DIR-aware) and returns the first hit;
+// pass an explicit path to read just that file. Returns null if none have an
+// oauthAccount block (e.g. Claude Code was never signed in here).
+export async function readClaudeCodeAccount(
+  filePath?: string,
+): Promise<ClaudeCodeAccount | null> {
+  const candidates = filePath ? [filePath] : claudeAccountFiles();
+  for (const p of candidates) {
+    const acct = await readAccountFile(p);
+    if (acct) return acct;
+  }
+  return null;
+}
+
+// Scans Claude Code logs across all resolved config dirs (or a single
+// `basePath` when provided, for tests). Aggregates events; downstream
+// dedup-by-externalId absorbs any overlap between dirs.
 export async function scanClaudeCodeLogs(opts: {
   basePath?: string;
   since?: Date;
 }): Promise<ParsedUsageEvent[]> {
-  const basePath = opts.basePath ?? DEFAULT_BASE_PATH;
   const since = opts.since;
   const host = hostname();
   const plat = platform();
+  const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
 
+  const events: ParsedUsageEvent[] = [];
+  for (const base of bases) {
+    events.push(...(await scanProjectsDir(base, since, host, plat)));
+  }
+  return events;
+}
+
+// Scans one <config-dir>/projects directory. Missing dir → no events.
+async function scanProjectsDir(
+  basePath: string,
+  since: Date | undefined,
+  host: string,
+  plat: string,
+): Promise<ParsedUsageEvent[]> {
   let entries: string[];
   try {
     entries = await readdir(basePath);

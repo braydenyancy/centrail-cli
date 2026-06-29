@@ -1,8 +1,8 @@
 # centrail
 
-The Centrail CLI syncs your local AI coding-agent usage (Claude Code today) to
-your dashboard at [centrail.org](https://centrail.org) — so you can see what your
-AI costs in **dollars, commits, and carbon**.
+The Centrail CLI syncs your local AI coding-agent usage (Claude Code and GitHub
+Copilot CLI) to your dashboard at [centrail.org](https://centrail.org) — so you
+can see what your AI costs in **dollars, commits, and carbon**.
 
 ## Install & use
 
@@ -22,6 +22,20 @@ The CLI is **local-first**. It reads your agent's usage logs and computes git
 commit attribution **on your machine**, and sends only **derived counts** (tokens
 per model, timestamps, repo names, commit metadata). It never sends your source
 code, your prompts, your completions, or any secrets. See [SECURITY.md](./SECURITY.md).
+
+## Where it reads logs
+
+The CLI works on macOS, Linux, and Windows — it resolves every path from your
+home directory, so it isn't tied to Unix-style paths.
+
+- **Claude Code** — `~/.claude/projects` by default. It also checks
+  `~/.config/claude/projects`, and honors the **`CLAUDE_CONFIG_DIR`** environment
+  variable (comma-separated for multi-account setups), matching how Claude Code
+  itself and tools like [ccusage](https://ccusage.com) locate the config.
+- **GitHub Copilot CLI** — `~/.copilot/session-state`.
+
+Only token counts and metadata are read — never your code, prompts, or
+completions.
 
 ## Packages
 

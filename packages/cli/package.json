@@ -1,6 +1,6 @@
 {
   "name": "centrail",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Sync your local AI coding-agent usage (Claude Code, GitHub Copilot CLI) to centrail.org.",
   "license": "Apache-2.0",
   "type": "module",

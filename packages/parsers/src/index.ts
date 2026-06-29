@@ -9,6 +9,8 @@ import { scanCopilotLogs } from "./providers/copilot-cli.js";
 export {
   readClaudeCodeAccount,
   scanClaudeCodeLogs,
+  claudeConfigDirs,
+  claudeProjectDirs,
   type ClaudeCodeAccount,
   type ParsedUsageEvent,
 } from "./providers/claude-code.js";
