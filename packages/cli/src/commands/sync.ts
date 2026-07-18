@@ -44,8 +44,9 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   let grandSkipped = 0;
   let grandInbox = 0;
   let anyEvents = false;
-  // Keep Claude events for attribution (Copilot attribution is deferred).
-  let claudeEvents: ParsedUsageEvent[] = [];
+  // Claude and Codex expose reliable per-event cwd/timestamps. Copilot
+  // attribution remains deferred until its session semantics are proven.
+  const attributionEvents: ParsedUsageEvent[] = [];
 
   for (const scanner of SCANNERS) {
     const scanned = await scanner.scan({ since });
@@ -57,7 +58,9 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
     );
     if (events.length === 0) continue;
     anyEvents = true;
-    if (scanner.surface === "claude-code") claudeEvents = events;
+    if (scanner.surface === "claude-code" || scanner.surface === "codex") {
+      attributionEvents.push(...events);
+    }
 
     const account = scanner.readAccount ? await scanner.readAccount() : null;
 
@@ -96,15 +99,15 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
     console.log(
       since
         ? `No new events since ${since.toLocaleString()}.`
-        : "No agent usage found (Claude Code, Copilot CLI).",
+        : "No agent usage found (Claude Code, Copilot CLI, Codex).",
     );
     return;
   }
 
   await writeState({ lastSyncAt: startedAt.toISOString() });
 
-  if (claudeEvents.length > 0) {
-    await pushAttributions(auth, claudeEvents);
+  if (attributionEvents.length > 0) {
+    await pushAttributions(auth, attributionEvents);
   }
 
   console.log(

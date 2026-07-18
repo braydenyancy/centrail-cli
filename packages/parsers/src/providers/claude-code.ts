@@ -21,9 +21,9 @@ export type ParsedUsageEvent = {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
-  cacheCreationTokens: number; // total = 5m + 1h
-  cacheCreation5mTokens: number;
-  cacheCreation1hTokens: number;
+  cacheCreationTokens: number; // provider-reported cache writes
+  cacheCreation5mTokens: number; // primary write bucket; Anthropic 5m
+  cacheCreation1hTokens: number; // Anthropic 1h; 0 for providers without it
   occurredAt: Date;
   metadata: {
     cwd?: string;

@@ -1,7 +1,7 @@
 # centrail
 
-The Centrail CLI syncs your local AI coding-agent usage (Claude Code and GitHub
-Copilot CLI) to your dashboard at [centrail.org](https://centrail.org) — so you
+The Centrail CLI syncs your local AI coding-agent usage (Claude Code, GitHub
+Copilot CLI, and Codex) to your dashboard at [centrail.org](https://centrail.org) — so you
 can see what your AI costs in **dollars, commits, and carbon**.
 
 ## Install & use
@@ -33,6 +33,9 @@ home directory, so it isn't tied to Unix-style paths.
   variable (comma-separated for multi-account setups), matching how Claude Code
   itself and tools like [ccusage](https://ccusage.com) locate the config.
 - **GitHub Copilot CLI** — `~/.copilot/session-state`.
+- **Codex** — `$CODEX_HOME/sessions` (default `~/.codex/sessions`). The parser
+  reads only session/turn metadata and per-call token counts; message,
+  reasoning, and tool records are ignored.
 
 Only token counts and metadata are read — never your code, prompts, or
 completions.

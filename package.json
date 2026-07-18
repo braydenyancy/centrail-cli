@@ -2,7 +2,7 @@
   "name": "centrail-cli",
   "private": true,
   "version": "0.0.0",
-  "description": "Centrail CLI — sync local AI coding-agent usage (Claude Code, GitHub Copilot CLI) to centrail.org. Monorepo for the `centrail` bin and `@centrail/parsers`.",
+  "description": "Centrail CLI — sync local AI coding-agent usage (Claude Code, GitHub Copilot CLI, Codex) to centrail.org. Monorepo for the `centrail` bin and `@centrail/parsers`.",
   "license": "Apache-2.0",
   "type": "module",
   "workspaces": ["packages/*"],

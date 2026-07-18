@@ -5,6 +5,7 @@ import {
   type ParsedUsageEvent,
 } from "./providers/claude-code.js";
 import { scanCopilotLogs } from "./providers/copilot-cli.js";
+import { scanCodexLogs } from "./providers/codex.js";
 
 export {
   readClaudeCodeAccount,
@@ -16,6 +17,7 @@ export {
 } from "./providers/claude-code.js";
 
 export { scanCopilotLogs } from "./providers/copilot-cli.js";
+export { codexHomeDir, codexSessionsDir, scanCodexLogs } from "./providers/codex.js";
 
 export {
   matchEventsToCommits,
@@ -43,5 +45,9 @@ export const SCANNERS: Scanner[] = [
   {
     surface: "copilot-cli",
     scan: (opts) => scanCopilotLogs(opts),
+  },
+  {
+    surface: "codex",
+    scan: (opts) => scanCodexLogs(opts),
   },
 ];

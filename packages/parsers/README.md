@@ -1,6 +1,6 @@
 # @centrail/parsers
 
-Local AI agent-log parsers (Claude Code JSONL and GitHub Copilot CLI) plus the
+Local AI agent-log parsers (Claude Code, GitHub Copilot CLI, and Codex JSONL) plus the
 Centrail wire payload types shared between the [`centrail` CLI](https://www.npmjs.com/package/centrail)
 and the Centrail server.
 
