@@ -76,7 +76,8 @@ describe("scanCodexLogs", () => {
     expect(event.inputTokens).toBe(200);
     expect(event.cacheReadTokens).toBe(700);
     expect(event.cacheCreationTokens).toBe(100);
-    expect(event.cacheCreation5mTokens).toBe(100);
+    expect(event.cacheWriteTokens).toBe(100);
+    expect(event.cacheCreation5mTokens).toBe(0);
     expect(event.outputTokens).toBe(80); // reasoning is already a subset
     expect(event.metadata).toMatchObject({
       cwd: "/Users/dev/repo",

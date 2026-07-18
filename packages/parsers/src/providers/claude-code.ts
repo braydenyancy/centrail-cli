@@ -22,7 +22,8 @@ export type ParsedUsageEvent = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number; // provider-reported cache writes
-  cacheCreation5mTokens: number; // primary write bucket; Anthropic 5m
+  cacheWriteTokens?: number; // provider-neutral cache writes; omitted by legacy clients
+  cacheCreation5mTokens: number; // Anthropic ephemeral 5m
   cacheCreation1hTokens: number; // Anthropic 1h; 0 for providers without it
   occurredAt: Date;
   metadata: {

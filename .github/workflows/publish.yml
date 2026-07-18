@@ -15,6 +15,22 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - run: npm ci
       - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - id: scanner-surfaces
+        run: node scripts/export-scanner-surfaces.mjs
+      - name: Check out hosted server contract
+        uses: actions/checkout@v4
+        with:
+          repository: braydenyancy/centrail
+          path: hosted-app
+      - run: npm ci
+        working-directory: hosted-app
+      - name: Prove server accepts every CLI surface
+        run: npx vitest run src/lib/cli/wire.test.ts
+        working-directory: hosted-app
+        env:
+          CENTRAIL_EXPECTED_SURFACES: ${{ steps.scanner-surfaces.outputs.surfaces }}
       - run: npm publish --workspaces --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

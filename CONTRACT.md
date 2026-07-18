@@ -11,9 +11,17 @@ is the source of truth for that contract.
 
 ## Payload types
 
-The request/response shapes are the types exported by **@centrail/parsers**
-(`ParsedUsageEvent`, `ClaudeCodeAccount`, attribution event/result types). Both
-the CLI and the server depend on that package, so the types cannot drift.
+The request shapes originate in **@centrail/parsers** (`ParsedUsageEvent`,
+`ClaudeCodeAccount`, attribution event/result types). The server validates its
+own copy of the untrusted wire shape, and release CI verifies every exported
+scanner surface against that validator before a CLI package can publish.
+
+`ParsedUsageEvent.cacheWriteTokens` is the provider-neutral cache-write bucket.
+The older `cacheCreation5mTokens` and `cacheCreation1hTokens` fields remain for
+Anthropic's duration-specific billing. `cacheCreationTokens` remains the legacy
+aggregate for storage compatibility and must not be added to cost separately.
+Servers default a missing `cacheWriteTokens` to zero, so wire version 1 clients
+remain valid.
 
 ## Versioning
 

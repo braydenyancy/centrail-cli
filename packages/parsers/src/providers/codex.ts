@@ -148,8 +148,8 @@ function parseTokenCount(
 
   // OpenAI reports cached reads and cache writes as subsets of input_tokens.
   // Centrail prices these buckets separately, so ordinary input must exclude
-  // both. The wire's 5m field is the existing primary cache-write bucket; for
-  // Codex it carries OpenAI cache writes (whose retention is provider-defined).
+  // both. Codex writes use the provider-neutral cache-write bucket; the
+  // Anthropic duration-specific buckets remain zero.
   const totalInput = numOr0(usage.input_tokens);
   const cacheRead = numOr0(usage.cached_input_tokens);
   const cacheWrite = numOr0(usage.cache_write_input_tokens);
@@ -164,7 +164,8 @@ function parseTokenCount(
     outputTokens: numOr0(usage.output_tokens),
     cacheReadTokens: cacheRead,
     cacheCreationTokens: cacheWrite,
-    cacheCreation5mTokens: cacheWrite,
+    cacheWriteTokens: cacheWrite,
+    cacheCreation5mTokens: 0,
     cacheCreation1hTokens: 0,
     occurredAt,
     metadata: {
