@@ -17,7 +17,12 @@ export {
 } from "./providers/claude-code.js";
 
 export { scanCopilotLogs } from "./providers/copilot-cli.js";
-export { codexHomeDir, codexSessionsDir, scanCodexLogs } from "./providers/codex.js";
+export {
+  codexHomeDir,
+  codexHomeDirs,
+  codexSessionsDir,
+  scanCodexLogs,
+} from "./providers/codex.js";
 
 export {
   matchEventsToCommits,
