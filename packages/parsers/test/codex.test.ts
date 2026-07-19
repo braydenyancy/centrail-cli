@@ -155,6 +155,47 @@ describe("scanCodexLogs", () => {
     expect(await scanCodexLogs({ basePath: join(base, "missing") })).toEqual([]);
   });
 
+  it("does not resurrect already-counted usage when a cumulative-only line follows per-call lines", async () => {
+    // Per-call lines without totals leave the cumulative baseline out of sync:
+    // the next cumulative-only total overlaps usage that was already emitted,
+    // so it must become the new baseline, not an event of its own.
+    const lastOnly = line("event_msg", "2026-07-18T12:00:02.000Z", {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: 1000,
+          cached_input_tokens: 700,
+          cache_write_input_tokens: 100,
+          output_tokens: 80,
+        },
+      },
+    });
+    const base = await makeSession([
+      META,
+      TURN,
+      lastOnly,
+      cumulativeTokenCount("2026-07-18T12:01:00.000Z", 1_500, 300, 140),
+      cumulativeTokenCount("2026-07-18T12:02:00.000Z", 2_000, 400, 180),
+    ]);
+
+    const events = await scanCodexLogs({ basePath: base });
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ inputTokens: 200, outputTokens: 80 });
+    expect(events[1]).toMatchObject({
+      inputTokens: 400,
+      cacheReadTokens: 100,
+      outputTokens: 40,
+    });
+  });
+
+  it("suffixes colliding externalIds so same-timestamp calls dedup independently", async () => {
+    const base = await makeSession([META, TURN, tokenCount(), tokenCount()]);
+    const events = await scanCodexLogs({ basePath: base });
+    expect(events).toHaveLength(2);
+    expect(events[0].externalId).toBe("sess-codex:turn-1:2026-07-18T12:00:02.000Z");
+    expect(events[1].externalId).toBe("sess-codex:turn-1:2026-07-18T12:00:02.000Z:2");
+  });
+
   it("recovers per-call deltas from cumulative totals and event model metadata", async () => {
     const base = await makeSession([
       META,

@@ -41,3 +41,23 @@ Rules:
 > Self-hosting: because the client is open and this contract is documented, you
 > can point the CLI at your own server with `centrail connect --url <base>`. This
 > is possible but not an officially supported product.
+
+## Release ordering
+
+A new scanner surface (or wire change) touches both repositories. The order is
+fixed — the server must accept a payload before any published CLI can send it:
+
+1. **Server first.** Land and deploy the centrail change (ingest allowlist,
+   wire fields, `/api/cli/capabilities`). The capabilities endpoint is the
+   deployed source of truth this repo's CI checks against.
+2. **CLI second.** Merge the CLI change. The contract check in PR CI is
+   **advisory** (`continue-on-error`): a red check on a PR means the server
+   side has not deployed yet, or centrail.org was unreachable — it must not
+   block development.
+3. **Tag last.** Push a `v*` tag only when the contract check is green. The
+   publish workflow re-runs the same check against production and **fails
+   closed** — nothing reaches npm unless the deployed server accepts every
+   scanner surface at the current wire version.
+
+Escape hatches for the check itself: `CENTRAIL_CONTRACT_URL` points it at a
+staging deployment; `CENTRAIL_CONTRACT_ATTEMPTS` bounds the retry loop.

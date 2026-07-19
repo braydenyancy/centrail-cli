@@ -106,6 +106,29 @@ describe("scanCopilotLogs", () => {
     expect(await scanCopilotLogs({ basePath: "/no/such/dir/xyz" })).toHaveLength(0);
   });
 
+  it("sets the provider-neutral cacheWriteTokens alongside the legacy aggregate", async () => {
+    const base = await makeSession([
+      shutdown({
+        "gpt-5.4": { usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 7 } },
+      }),
+    ]);
+    const [e] = await scanCopilotLogs({ basePath: base });
+    expect(e.cacheCreationTokens).toBe(7);
+    expect(e.cacheWriteTokens).toBe(7);
+  });
+
+  it("suffixes colliding externalIds so timestamp-less segments dedup independently", async () => {
+    // Two shutdown segments with no timestamp both fall back to the session
+    // created_at; without a suffix the server would dedup the second away.
+    const seg = (inTok: number) =>
+      shutdown({ "gpt-5.4": { usage: { inputTokens: inTok, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } } }, null);
+    const base = await makeSession([seg(100), seg(250)]);
+    const events = await scanCopilotLogs({ basePath: base });
+    expect(events).toHaveLength(2);
+    expect(events[0].externalId).toBe("sess-abc:gpt-5.4:2026-06-21T21:46:11.546Z");
+    expect(events[1].externalId).toBe("sess-abc:gpt-5.4:2026-06-21T21:46:11.546Z:2");
+  });
+
   it("honors `since` against the segment timestamp", async () => {
     const base = await makeSession([ONE_MODEL]); // segment at 2026-06-21T21:47:17.588Z
     expect(await scanCopilotLogs({ basePath: base, since: new Date("2026-06-22T00:00:00.000Z") })).toHaveLength(0);

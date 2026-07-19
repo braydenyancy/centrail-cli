@@ -17,7 +17,14 @@ jobs:
       - run: npm test
       - id: scanner-surfaces
         run: node scripts/export-scanner-surfaces.mjs
-      - name: Prove deployed server accepts every CLI surface
+      # Advisory on PRs: a new surface lands here BEFORE the server deploys
+      # support for it (see CONTRACT.md "Release ordering"), and PR builds
+      # must not depend on centrail.org being reachable. The tag-triggered
+      # publish workflow runs the same check and fails closed — that is the
+      # enforcement point.
+      - name: Prove deployed server accepts every CLI surface (advisory on PRs)
         run: node scripts/check-server-contract.mjs
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         env:
           CENTRAIL_EXPECTED_SURFACES: ${{ steps.scanner-surfaces.outputs.surfaces }}
+          CENTRAIL_CONTRACT_ATTEMPTS: ${{ github.event_name == 'pull_request' && '3' || '18' }}

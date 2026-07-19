@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir, hostname, platform } from "node:os";
 import { join, relative } from "node:path";
 import type { ParsedUsageEvent } from "./claude-code.js";
+import { suffixDuplicateExternalIds } from "./external-id.js";
 
 // Codex stores one JSONL rollout per session under
 // $CODEX_HOME/sessions/YYYY/MM/DD (default: ~/.codex/sessions). We only read
@@ -52,7 +53,7 @@ export async function scanCodexLogs(opts: {
     events.push(...(await parseSession(path, opts.since, host, plat)));
   }
 
-  return events;
+  return suffixDuplicateExternalIds(events);
 }
 
 async function findCodexUsageFiles(): Promise<string[]> {
@@ -134,6 +135,10 @@ async function parseSession(
   const context: SessionContext = {};
   const events: ParsedUsageEvent[] = [];
   let previousTotals: TokenUsage | null = null;
+  // The cumulative fallback is only safe while previousTotals accounts for
+  // everything already emitted. A per-call line WITHOUT totals breaks that
+  // invariant until the next line that carries totals restores it.
+  let baselineValid = true;
 
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
@@ -155,8 +160,13 @@ async function parseSession(
     }
     if (raw.type !== "event_msg" || raw.payload.type !== "token_count") continue;
 
-    const parsed = parseTokenCount(raw, context, previousTotals, host, plat);
-    previousTotals = parsed.total ?? previousTotals;
+    const parsed = parseTokenCount(raw, context, previousTotals, baselineValid, host, plat);
+    if (parsed.total) {
+      previousTotals = parsed.total;
+      baselineValid = true; // session totals cover all usage emitted so far
+    } else if (parsed.bareLast) {
+      baselineValid = false;
+    }
     const event = parsed.event;
     if (event && (!since || event.occurredAt > since)) events.push(event);
   }
@@ -182,25 +192,30 @@ function parseTokenCount(
   raw: Record<string, unknown>,
   context: SessionContext,
   previousTotals: TokenUsage | null,
+  baselineValid: boolean,
   host: string,
   plat: string,
-): { event: ParsedUsageEvent | null; total: TokenUsage | null } {
+): { event: ParsedUsageEvent | null; total: TokenUsage | null; bareLast: boolean } {
   const timestamp = stringOr(raw.timestamp);
-  if (!timestamp || !context.sessionId) return { event: null, total: null };
+  if (!timestamp || !context.sessionId) return { event: null, total: null, bareLast: false };
   const occurredAt = new Date(timestamp);
-  if (Number.isNaN(occurredAt.getTime())) return { event: null, total: null };
+  if (Number.isNaN(occurredAt.getTime())) return { event: null, total: null, bareLast: false };
 
   const payload = raw.payload;
   if (!isObject(payload) || !isObject(payload.info)) {
-    return { event: null, total: null };
+    return { event: null, total: null, bareLast: false };
   }
   const info = payload.info;
   const total = readTokenUsage(info.total_token_usage);
+  const last = readTokenUsage(info.last_token_usage);
+  // Fall back to cumulative deltas only while the baseline is trustworthy;
+  // otherwise the delta would re-emit usage already counted from per-call
+  // lines, so the line is absorbed as the new baseline instead.
   const usage =
-    readTokenUsage(info.last_token_usage) ??
-    (total ? subtractTokenUsage(total, previousTotals) : null);
+    last ?? (total && baselineValid ? subtractTokenUsage(total, previousTotals) : null);
+  const bareLast = last !== null && total === null;
   const model = stringOr(payload.model) ?? stringOr(info.model) ?? context.model;
-  if (!usage || !model) return { event: null, total };
+  if (!usage || !model) return { event: null, total, bareLast };
 
   // OpenAI reports cached reads and cache writes as subsets of input_tokens.
   // Centrail prices these buckets separately, so ordinary input must exclude
@@ -240,6 +255,7 @@ function parseTokenCount(
       },
     },
     total,
+    bareLast,
   };
 }
 

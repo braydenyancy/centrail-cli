@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ParsedUsageEvent } from "./claude-code.js";
+import { suffixDuplicateExternalIds } from "./external-id.js";
 
 // Scans GitHub Copilot CLI session logs. Each session lives in
 // ~/.copilot/session-state/<uuid>/ with a flat `workspace.yaml` and an
@@ -75,6 +76,7 @@ export async function scanCopilotLogs(opts: {
           outputTokens: numOr0(usage.outputTokens),
           cacheReadTokens: numOr0(usage.cacheReadTokens),
           cacheCreationTokens: numOr0(usage.cacheWriteTokens),
+          cacheWriteTokens: numOr0(usage.cacheWriteTokens),
           cacheCreation5mTokens: 0,
           cacheCreation1hTokens: 0,
           occurredAt,
@@ -89,10 +91,10 @@ export async function scanCopilotLogs(opts: {
     }
   }
 
-  return events;
+  return suffixDuplicateExternalIds(events);
 }
 
-type Workspace = { id?: string; cwd?: string; branch?: string; created_at?: string };
+type Workspace ={ id?: string; cwd?: string; branch?: string; created_at?: string };
 
 // workspace.yaml is flat `key: value` (no nesting in the keys we read).
 async function readWorkspace(path: string): Promise<Workspace | null> {

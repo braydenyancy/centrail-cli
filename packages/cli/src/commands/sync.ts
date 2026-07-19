@@ -6,6 +6,7 @@ import {
   type ParsedUsageEvent,
 } from "@centrail/parsers";
 import { readAuth, readConfig, readState, writeState } from "../config.js";
+import { sinceForSurface, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 import {
@@ -33,10 +34,6 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   assertSecureBaseUrl(auth.baseUrl);
 
   const state = await readState();
-  const since =
-    !opts.full && state.lastSyncAt ? new Date(state.lastSyncAt) : undefined;
-  const startedAt = new Date();
-
   const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
   const maxOccurredAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -44,11 +41,17 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   let grandSkipped = 0;
   let grandInbox = 0;
   let anyEvents = false;
+  let anyWatermark = false;
   // Claude and Codex expose reliable per-event cwd/timestamps. Copilot
   // attribution remains deferred until its session semantics are proven.
   const attributionEvents: ParsedUsageEvent[] = [];
 
   for (const scanner of SCANNERS) {
+    // Each surface keeps its own watermark so a scanner added in an upgrade
+    // backfills its full history instead of inheriting another's cutoff.
+    const since = opts.full ? undefined : sinceForSurface(state, scanner.surface);
+    if (since) anyWatermark = true;
+    const scanStartedAt = new Date();
     const scanned = await scanner.scan({ since });
     const events = scanned.filter(
       (e) =>
@@ -56,7 +59,10 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
         e.occurredAt >= minOccurredAt &&
         e.occurredAt <= maxOccurredAt,
     );
-    if (events.length === 0) continue;
+    if (events.length === 0) {
+      await stampSurface(state, scanner.surface, scanStartedAt);
+      continue;
+    }
     anyEvents = true;
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
       attributionEvents.push(...events);
@@ -93,18 +99,20 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
     }
+
+    // Only after every batch for this surface landed; a failure above throws
+    // and leaves this surface's watermark where it was.
+    await stampSurface(state, scanner.surface, scanStartedAt);
   }
 
   if (!anyEvents) {
     console.log(
-      since
-        ? `No new events since ${since.toLocaleString()}.`
+      anyWatermark
+        ? "No new events since the last sync."
         : "No agent usage found (Claude Code, Copilot CLI, Codex).",
     );
     return;
   }
-
-  await writeState({ lastSyncAt: startedAt.toISOString() });
 
   if (attributionEvents.length > 0) {
     await pushAttributions(auth, attributionEvents);
@@ -118,6 +126,15 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
 
 function serializeEvent(e: ParsedUsageEvent): Record<string, unknown> {
   return { ...e, occurredAt: e.occurredAt.toISOString() };
+}
+
+async function stampSurface(
+  state: SyncState,
+  surface: string,
+  scanStartedAt: Date,
+): Promise<void> {
+  state.surfaces[surface] = scanStartedAt.toISOString();
+  await writeState(state);
 }
 
 type WireAttribution = {

@@ -1,6 +1,9 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseSyncState, type SyncState } from "./watermarks.js";
+
+export type { SyncState } from "./watermarks.js";
 
 const CONFIG_DIR = join(homedir(), ".config", "centrail");
 const AUTH_PATH = join(CONFIG_DIR, "auth.json");
@@ -10,10 +13,6 @@ export type AuthConfig = {
   baseUrl: string;
   token: string;
   deviceName: string;
-};
-
-export type SyncState = {
-  lastSyncAt: string | null; // ISO timestamp of the last fully-successful sync
 };
 
 export async function readAuth(): Promise<AuthConfig | null> {
@@ -49,15 +48,9 @@ export async function writeAuth(auth: AuthConfig): Promise<void> {
 
 export async function readState(): Promise<SyncState> {
   try {
-    const raw = JSON.parse(await readFile(STATE_PATH, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    return {
-      lastSyncAt: typeof raw.lastSyncAt === "string" ? raw.lastSyncAt : null,
-    };
+    return parseSyncState(JSON.parse(await readFile(STATE_PATH, "utf-8")));
   } catch {
-    return { lastSyncAt: null };
+    return parseSyncState(null);
   }
 }
 
