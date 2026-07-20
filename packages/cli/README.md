@@ -32,7 +32,7 @@ The CLI reads logs locally and sends usage metadata only: token counts, models, 
 
 ## Pricing
 
-Personal use is free. Team Standard is $10/seat/mo, Team Pro $16/seat/mo, Personal Pro $6/mo. Details at [centrail.org/pricing](https://centrail.org/pricing).
+Personal use is free. Team Standard is $99/mo for 10 seats. Team Pro is $199/mo for 10 seats and adds Trails. Personal Pro is $6/mo. Details at [centrail.org/pricing](https://centrail.org/pricing).
 
 ## Links
 
