@@ -38,9 +38,16 @@ export type ShipStatusFacts = {
 
 export type CommitFateRow = {
   sha: string;
-  // First containing branch that isn't the default (local preferred over
-  // remote, "origin/" prefix stripped); the default branch name when only it
-  // contains the sha; null when no branch contains the sha at all.
+  // Shipped-via-ancestry commits report the DEFAULT branch: once a commit is
+  // on default, stale merged-but-undeleted branches still "contain" it and
+  // the first-containing label degenerates to noise (observed live
+  // 2026-07-21: 668 of a repo's main-history commits labeled with one old
+  // feature branch). The feature-branch name only carries information for
+  // squash-shipped (cherry-equivalent) and unshipped/in-flight commits, so:
+  //   shipped via ancestry — the default branch name (null if branchless).
+  //   everything else — first containing non-default branch (local preferred
+  //   over remote, "origin/" stripped); default name when only default
+  //   contains it; null when no branch contains the sha at all.
   branch: string | null;
   fate: CommitFate;
 };
@@ -58,23 +65,29 @@ export function computeCommitFates(facts: ShipStatusFacts): CommitFateRow[] {
   const out: CommitFateRow[] = [];
   for (const { sha } of facts.shas) {
     const containing = facts.branchesBySha[sha] ?? [];
+    const shippedViaAncestry = ancestors.has(sha);
 
-    // Branch naming: first non-default containing branch, local before
-    // remote; remote names lose their "origin/" prefix. Default-only shas
-    // report the default branch name; branchless shas report null.
-    const nonDefault = containing.filter((b) => !isDefault(b));
-    const local = nonDefault.find((b) => !b.startsWith("origin/"));
-    const remote = nonDefault.find((b) => b.startsWith("origin/"));
-    const branch =
-      local ??
-      (remote !== undefined
-        ? remote.slice("origin/".length)
-        : containing.length > 0
-          ? facts.defaultBranch
-          : null);
+    // Branch naming (see CommitFateRow.branch): ancestry-shipped commits
+    // belong to the default branch; the first-containing rule applies to
+    // everything else, local before remote, "origin/" stripped.
+    let branch: string | null;
+    if (shippedViaAncestry) {
+      branch = containing.length > 0 ? facts.defaultBranch : null;
+    } else {
+      const nonDefault = containing.filter((b) => !isDefault(b));
+      const local = nonDefault.find((b) => !b.startsWith("origin/"));
+      const remote = nonDefault.find((b) => b.startsWith("origin/"));
+      branch =
+        local ??
+        (remote !== undefined
+          ? remote.slice("origin/".length)
+          : containing.length > 0
+            ? facts.defaultBranch
+            : null);
+    }
 
     let fate: CommitFate;
-    if (ancestors.has(sha) || cherryEquivalent.has(sha)) {
+    if (shippedViaAncestry || cherryEquivalent.has(sha)) {
       fate = "shipped";
     } else {
       const hasFreshBranch = containing.some((b) => {

@@ -139,7 +139,7 @@ describe("computeCommitFates — 14-day boundary", () => {
 });
 
 describe("computeCommitFates — branch naming", () => {
-  it("prefers a local non-default branch over remote and default", () => {
+  it("prefers a local non-default branch over remote and default (unshipped commit)", () => {
     const rows = computeCommitFates(
       facts({
         shas: [{ sha: "iii", committedAt: iso(1) }],
@@ -147,10 +147,46 @@ describe("computeCommitFates — branch naming", () => {
           iii: ["main", "origin/feature/z", "feature/z"],
         },
         branchTipDates: { "feature/z": iso(0), "origin/feature/z": iso(0), main: iso(0) },
-        ancestorShas: ["iii"],
       }),
     );
     expect(rows[0].branch).toBe("feature/z");
+  });
+
+  it("labels ancestry-shipped commits with the DEFAULT branch even when stale feature branches still contain them (founder live finding 2026-07-21: 668 main-history commits labeled with one old merged branch)", () => {
+    const rows = computeCommitFates(
+      facts({
+        shas: [{ sha: "sss", committedAt: iso(1) }],
+        branchesBySha: {
+          sss: ["main", "backfill-selfheal", "origin/backfill-selfheal"],
+        },
+        branchTipDates: { "backfill-selfheal": iso(0), main: iso(0) },
+        ancestorShas: ["sss"],
+      }),
+    );
+    expect(rows[0]).toEqual({ sha: "sss", branch: "main", fate: "shipped" });
+  });
+
+  it("squash-shipped (cherry-equivalent) commits KEEP their feature-branch label — that name carries real information", () => {
+    const rows = computeCommitFates(
+      facts({
+        shas: [{ sha: "qqq", committedAt: iso(1) }],
+        branchesBySha: { qqq: ["feature/squashed"] },
+        branchTipDates: { "feature/squashed": iso(0) },
+        cherryEquivalentShas: ["qqq"],
+      }),
+    );
+    expect(rows[0]).toEqual({ sha: "qqq", branch: "feature/squashed", fate: "shipped" });
+  });
+
+  it("ancestry-shipped with no containing branch reports null branch, still shipped", () => {
+    const rows = computeCommitFates(
+      facts({
+        shas: [{ sha: "nnn", committedAt: iso(1) }],
+        branchesBySha: {},
+        ancestorShas: ["nnn"],
+      }),
+    );
+    expect(rows[0]).toEqual({ sha: "nnn", branch: null, fate: "shipped" });
   });
 
   it("strips the origin/ prefix when only a remote branch contains the sha", () => {
