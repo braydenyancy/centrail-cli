@@ -32,6 +32,14 @@ export {
   type RepoCommit,
 } from "./providers/git-attribution.js";
 
+export {
+  computeCommitFates,
+  UNSHIPPED_AFTER_DAYS,
+  type CommitFate,
+  type CommitFateRow,
+  type ShipStatusFacts,
+} from "./providers/ship-status.js";
+
 // A surface is one tool whose local logs we read. The CLI iterates this
 // registry; the server derives provider from each event's model. Adding a
 // surface = one entry here + its scanner module.

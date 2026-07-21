@@ -15,6 +15,7 @@ import {
   repoName,
   resolveRepoRoot,
 } from "../git.js";
+import { formatShipStatusLine, runFatePass } from "../ship-status.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
@@ -214,36 +215,47 @@ async function pushAttributions(
     }
   }
 
-  if (attributions.length === 0) return;
-
-  // Chunk attributions to stay under the server's 2000-per-batch cap.
-  // All repos are included in every chunk (small, referenced by attributions).
-  const ATTR_CHUNK = 1000;
-  let totalLinked = 0;
-  try {
-    for (let i = 0; i < attributions.length; i += ATTR_CHUNK) {
-      const chunk = attributions.slice(i, i + ATTR_CHUNK);
-      const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${auth.token}`,
-          ...versionHeaders(),
-        },
-        body: JSON.stringify({ repos, attributions: chunk }),
-      });
-      if (res.ok) {
-        const r = (await res.json()) as { linked: number };
-        totalLinked += r.linked;
-      } else {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        console.warn(`  ⚠ Attribution chunk skipped (${res.status})${body?.error ? `: ${body.error}` : ""}.`);
+  if (attributions.length > 0) {
+    // Chunk attributions to stay under the server's 2000-per-batch cap.
+    // All repos are included in every chunk (small, referenced by attributions).
+    const ATTR_CHUNK = 1000;
+    let totalLinked = 0;
+    try {
+      for (let i = 0; i < attributions.length; i += ATTR_CHUNK) {
+        const chunk = attributions.slice(i, i + ATTR_CHUNK);
+        const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${auth.token}`,
+            ...versionHeaders(),
+          },
+          body: JSON.stringify({ repos, attributions: chunk }),
+        });
+        if (res.ok) {
+          const r = (await res.json()) as { linked: number };
+          totalLinked += r.linked;
+        } else {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          console.warn(`  ⚠ Attribution chunk skipped (${res.status})${body?.error ? `: ${body.error}` : ""}.`);
+        }
       }
+      if (totalLinked > 0) {
+        console.log(`  ↳ Attributed ${totalLinked} event(s) to commits.`);
+      }
+    } catch (err) {
+      console.warn("  ⚠ Attribution request failed:", (err as Error).message);
     }
-    if (totalLinked > 0) {
-      console.log(`  ↳ Attributed ${totalLinked} event(s) to commits.`);
-    }
-  } catch (err) {
-    console.warn("  ⚠ Attribution request failed:", (err as Error).message);
+  }
+
+  // Fate pass: recompute shipped / in_flight / unshipped for every recent sha
+  // in each resolved repo. Repos without a resolvable default branch are
+  // skipped inside runFatePass (never guess); when none pass, no line prints.
+  const tally = await runFatePass(
+    auth,
+    [...byRepo].map(([root, { name }]) => ({ root, name })),
+  );
+  if (tally) {
+    console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@centrail/parsers",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Local AI coding-agent usage log parsers (Claude Code, GitHub Copilot CLI, Codex).",
   "license": "Apache-2.0",
   "type": "module",
