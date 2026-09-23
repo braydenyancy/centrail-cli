@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir, hostname, platform } from "node:os";
 import { join } from "node:path";
@@ -160,23 +161,27 @@ async function scanProjectsDir(
     }
     if (!dirStat.isDirectory()) continue;
 
-    let files: string[];
-    try {
-      files = await readdir(dir);
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) continue;
-      const path = join(dir, file);
-      const fileStat = await stat(path);
+    for (const path of await listSessionFiles(dir)) {
+      // A transcript can be rotated or swept between listing and reading —
+      // Claude Code's retention sweep does exactly that. Skip it; one vanished
+      // file must never abort the whole scan.
+      let fileStat;
+      try {
+        fileStat = await stat(path);
+      } catch {
+        continue;
+      }
       // Skip files unchanged since last sync. Conservative cut: we use mtime,
       // so a long-running session keeps reprocessing until it closes —
       // dedup-by-externalId catches the duplicates downstream.
       if (since && fileStat.mtime < since) continue;
 
-      const content = await readFile(path, "utf-8");
+      let content: string;
+      try {
+        content = await readFile(path, "utf-8");
+      } catch {
+        continue;
+      }
       for (const line of content.split("\n")) {
         if (!line.trim()) continue;
         let raw: unknown;
@@ -194,6 +199,39 @@ async function scanProjectsDir(
   }
 
   return events;
+}
+
+// Transcripts for one project dir: the top-level <session>.jsonl files plus
+// each session's subagent transcripts, which Claude Code writes under
+// <project>/<session-id>/subagents/<agent>.jsonl. Subagents carry their own
+// requestIds and usage — on an agent-heavy machine they are a large share of
+// all tokens — and nothing else in the tree is a transcript.
+async function listSessionFiles(dir: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".jsonl")) files.push(join(dir, entry.name));
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    const sub = join(dir, entry.name, "subagents");
+    let subEntries: Dirent[];
+    try {
+      subEntries = await readdir(sub, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const s of subEntries) {
+      if (s.isFile() && s.name.endsWith(".jsonl")) files.push(join(sub, s.name));
+    }
+  }
+  return files;
 }
 
 function parseAssistantEvent(

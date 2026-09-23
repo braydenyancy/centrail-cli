@@ -3,10 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const git = vi.hoisted(() => ({
   resolveDefaultBranch: vi.fn(),
   listRecentShas: vi.fn(),
-  isAncestor: vi.fn(),
+  listBranchTips: vi.fn(),
+  listReachableShas: vi.fn(),
   cherryEquivalentShas: vi.fn(),
-  branchesContaining: vi.fn(),
-  branchTipDate: vi.fn(),
 }));
 vi.mock("./git.js", () => git);
 
@@ -26,7 +25,10 @@ function daysAgo(n: number): string {
 }
 
 // One repo: sha "aaa" merged to main, "bbb" live on feature/x, "ccc" only on
-// a dormant branch.
+// a dormant branch, "ddd" on a branch whose tip fell out of the 90-day window.
+function tip(name: string, tipDate: string) {
+  return { ref: `refs/heads/${name}`, name, sha: `tip-${name}`, tipDate };
+}
 function stubHappyRepo(): void {
   git.resolveDefaultBranch.mockResolvedValue("main");
   git.listRecentShas.mockResolvedValue([
@@ -34,20 +36,21 @@ function stubHappyRepo(): void {
     { sha: "bbb", committedAt: daysAgo(2) },
     { sha: "ccc", committedAt: daysAgo(40) },
   ]);
-  git.branchesContaining.mockImplementation(async (_root: string, sha: string) => {
-    if (sha === "aaa") return ["main"];
-    if (sha === "bbb") return ["feature/x"];
-    return ["feature/dead"];
-  });
-  git.branchTipDate.mockImplementation(async (_root: string, ref: string) => {
-    if (ref === "main") return daysAgo(0);
-    if (ref === "feature/x") return daysAgo(1);
-    return daysAgo(40);
+  git.listBranchTips.mockResolvedValue([
+    tip("main", daysAgo(0)),
+    tip("feature/x", daysAgo(1)),
+    tip("feature/dead", daysAgo(40)),
+    tip("feature/merged", daysAgo(1)),
+    tip("feature/ancient", daysAgo(200)),
+  ]);
+  git.listReachableShas.mockImplementation(async (_root: string, ref: string) => {
+    if (ref === "refs/heads/main") return ["aaa", "older-than-window-not-in-recent"];
+    if (ref === "refs/heads/feature/x") return ["bbb"];
+    if (ref === "refs/heads/feature/dead") return ["ccc"];
+    if (ref === "refs/heads/feature/merged") return ["aaa"]; // fully on main already
+    throw new Error(`rev-list must not run on a stale branch: ${ref}`);
   });
   git.cherryEquivalentShas.mockResolvedValue([]);
-  git.isAncestor.mockImplementation(
-    async (_root: string, sha: string) => sha === "aaa",
-  );
 }
 
 beforeEach(() => {
@@ -70,14 +73,24 @@ describe("gatherShipStatusFacts", () => {
     expect(git.listRecentShas).not.toHaveBeenCalled();
   });
 
-  it("runs git cherry once per non-default branch tip, not per commit", async () => {
+  it("spawns per live branch, never per commit, and skips branches outside the window", async () => {
     stubHappyRepo();
-    const facts = await gatherShipStatusFacts("/repo");
+    const facts = await gatherShipStatusFacts("/repo", NOW);
     expect(facts?.defaultBranch).toBe("main");
-    // 3 commits but only 2 non-default branches -> exactly 2 cherry calls.
+    // 3 commits, 5 branches, 1 stale -> rev-list once for default ancestry
+    // + once per live branch (4); cherry only for live branches that still
+    // hold a recent commit off main (2): the merged branch and main are skipped.
+    expect(git.listReachableShas).toHaveBeenCalledTimes(5);
     expect(git.cherryEquivalentShas).toHaveBeenCalledTimes(2);
     const tips = git.cherryEquivalentShas.mock.calls.map((c) => c[2]).sort();
     expect(tips).toEqual(["feature/dead", "feature/x"]);
+    expect(facts?.ancestorShas).toEqual(["aaa"]);
+    expect(facts?.branchesBySha).toEqual({
+      aaa: ["main", "feature/merged"],
+      bbb: ["feature/x"],
+      ccc: ["feature/dead"],
+    });
+    expect(facts?.branchTipDates).not.toHaveProperty("feature/ancient");
   });
 });
 
@@ -139,10 +152,11 @@ describe("runFatePass", () => {
         committedAt: daysAgo(1),
       })),
     );
-    git.branchesContaining.mockResolvedValue(["main"]);
-    git.branchTipDate.mockResolvedValue(daysAgo(0));
+    git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
+    git.listReachableShas.mockResolvedValue(
+      Array.from({ length: 2001 }, (_, i) => `s${i}`),
+    );
     git.cherryEquivalentShas.mockResolvedValue([]);
-    git.isAncestor.mockResolvedValue(true);
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ linked: 0 }), { status: 200 }),
     );

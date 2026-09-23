@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -113,6 +113,36 @@ describe("scanClaudeCodeLogs", () => {
     });
 
     expect(events).toHaveLength(0);
+  });
+
+  it("counts subagent transcripts under <session>/subagents/", async () => {
+    const base = await makeBase();
+    const sub = JSON.parse(ASSISTANT_LINE);
+    sub.requestId = "req_subagent";
+    await writeSession(base, "p", "sess-1.jsonl", [ASSISTANT_LINE]);
+    await writeSession(base, join("p", "sess-1", "subagents"), "agent-a1.jsonl", [
+      JSON.stringify(sub),
+    ]);
+    // Only the subagents/ layout is a transcript; a stray nested file is not.
+    await writeSession(base, join("p", "sess-1"), "notes.jsonl", [ASSISTANT_LINE]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events.map((e) => e.externalId).sort()).toEqual(["req_001", "req_subagent"]);
+  });
+
+  it("skips a transcript it cannot read instead of aborting the scan", async () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) return; // chmod is advisory there
+    const base = await makeBase();
+    const unreadable = JSON.parse(ASSISTANT_LINE);
+    unreadable.requestId = "req_unreadable";
+    await writeSession(base, "p", "locked.jsonl", [JSON.stringify(unreadable)]);
+    await chmod(join(base, "p", "locked.jsonl"), 0o000);
+    await writeSession(base, "p", "open.jsonl", [ASSISTANT_LINE]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events.map((e) => e.externalId)).toEqual(["req_001"]);
   });
 
   it("returns [] when the base path does not exist", async () => {
