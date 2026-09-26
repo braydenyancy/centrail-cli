@@ -5,7 +5,7 @@
 // in-process stand-in server that models the real one: one row per
 // (externalId), per-field max on re-send, `inserted` from what landed.
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -194,6 +194,24 @@ describe("sync invariants across triggers", () => {
     expect(server.rows.get("req_F")?.metadata.repo).toMatchObject({ key: "github.com/acme/repo", label: "repo-wt" });
     expect(server.rows.get("req_F")?.metadata.cwd).toBeUndefined();
     expect(server.attributions.find((a) => a.externalId === "req_F")).toMatchObject({ repoKey: "github.com/acme/repo", commitSha: sha });
+  });
+
+  it("a checkout moved after syncing keeps its identity; earlier sessions attribute through the new path", async () => {
+    const before = await fx.repo("moved-src", { remote: "https://github.com/acme/moved.git" });
+    // Turn in the old location, hook fires, sync runs.
+    await runStopHook(JSON.stringify({ session_id: "s7", cwd: before }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    await writeTranscript(before, "s7", [line("s7", before, "req_H", 6, T0)]);
+    await runSync({ full: false });
+    expect(server.rows.get("req_H")?.metadata.repo).toMatchObject({ key: "github.com/acme/moved" });
+    // The user moves the checkout, commits there, and works on.
+    const after = join(fx.root, "moved-dst");
+    await rename(before, after);
+    const sha = await fx.commit(after, "c.txt", undefined, new Date());
+    await writeTranscript(after, "s8", [line("s8", after, "req_I", 8, T0 + 300_000)]);
+    await runSync({ full: false });
+    expect(server.rows.get("req_I")?.metadata.repo).toMatchObject({ key: "github.com/acme/moved", label: "moved-dst" });
+    // The pre-move session (its folder is gone) attributed to the commit made after the move.
+    expect(server.attributions.find((a) => a.externalId === "req_H")).toMatchObject({ commitSha: sha });
   });
 
   it("against a 0.5-era server the body is the 0.5 shape", async () => {
