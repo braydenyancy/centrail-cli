@@ -130,7 +130,68 @@ export async function scanClaudeCodeLogs(opts: {
   for (const base of bases) {
     events.push(...(await scanProjectsDir(base, since)));
   }
-  return dedupeClaudeSnapshots(events);
+  return collapseUsageEvents(events);
+}
+
+// Claude Code writes one transcript line per content block of a response
+// (thinking, tool_use, text), every line stamped with that response's
+// usage — and `output_tokens` GROWS across them, because each line carries
+// the count streamed so far. Measured on 79,014 requests: 25,827 had lines
+// that disagree, always and only on output_tokens, and keeping the first
+// line undercounted output by 36.7%. Input and cache counts never differ.
+// So one request collapses to one event holding the per-field maximum:
+// order-independent, and equal to the final line whenever the file is
+// complete. (ccusage keeps the larger total for the same reason —
+// rust/adapters/claude/src/lib.rs, should_replace_deduped_entry.)
+export function collapseUsageEvents(events: ParsedUsageEvent[]): ParsedUsageEvent[] {
+  const byId = new Map<string, ParsedUsageEvent>();
+  for (const e of events) {
+    const prev = byId.get(e.externalId);
+    if (!prev) {
+      byId.set(e.externalId, e);
+      continue;
+    }
+    // A sidechain replay of a response is that response again, never more
+    // of it: the non-sidechain original wins whole, whatever the replay's
+    // counts (ccusage's posture; from the 0.5.1 hotfix). Only when exactly
+    // one side is a sidechain — two lines of one stream take the max below.
+    const prevSide = prev.metadata.isSidechain === true;
+    const nextSide = e.metadata.isSidechain === true;
+    if (prevSide !== nextSide) {
+      if (prevSide) byId.set(e.externalId, e);
+      continue;
+    }
+    prev.inputTokens = Math.max(prev.inputTokens, e.inputTokens);
+    prev.outputTokens = Math.max(prev.outputTokens, e.outputTokens);
+    prev.cacheReadTokens = Math.max(prev.cacheReadTokens, e.cacheReadTokens);
+    prev.cacheCreationTokens = Math.max(prev.cacheCreationTokens, e.cacheCreationTokens);
+    prev.cacheCreation5mTokens = Math.max(prev.cacheCreation5mTokens, e.cacheCreation5mTokens);
+    prev.cacheCreation1hTokens = Math.max(prev.cacheCreation1hTokens, e.cacheCreation1hTokens);
+    if (e.cacheWriteTokens !== undefined) {
+      prev.cacheWriteTokens = Math.max(prev.cacheWriteTokens ?? 0, e.cacheWriteTokens);
+    }
+    // The earliest timestamp is the request's start; keep it.
+    if (e.occurredAt < prev.occurredAt) prev.occurredAt = e.occurredAt;
+  }
+  return [...byId.values()];
+}
+
+// One id per API response. Anthropic's `requestId` is it when present. Some
+// gateways (Bedrock, Vertex, proxies) omit it and may reuse one message id
+// across responses, so the fallback scopes the message id to the session
+// and timestamp — the same rule ccusage settled on (lib.rs, usage_dedupe_hash).
+// Both shapes are stable across rescans of the same transcript, which is
+// what the server's unique index needs.
+function usageExternalId(
+  raw: Record<string, unknown>,
+  message: Record<string, unknown>,
+  timestamp: string,
+): string | null {
+  if (typeof raw.requestId === "string" && raw.requestId.length > 0) return raw.requestId;
+  const messageId = message.id;
+  if (typeof messageId !== "string" || messageId.length === 0) return null;
+  const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : "";
+  return `msg:${messageId}:${sessionId}:${timestamp}`;
 }
 
 // Scans one <config-dir>/projects directory. Missing dir → no events.
@@ -252,12 +313,12 @@ function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
   const usage = message.usage;
   if (!isObject(usage)) return null;
 
-  const requestId = raw.requestId;
   const model = message.model;
   const timestamp = raw.timestamp;
-  if (typeof requestId !== "string") return null;
   if (typeof model !== "string") return null;
   if (typeof timestamp !== "string") return null;
+  const externalId = usageExternalId(raw, message, timestamp);
+  if (!externalId) return null;
   // Skip synthetic events — internal Claude Code prompts that don't bill.
   if (model === "<synthetic>") return null;
 
@@ -275,7 +336,7 @@ function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
   const version = stringOr(raw.version);
 
   return {
-    externalId: requestId,
+    externalId,
     provider: "anthropic",
     model,
     inputTokens: numOr0(usage.input_tokens),
@@ -294,45 +355,6 @@ function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
       isSidechain: boolOr(raw.isSidechain),
     },
   };
-}
-
-// Claude can append several snapshots for one response while it streams. They
-// share a requestId but later snapshots usually contain more complete usage.
-// Sending all of them would make the server keep an arbitrary first record;
-// summing them would overcount. Match ccusage's current posture: prefer the
-// non-sidechain original over a replay, then keep the largest usage snapshot.
-function dedupeClaudeSnapshots(events: ParsedUsageEvent[]): ParsedUsageEvent[] {
-  const deduped = new Map<string, ParsedUsageEvent>();
-  for (const candidate of events) {
-    const existing = deduped.get(candidate.externalId);
-    if (!existing || shouldReplaceSnapshot(candidate, existing)) {
-      deduped.set(candidate.externalId, candidate);
-    }
-  }
-  return [...deduped.values()];
-}
-
-function shouldReplaceSnapshot(
-  candidate: ParsedUsageEvent,
-  existing: ParsedUsageEvent,
-): boolean {
-  const candidateSidechain = candidate.metadata.isSidechain === true;
-  const existingSidechain = existing.metadata.isSidechain === true;
-  if (candidateSidechain !== existingSidechain) return existingSidechain;
-
-  const candidateTotal = totalTokens(candidate);
-  const existingTotal = totalTokens(existing);
-  if (candidateTotal !== existingTotal) return candidateTotal > existingTotal;
-  return candidate.occurredAt > existing.occurredAt;
-}
-
-function totalTokens(event: ParsedUsageEvent): number {
-  return (
-    event.inputTokens +
-    event.outputTokens +
-    event.cacheReadTokens +
-    event.cacheCreationTokens
-  );
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

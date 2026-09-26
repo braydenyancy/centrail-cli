@@ -74,7 +74,7 @@ describe("scanClaudeCodeLogs", () => {
     expect(e.metadata.origin).toBeUndefined();
   });
 
-  it("skips non-assistant lines, synthetic models, malformed JSON, missing requestId, and missing usage block", async () => {
+  it("skips non-assistant lines, synthetic models, malformed JSON, missing ids, and missing usage block", async () => {
     const base = await makeBase();
     const synthetic = JSON.parse(ASSISTANT_LINE);
     synthetic.requestId = "req_syn";
@@ -98,6 +98,46 @@ describe("scanClaudeCodeLogs", () => {
     const events = await scanClaudeCodeLogs({ basePath: base });
 
     expect(events.map((e) => e.externalId)).toEqual(["req_001"]);
+  });
+
+  it("collapses the lines of one request to one event holding the per-field max", async () => {
+    // Claude Code writes one line per content block; output_tokens grows
+    // across them (streamed-so-far). First-wins undercounted output by 36.7%
+    // on a real corpus; the max equals the final line.
+    const base = await makeBase();
+    const first = JSON.parse(ASSISTANT_LINE);
+    first.message.usage.output_tokens = 5;
+    first.timestamp = "2026-06-01T12:00:01.000Z";
+    const last = JSON.parse(ASSISTANT_LINE);
+    last.message.usage.output_tokens = 140;
+    await writeSession(base, "p", "a.jsonl", [JSON.stringify(first), JSON.stringify(last)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].outputTokens).toBe(140);
+    expect(events[0].inputTokens).toBe(100);
+    expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:00.000Z");
+  });
+
+  it("falls back to message id + session + timestamp when requestId is absent", async () => {
+    // Gateways omit requestId and can reuse a message id across responses;
+    // the fallback key is stable across rescans, which the server's unique
+    // index needs, and distinct per response.
+    const base = await makeBase();
+    const a = JSON.parse(ASSISTANT_LINE);
+    delete a.requestId;
+    a.message.id = "msg_01";
+    const b = JSON.parse(JSON.stringify(a));
+    b.timestamp = "2026-06-01T12:05:00.000Z";
+    await writeSession(base, "p", "a.jsonl", [JSON.stringify(a), JSON.stringify(b)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events.map((e) => e.externalId).sort()).toEqual([
+      "msg:msg_01:sess-1:2026-06-01T12:00:00.000Z",
+      "msg:msg_01:sess-1:2026-06-01T12:05:00.000Z",
+    ]);
   });
 
   it("excludes events at or before `since` by occurredAt", async () => {
@@ -185,7 +225,9 @@ describe("scanClaudeCodeLogs", () => {
       externalId: "req_001",
       outputTokens: 1_093,
     });
-    expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:02.000Z");
+    // The most complete counts, at the request's start: the first line's
+    // timestamp, whatever order the lines arrive in (collapseUsageEvents).
+    expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:00.000Z");
   });
 
   it("prefers an original response over a larger sidechain replay", async () => {

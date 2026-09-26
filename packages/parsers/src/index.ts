@@ -8,6 +8,7 @@ import { scanCopilotLogs } from "./providers/copilot-cli.js";
 import { scanCodexLogs } from "./providers/codex.js";
 
 export {
+  collapseUsageEvents,
   readClaudeCodeAccount,
   scanClaudeCodeLogs,
   claudeConfigDirs,
