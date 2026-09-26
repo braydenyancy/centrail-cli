@@ -123,4 +123,20 @@ describe("Placer", () => {
     expect(placed(inRepo)).toEqual(["github.com/acme/a", "cwd"]);
     expect(inFolder.metadata.placement).toBe("folder");
   });
+
+  it("a transcript that says HEAD takes the session's branch from the sidecar; a real branch name is kept", async () => {
+    const { a, sidecar } = await world();
+    await appendSidecar({ v: 1, ts: new Date().toISOString(), surface: "claude-code", sessionId: "s", cwd: a, repo: null, root: a, branch: "feat/x", head: null }, sidecar);
+    const placer = new Placer(await IdentityResolver.create("install", sidecar));
+    const detached = ev({ cwd: a, turn: "t1", at: 1 });
+    detached.metadata.gitBranch = "HEAD";
+    const missing = ev({ cwd: a, turn: "t1", at: 2 });
+    const named = ev({ cwd: a, turn: "t1", at: 3 });
+    named.metadata.gitBranch = "other";
+    const noSidecar = ev({ cwd: a, sessionId: "s2", turn: "t1", at: 4 });
+    noSidecar.metadata.gitBranch = "HEAD";
+    await placer.place([detached, missing, named, noSidecar]);
+    expect([detached, missing, named, noSidecar].map((e) => e.metadata.gitBranch)).toEqual(["feat/x", "feat/x", "other", "HEAD"]);
+  });
 });
+

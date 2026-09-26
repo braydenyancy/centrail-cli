@@ -8,6 +8,8 @@ import {
   listBranchTips,
   listReachableShas,
   listRecentShas,
+  readUserEmail,
+  RECENT_SHA_CAP,
   resolveDefaultBranch,
   type BranchTip,
   type RecentCommit,
@@ -27,7 +29,17 @@ export type WireFate = {
   linesAdded: number;
   linesDeleted: number;
   filesChanged: number;
+  // The commit's author is this machine's git identity. Absent when either
+  // side is unknown. The server prefers own commits when several fit; a
+  // teammate's commit never absorbs this user's tokens by time alone.
+  mine?: boolean;
 };
+
+// What one fates call says about itself: which machine reported and whether
+// the set is every recent commit of the repo (under the sha cap). From a
+// complete set the server can tell which shas vanished — rewritten,
+// squashed, their branch deleted — and re-match their events.
+export type WireFacts = { machineId: string; complete: boolean };
 
 // The repos section the attribute route already knows, declared with the
 // first fates call when the server matches (no attributions call then).
@@ -112,8 +124,8 @@ export async function runFatePass(
   auth: { baseUrl: string; token: string },
   repos: { root: string; name: string; key?: string }[],
   declared: WireRepo[] = [],
+  machineId = "",
 ): Promise<FateTally | null> {
-  const fates: WireFate[] = [];
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
 
@@ -121,13 +133,16 @@ export async function runFatePass(
     const facts = await gatherShipStatusFacts(root);
     if (!facts) continue; // no resolvable default branch — skip, never guess
     anyRepoPassed = true;
+    const email = await readUserEmail(root);
     const bySha = new Map<string, RecentCommit>((facts.shas as RecentCommit[]).map((c) => [c.sha, c]));
     const rows: CommitFateRow[] = computeCommitFates(facts);
+    const fates: WireFate[] = [];
     for (const row of rows) {
       if (row.fate === "shipped") tally.shipped++;
       else if (row.fate === "in_flight") tally.inFlight++;
       else tally.unshipped++;
       const c = bySha.get(row.sha);
+      const mine = email && c?.authorEmail ? c.authorEmail === email : undefined;
       fates.push({
         repoName: name,
         ...(key ? { repoKey: key } : {}),
@@ -138,28 +153,33 @@ export async function runFatePass(
         linesAdded: c?.linesAdded ?? 0,
         linesDeleted: c?.linesDeleted ?? 0,
         filesChanged: c?.filesChanged ?? 0,
+        ...(mine === undefined ? {} : { mine }),
       });
     }
+    // One call per repo, declaring only that repo, so the server sees a
+    // whole set at once. `complete` is false at the sha cap: an incomplete
+    // set proves nothing about what vanished.
+    const own = declared.filter((r) => (key && r.key === key) || r.name === name);
+    await pushFates(auth, fates, own, { machineId, complete: facts.shas.length < RECENT_SHA_CAP });
   }
   if (!anyRepoPassed) return null;
-
-  await pushFates(auth, fates, declared);
   return tally;
 }
 
-// POST fates to /api/cli/attribute in fates-only calls (chunked ≤2000). Old
+// POST one repo's fates to /api/cli/attribute (the cap equals the chunk, so
+// one call; chunked defensively). Old
 // servers may ignore or reject the section — either way this must not fail
 // the sync, and we never read any fates-specific response field.
 async function pushFates(
   auth: { baseUrl: string; token: string },
   fates: WireFate[],
-  declared: WireRepo[],
+  repos: WireRepo[],
+  facts: WireFacts,
 ): Promise<void> {
   if (fates.length === 0) return;
   try {
     for (let i = 0; i < fates.length; i += FATE_CHUNK) {
       const chunk = fates.slice(i, i + FATE_CHUNK);
-      const repos = i === 0 ? declared : [];
       const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
         method: "POST",
         headers: {
@@ -167,7 +187,7 @@ async function pushFates(
           authorization: `Bearer ${auth.token}`,
           ...versionHeaders(),
         },
-        body: JSON.stringify({ repos, attributions: [], fates: chunk }),
+        body: JSON.stringify({ repos, attributions: [], fates: chunk, facts }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;

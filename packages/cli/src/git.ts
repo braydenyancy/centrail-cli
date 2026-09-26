@@ -169,13 +169,14 @@ export type RecentCommit = {
   linesAdded: number;
   linesDeleted: number;
   filesChanged: number;
+  authorEmail?: string; // compared to user.email locally; never on the wire
 };
 
 export async function listRecentShas(repoRoot: string, sinceDays = 90): Promise<RecentCommit[]> {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI"],
+      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout)
@@ -186,9 +187,22 @@ export async function listRecentShas(repoRoot: string, sinceDays = 90): Promise<
         linesAdded: c.linesAdded,
         linesDeleted: c.linesDeleted,
         filesChanged: c.filesChanged,
+        ...(c.authorEmail ? { authorEmail: c.authorEmail } : {}),
       }));
   } catch {
     return [];
+  }
+}
+
+// This checkout's git identity, lowercased, for the `mine` flag on fate
+// rows. Null when unset; the address itself never leaves the machine.
+export async function readUserEmail(repoRoot: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec("git", ["-C", repoRoot, "config", "user.email"]);
+    const email = stdout.trim().toLowerCase();
+    return email || null;
+  } catch {
+    return null;
   }
 }
 

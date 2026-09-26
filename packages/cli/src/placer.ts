@@ -20,6 +20,7 @@ export class Placer {
   async place(events: ParsedUsageEvent[]): Promise<void> {
     const sessions = new Map<string, ParsedUsageEvent[]>();
     for (const e of events) {
+      this.resolver.fixBranch(e);
       if (e.metadata.repo) continue;
       const sid = e.metadata.sessionId;
       if (!sid || !e.metadata.turn) {

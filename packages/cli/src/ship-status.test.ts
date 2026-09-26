@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const git = vi.hoisted(() => ({
   resolveDefaultBranch: vi.fn(),
   listRecentShas: vi.fn(),
+  readUserEmail: vi.fn(),
+  RECENT_SHA_CAP: 2000,
   listBranchTips: vi.fn(),
   listReachableShas: vi.fn(),
   cherryEquivalentShas: vi.fn(),
@@ -31,9 +33,10 @@ function tip(name: string, tipDate: string) {
 }
 function stubHappyRepo(): void {
   git.resolveDefaultBranch.mockResolvedValue("main");
+  git.readUserEmail.mockResolvedValue("me@example.com");
   git.listRecentShas.mockResolvedValue([
-    { sha: "aaa", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3 },
-    { sha: "bbb", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
+    { sha: "aaa", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3, authorEmail: "me@example.com" },
+    { sha: "bbb", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0, authorEmail: "teammate@example.com" },
     { sha: "ccc", committedAt: daysAgo(40), linesAdded: 7, linesDeleted: 7, filesChanged: 1 },
   ]);
   git.listBranchTips.mockResolvedValue([
@@ -56,7 +59,7 @@ function stubHappyRepo(): void {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
-  for (const fn of Object.values(git)) fn.mockReset();
+  for (const fn of Object.values(git)) if (typeof fn === "function") fn.mockReset();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -102,7 +105,7 @@ describe("runFatePass", () => {
       new Response(JSON.stringify({ linked: 0 }), { status: 200 }),
     );
 
-    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }]);
+    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }], [], "install-1");
     expect(tally).toEqual({ shipped: 1, inFlight: 1, unshipped: 1 });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -111,29 +114,57 @@ describe("runFatePass", () => {
     const body = JSON.parse((init as RequestInit).body as string);
     // Every fate row carries the commit's facts (§ 3.8): the server matches
     // events to commits from these, without a window, on any machine.
+    // Every fate row carries the commit's facts (§ 3.8) and whether its
+    // author is this machine's git identity (`mine`; the email never leaves;
+    // absent when git has no author for the commit or no user.email).
     expect(body.fates).toEqual([
-      { repoName: "repo", commitSha: "aaa", branch: "main", fate: "shipped", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3 },
-      { repoName: "repo", commitSha: "bbb", branch: "feature/x", fate: "in_flight", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
+      { repoName: "repo", commitSha: "aaa", branch: "main", fate: "shipped", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3, mine: true },
+      { repoName: "repo", commitSha: "bbb", branch: "feature/x", fate: "in_flight", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0, mine: false },
       { repoName: "repo", commitSha: "ccc", branch: "feature/dead", fate: "unshipped", committedAt: daysAgo(40), linesAdded: 7, linesDeleted: 7, filesChanged: 1 },
     ]);
     expect(body.repos).toEqual([]); // no repos passed: none declared
+    expect(body.facts).toEqual({ machineId: "install-1", complete: true });
   });
 
-  it("declares the repos in the FIRST fates call only, so a matching server learns sizes and keys in one round trip", async () => {
+  it("without a configured user.email no row claims `mine`", async () => {
+    stubHappyRepo();
+    git.readUserEmail.mockResolvedValue(null);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ linked: 0 }), { status: 200 }));
+    await runFatePass(AUTH, [{ root: "/repo", name: "repo" }], [], "install-1");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.fates.every((f: { mine?: boolean }) => f.mine === undefined)).toBe(true);
+  });
+
+  it("one call per repo, each declaring only its own repo, so the server can tell which shas vanished from a complete set", async () => {
+    stubHappyRepo();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ linked: 0 }), { status: 200 }));
+    const declared = [
+      { name: "repo", key: "github.com/acme/repo", totalLoc: 1, fileCount: 1 },
+      { name: "other", key: "github.com/acme/other", totalLoc: 2, fileCount: 2 },
+    ];
+    await runFatePass(AUTH, [{ root: "/repo", name: "repo", key: "github.com/acme/repo" }, { root: "/other", name: "other", key: "github.com/acme/other" }], declared, "install-1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map((c) => JSON.parse(c[1].body as string));
+    expect(bodies.map((b) => b.repos)).toEqual([[declared[0]], [declared[1]]]);
+    expect(bodies.every((b) => b.attributions.length === 0 && b.facts.machineId === "install-1" && b.facts.complete === true)).toBe(true);
+    expect(bodies[1].fates.every((f: { repoKey: string }) => f.repoKey === "github.com/acme/other")).toBe(true);
+  });
+
+  it("a repo at the sha cap is sent in two calls and both say the set is incomplete, so the server vanishes nothing", async () => {
     git.resolveDefaultBranch.mockResolvedValue("main");
-    git.listRecentShas.mockResolvedValue(Array.from({ length: 2001 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 1, linesDeleted: 0, filesChanged: 1 })));
+    git.readUserEmail.mockResolvedValue("me@example.com");
+    git.listRecentShas.mockResolvedValue(Array.from({ length: 2000 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 1, linesDeleted: 0, filesChanged: 1 })));
     git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
-    git.listReachableShas.mockResolvedValue(Array.from({ length: 2001 }, (_, i) => `s${i}`));
+    git.listReachableShas.mockResolvedValue(Array.from({ length: 2000 }, (_, i) => `s${i}`));
     git.cherryEquivalentShas.mockResolvedValue([]);
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ linked: 0 }), { status: 200 }));
     const repos = [{ name: "repo", key: "github.com/acme/repo", totalLoc: 10, fileCount: 2 }];
-    await runFatePass(AUTH, [{ root: "/repo", name: "repo", key: "github.com/acme/repo" }], repos);
-    const first = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    const second = JSON.parse(fetchMock.mock.calls[1][1].body as string);
-    expect(first.repos).toEqual(repos);
-    expect(first.attributions).toEqual([]);
-    expect(second.repos).toEqual([]);
-    expect(first.fates[0]).toMatchObject({ repoKey: "github.com/acme/repo", committedAt: daysAgo(1) });
+    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo", key: "github.com/acme/repo" }], repos, "install-1");
+    expect(tally?.shipped).toBe(2000);
+    const bodies = fetchMock.mock.calls.map((c) => JSON.parse(c[1].body as string));
+    expect(bodies.map((b) => b.fates.length)).toEqual([2000]);
+    expect(bodies[0].repos).toEqual(repos);
+    expect(bodies[0].facts).toEqual({ machineId: "install-1", complete: false });
   });
 
   it("survives a server that rejects the fates call (old server, non-2xx)", async () => {
@@ -142,7 +173,7 @@ describe("runFatePass", () => {
       new Response(JSON.stringify({ error: "unknown field fates" }), { status: 400 }),
     );
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }]);
+    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }], [], "install-1");
     expect(tally).toEqual({ shipped: 1, inFlight: 1, unshipped: 1 });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
@@ -152,40 +183,18 @@ describe("runFatePass", () => {
     stubHappyRepo();
     fetchMock.mockRejectedValue(new Error("offline"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }]);
+    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }], [], "install-1");
     expect(tally).toEqual({ shipped: 1, inFlight: 1, unshipped: 1 });
     warn.mockRestore();
   });
 
   it("returns null and never fetches when no repo has a resolvable default", async () => {
     git.resolveDefaultBranch.mockResolvedValue(null);
-    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }]);
+    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }], [], "install-1");
     expect(tally).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("chunks fates at 2000 per call", async () => {
-    git.resolveDefaultBranch.mockResolvedValue("main");
-    git.listRecentShas.mockResolvedValue(
-      Array.from({ length: 2001 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 0, linesDeleted: 0, filesChanged: 0 })),
-    );
-    git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
-    git.listReachableShas.mockResolvedValue(
-      Array.from({ length: 2001 }, (_, i) => `s${i}`),
-    );
-    git.cherryEquivalentShas.mockResolvedValue([]);
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ linked: 0 }), { status: 200 }),
-    );
-
-    const tally = await runFatePass(AUTH, [{ root: "/repo", name: "repo" }]);
-    expect(tally?.shipped).toBe(2001);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
-    expect(firstBody.fates).toHaveLength(2000);
-    expect(secondBody.fates).toHaveLength(1);
-  });
 });
 
 describe("formatShipStatusLine", () => {

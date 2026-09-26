@@ -26,7 +26,19 @@ export class IdentityResolver {
     return new IdentityResolver(installId, await readSidecar(sidecarPath));
   }
 
+  // The transcript's `gitBranch` reads "HEAD" for a detached checkout and
+  // for every worktree parked on a commit; the Stop hook recorded the branch
+  // the session's cwd was on. The server prefers the session's own branch
+  // among candidate commits, so the better name goes on the wire.
+  fixBranch(e: ParsedUsageEvent): void {
+    const current = e.metadata.gitBranch;
+    if (current && current !== "HEAD") return;
+    const line = e.metadata.sessionId ? this.sidecar.get(e.metadata.sessionId) : undefined;
+    if (line?.branch) e.metadata.gitBranch = line.branch;
+  }
+
   async stamp(e: ParsedUsageEvent): Promise<void> {
+    this.fixBranch(e);
     if (e.metadata.repo) return;
     const identity = await this.identityFor(e);
     if (identity) {

@@ -295,3 +295,38 @@ describe("a dead worktree's repo still ships its commits when no session ever sa
     server.fields = ["repo"];
   });
 });
+
+describe("attributions follow the facts: what the CLI ships so the server can", () => {
+  it("one fates call per repo with the machine id and completeness; `mine` per commit author; the sidecar branch replaces HEAD on the wire", async () => {
+    server.fields = ["repo", "match"];
+    const repo = await fx.repo("facts-own", { remote: "https://github.com/acme/facts-own.git" });
+    await fx.git(repo, "config", "user.email", "T@Example.com"); // the fixture authors as t@example.com; case must not matter
+    await fx.git(repo, "checkout", "-q", "-b", "feat/own");
+    await writeTranscript(claudeDir, repo, "sm", [line("sm", repo, "req_mine", 3, T0, "HEAD")]);
+    await hook("sm", repo);
+    const mine = await fx.commit(repo, "mine.txt", undefined, new Date());
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { fixtureEnv } = await import("../testing/git-fixture.js");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(repo, "theirs.txt"), "x\n");
+    await fx.git(repo, "add", "theirs.txt");
+    await promisify(execFile)("git", ["-C", repo, "commit", "-q", "-m", "theirs"], { env: { ...fixtureEnv(fx.root), GIT_AUTHOR_EMAIL: "teammate@example.com", GIT_AUTHOR_DATE: new Date().toISOString(), GIT_COMMITTER_DATE: new Date().toISOString() } });
+    const theirs = await fx.git(repo, "rev-parse", "HEAD");
+    server.attributeBodies.length = 0;
+    await runSync({ full: false });
+    const calls = server.attributeBodies.filter((b) => (b.fates ?? []).length > 0) as Array<typeof server.attributeBodies[number] & { facts?: { machineId: string; complete: boolean } }>;
+    const own = calls.find((b) => b.repos.some((r) => r.key === "github.com/acme/facts-own"))!;
+    expect(own.repos).toHaveLength(1);
+    expect(own.facts).toMatchObject({ complete: true });
+    expect(own.facts?.machineId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(own.fates!.every((f) => f.repoKey === "github.com/acme/facts-own")).toBe(true);
+    const byShaMine = Object.fromEntries(own.fates!.map((f) => [f.commitSha, (f as { mine?: boolean }).mine]));
+    expect(byShaMine[mine]).toBe(true);
+    expect(byShaMine[theirs]).toBe(false);
+    expect(JSON.stringify(server.attributeBodies)).not.toContain("example.com"); // the email never leaves
+    expect(server.rows.get("req_mine")?.metadata.gitBranch).toBe("feat/own");
+    server.fields = ["repo"];
+  });
+});
+

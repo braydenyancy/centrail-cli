@@ -18,7 +18,8 @@ export type Row = {
 export type AttributeBody = {
   repos: Array<{ name: string; key?: string }>;
   attributions: Array<{ externalId: string; repoName: string; repoKey?: string; commitSha: string; branch: string | null }>;
-  fates?: Array<{ repoName: string; repoKey?: string; commitSha: string; fate: string }>;
+  fates?: Array<{ repoName: string; repoKey?: string; commitSha: string; fate: string; mine?: boolean }>;
+  facts?: { machineId: string; complete: boolean };
 };
 
 const GROW = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"] as const;

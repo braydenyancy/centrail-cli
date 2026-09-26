@@ -17,6 +17,7 @@ import {
   listBranchTips,
   listReachableShas,
   listRecentShas,
+  readUserEmail,
   RECENT_SHA_CAP,
   resolveDefaultBranch,
 } from "./git.js";
@@ -85,16 +86,17 @@ describe("resolveDefaultBranch", () => {
 });
 
 describe("listRecentShas", () => {
-  const rec = (sha: string, iso: string, files: string[] = []) => `\x1e${sha}\x1f${iso}\n${files.join("\n")}${files.length ? "\n" : ""}`;
+  const rec = (sha: string, iso: string, files: string[] = [], email = "t@example.com") => `\x1e${sha}\x1f${iso}\x1f${email}\n${files.join("\n")}${files.length ? "\n" : ""}`;
 
   it("parses one numstat record per commit from git log --all: sha, date and line counts (§ 3.8 facts)", async () => {
     routeGit({
       log: rec("aaa", "2026-07-20T10:00:00+00:00", ["3\t1\tsrc/a.ts", "-\t-\timg.png"]) + rec("bbb", "2026-07-19T09:00:00+00:00"),
     });
     expect(await listRecentShas(ROOT)).toEqual([
-      { sha: "aaa", committedAt: "2026-07-20T10:00:00.000Z", linesAdded: 3, linesDeleted: 1, filesChanged: 2 },
-      { sha: "bbb", committedAt: "2026-07-19T09:00:00.000Z", linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
+      { sha: "aaa", committedAt: "2026-07-20T10:00:00.000Z", linesAdded: 3, linesDeleted: 1, filesChanged: 2, authorEmail: "t@example.com" },
+      { sha: "bbb", committedAt: "2026-07-19T09:00:00.000Z", linesAdded: 0, linesDeleted: 0, filesChanged: 0, authorEmail: "t@example.com" },
     ]);
+    expect((execMock.mock.calls[0][1] as string[]).some((a) => a.includes("%ae"))).toBe(true);
     const args = execMock.mock.calls[0][1] as string[];
     expect(args).toContain("--all");
     expect(args).toContain("--since=90 days ago");
@@ -174,4 +176,15 @@ describe("gitEnv", () => {
     const env = gitEnv({ PATH: "/bin", GIT_DIR: "/elsewhere/.git", GIT_WORK_TREE: "/x", HOME: "/h" });
     expect(env).toEqual({ PATH: "/bin", HOME: "/h", GIT_OPTIONAL_LOCKS: "0" });
   });
+
 });
+
+describe("readUserEmail", () => {
+  it("lowercases the configured email, null when unset (the email never leaves the machine)", async () => {
+    routeGit({ config: "Jane@Example.com\n" });
+    expect(await readUserEmail(ROOT)).toBe("jane@example.com");
+    routeGit({});
+    expect(await readUserEmail(ROOT)).toBeNull();
+  });
+});
+

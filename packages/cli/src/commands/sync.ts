@@ -181,7 +181,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
 
   if (attributionEvents.length > 0) {
-    await pushAttributions(auth, attributionEvents, resolver, config, caps);
+    await pushAttributions(auth, attributionEvents, resolver, config, caps, installId);
   }
 
   console.log(
@@ -229,6 +229,7 @@ async function pushAttributions(
   resolver: IdentityResolver,
   config: Config,
   caps: Capabilities,
+  installId: string,
 ): Promise<void> {
   const identityAware = caps.fields.has("repo");
   // § 3.8: a server that advertises "match" attributes events to commits
@@ -359,7 +360,7 @@ async function pushAttributions(
   for (const b of buckets.values()) {
     if (!fateRepos.has(b.root)) fateRepos.set(b.root, { root: b.root, name: b.name, key: identityAware ? b.key : undefined });
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : []);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], installId);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }

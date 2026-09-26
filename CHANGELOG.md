@@ -33,6 +33,14 @@ versioning.
   computing attributions: the server matches every still-unattributed event
   of the repo key to the commits it knows, on any machine, with no window —
   the 8% of tokens that attributed late or never on the reference machine.
+- **Attributions follow rewritten history.** Amend, rebase, squash-merge on
+  either side, a branch deleted after its PR merged: the fates section now
+  goes one call per repo with `facts: { machineId, complete }`, so the server
+  can tell which shas vanished and re-match their events to the surviving
+  commits instead of leaving them on a ghost sha. Fate rows carry `mine`
+  (author is this machine's git identity; the email never leaves) and the
+  Stop hook's branch replaces the transcript's `HEAD`, so the server prefers
+  your own commits on the session's branch.
 - **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
   hit the call-stack limit at 177k lines on the reference machine.
 - Shared stand-in server for harness tests; 220 CLI and 115 parsers tests.

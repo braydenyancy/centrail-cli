@@ -73,6 +73,19 @@ it declares `repos[]` with the first `fates` call instead. Without `"match"`
 the CLI attributes as before and the facts ride along unused. Matching is
 per user: another member's commit never absorbs your tokens by time alone.
 
+**Attributions follow the facts (0.6.0).** Each fate row may carry `mine`
+(the commit's author is this machine's git identity; the address never
+leaves), and the fates section is sent **one call per repo**, declaring only
+that repo, with `facts: { machineId, complete }` at the top level —
+`complete` is false when the repo hit the 2000-sha cap. From a complete set
+the server can tell which shas vanished since the same machine last
+reported (amended, rebased, squashed, branch deleted), drop their
+attributions and re-match those events; it prefers, among commits at or
+after an event, one that is `mine` on the event's `gitBranch`, then `mine`,
+then the branch, then the earliest. `gitBranch` is the session's real branch
+from the Stop hook when the transcript says `HEAD`. Older servers ignore
+`facts` and `mine`.
+
 **One event per request.** The CLI now collapses the transcript lines of one
 request to one event holding the per-field maximum (Claude Code re-stamps
 usage on every content block and `output_tokens` grows across them). A

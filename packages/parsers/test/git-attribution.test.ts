@@ -88,4 +88,13 @@ describe("matchEventsToCommits", () => {
     expect(matchEventsToCommits(ev, [b, a])[0].sha).toBe("aaaa");
     expect(matchEventsToCommits(ev, [a, b])[0].sha).toBe("aaaa");
   });
+
+  it("parseGitLogNumstat reads the author email as an optional third header field", () => {
+    const withEmail = `${RS}aaa${US}2026-06-01T00:00:00Z${US}Jane@Example.com\n1\t0\tx\n`;
+    const without = `${RS}bbb${US}2026-06-01T00:00:00Z\n`;
+    const [a, b] = parseGitLogNumstat(withEmail + without);
+    expect(a.authorEmail).toBe("jane@example.com"); // lowercased: emails compare case-insensitively
+    expect(b.authorEmail).toBeUndefined();
+  });
 });
+
