@@ -11,7 +11,8 @@ No install needed:
 ```bash
 npx centrail connect          # pair this machine; shows what it found and asks what to sync
 npx centrail sync             # push new usage (and git commit attribution)
-npx centrail install-hooks    # then let Claude Code sync by itself, every turn
+npx centrail install-hooks    # then let Claude Code (and Codex) sync by itself, every turn
+npx centrail import ccusage.json  # a `ccusage claude daily --json` file as Measured history
 npx centrail repos            # every repo and folder seen here, with sync status
 npx centrail exclude <repo>   # nothing about this repo leaves (host/owner/repo or folder name)
 npx centrail include <repo>   # undo; in allow mode, add it
@@ -22,8 +23,18 @@ npx centrail inspect --last   # the last payload, exactly as it left this machin
 
 Node.js 20+ required. For `install-hooks`, install once (`npm i -g centrail`)
 so the hook has a fixed path to run; the hook records session id, folder,
-repo identity, branch and head locally at the end of every Claude Code turn
-and starts a background sync at most every 10 minutes.
+repo identity, branch, head and the repos the turn's files touched, locally,
+at the end of every Claude Code or Codex turn, and starts a background sync at
+most every 10 minutes.
+
+Or install it as a plugin — one `Stop` hook over a bundled copy of this CLI,
+read by Claude Code and by Codex alike (`plugins/centrail`):
+
+```bash
+claude plugin marketplace add braydenyancy/centrail-cli
+claude plugin install centrail@centrail
+npx centrail connect
+```
 
 ## What leaves your machine
 

@@ -41,6 +41,15 @@ versioning.
   (author is this machine's git identity; the email never leaves) and the
   Stop hook's branch replaces the transcript's `HEAD`, so the server prefers
   your own commits on the session's branch.
+- **The wrappers (§ 4 step 6).** `plugins/centrail` is a Claude Code plugin —
+  one `Stop` hook over a bundled copy of this CLI, pinned by the plugin version —
+  and Codex reads the same `hooks.json` with a Claude-compatible Stop input, so
+  one plugin serves both; the hook stamps the surface from Codex's `turn_id` or
+  rollout path and reads a Codex rollout's `shell` workdirs and `apply_patch`
+  files as evidence. `centrail install-hooks` also writes Codex's `hooks.json`
+  when a Codex home exists. `centrail import <ccusage.json>` sends a
+  `ccusage claude daily|session --json` file to the server as Measured-tier
+  history (provider `ccusage`), never as certified events.
 - **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
   hit the call-stack limit at 177k lines on the reference machine.
 - Shared stand-in server for harness tests; 220 CLI and 115 parsers tests.

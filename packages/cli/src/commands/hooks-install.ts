@@ -1,7 +1,8 @@
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { claudeConfigDirs } from "@centrail/parsers";
+import { claudeConfigDirs, codexHomeDir } from "@centrail/parsers";
+import { stat } from "node:fs/promises";
 import { readConfig } from "../config.js";
 import { runSetup } from "./scope.js";
 
@@ -20,6 +21,13 @@ export const HOOK_MARK = "hook stop"; // how a centrail entry is recognised
 
 export function claudeSettingsPath(): string {
   return join(claudeConfigDirs()[0], "settings.json");
+}
+
+// Codex reads the same hooks.json shape (`{ "hooks": { "Stop": [...] } }`)
+// from its home; its Stop input is Claude-compatible, so the same command
+// serves both. Only written when a Codex home already exists.
+export function codexHooksPath(): string {
+  return join(codexHomeDir(), "hooks.json");
 }
 
 export function hookCommand(
@@ -49,23 +57,37 @@ export function uninstallStopHook(settings: Settings): Settings {
   return out;
 }
 
-export async function runInstallHooks(opts: { remove: boolean }, path = claudeSettingsPath()): Promise<void> {
+export async function runInstallHooks(
+  opts: { remove: boolean },
+  path = claudeSettingsPath(),
+  codexPath: string | null = null,
+): Promise<void> {
   if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
     await runSetup({ interactive: process.stdin.isTTY === true });
   }
-  const settings = await readSettings(path);
-  const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, hookCommand());
-  await writeSettings(path, next);
-  if (opts.remove) {
-    console.log(`Removed the centrail Stop hook from ${path}.`);
-    return;
+  const targets = [path];
+  const codex = codexPath ?? ((await isDir(codexHomeDir())) ? codexHooksPath() : null);
+  if (codex) targets.push(codex);
+  for (const target of targets) {
+    const settings = await readSettings(target);
+    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, hookCommand());
+    await writeSettings(target, next);
+    console.log(opts.remove ? `Removed the centrail Stop hook from ${target}.` : `Installed the centrail Stop hook in ${target}.`);
   }
-  console.log(`Installed the centrail Stop hook in ${path}.`);
+  if (opts.remove) return;
   console.log(
-    "Every Claude Code turn now records session id, folder, repo identity, branch and head\n" +
-      "locally and starts a background `centrail sync` at most every 10 minutes.\n" +
+    `Every ${codex ? "Claude Code and Codex" : "Claude Code"} turn now records session id, folder, repo identity, branch, head and the\n` +
+      "repos its files touched, locally, and starts a background `centrail sync` at most every 10 minutes.\n" +
       "Nothing leaves this machine except what `centrail inspect --last` shows.",
   );
+}
+
+async function isDir(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function isCentrailGroup(g: HookGroup): boolean {

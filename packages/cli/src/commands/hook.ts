@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { open } from "node:fs/promises";
-import { lineEvidence, type RepoIdentity } from "@centrail/parsers";
+import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
 import { readAuth, readState, writeState } from "../config.js";
 import { nearestDirectory, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
@@ -29,7 +29,19 @@ export type HookInput = {
   cwd?: unknown;
   transcript_path?: unknown;
   hook_event_name?: unknown;
+  turn_id?: unknown; // Codex only ("Codex extension" in its stop.command.input schema)
 };
+
+// One plugin serves Claude Code and Codex: both run hooks.json's Stop
+// command with the same input shape. Codex adds `turn_id` and keeps its
+// transcripts as `rollout-*.jsonl` under a sessions dir; either mark is
+// enough to read the transcript as a rollout and stamp the surface.
+export function detectSurface(input: HookInput, fallback: string): string {
+  if (typeof input.turn_id === "string" && input.turn_id) return "codex";
+  const t = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  if (/\/sessions\/.*rollout-[^/]*\.jsonl$/.test(t)) return "codex";
+  return fallback;
+}
 
 // Bounds on the transcript read per turn: distinct directories that cost
 // a git spawn, and bytes. A turn past either is recorded with what fit.
@@ -67,6 +79,7 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   const sessionId = typeof input.session_id === "string" ? input.session_id : "";
   const cwd = typeof input.cwd === "string" ? input.cwd : "";
   if (!sessionId || !cwd) return null;
+  surface = detectSurface(input, surface);
 
   const now = deps.now ? deps.now() : new Date();
   const root = await resolveRepoRoot(cwd);
@@ -91,7 +104,7 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   const roots = { ...(previous?.roots ?? {}) };
   const mains = { ...(previous?.mains ?? {}) };
   if (root && repo) await recordRoot(root, repo, roots, mains);
-  if (transcript) line.offset = await recordTouchedRoots(transcript, previous?.offset ?? 0, roots, mains);
+  if (transcript) line.offset = await recordTouchedRoots(transcript, previous?.offset ?? 0, roots, mains, cwd);
   if (Object.keys(roots).length > 0) line.roots = roots;
   if (Object.keys(mains).length > 0) line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
@@ -113,7 +126,7 @@ async function recordRoot(root: string, id: RepoIdentity, roots: Record<string, 
   if (main) mains[root] = main;
 }
 
-async function recordTouchedRoots(transcript: string, offset: number, roots: Record<string, RepoIdentity>, mains: Record<string, string>): Promise<number> {
+async function recordTouchedRoots(transcript: string, offset: number, roots: Record<string, RepoIdentity>, mains: Record<string, string>, cwd: string): Promise<number> {
   let fh;
   try {
     fh = await open(transcript, "r");
@@ -130,16 +143,21 @@ async function recordTouchedRoots(transcript: string, offset: number, roots: Rec
     const complete = text.lastIndexOf("\n");
     if (complete < 0) return offset; // no whole line yet
     const dirs = new Set<string>();
+    let turnCwd = cwd; // Codex: turn_context may move the cwd
     for (const raw of text.slice(0, complete).split("\n")) {
-      if (!raw.includes('"tool_use"')) continue;
+      if (!raw.includes('"tool_use"') && !raw.includes('"function_call"') && !raw.includes('"turn_context"')) continue;
       let line: unknown;
       try {
         line = JSON.parse(raw);
       } catch {
         continue;
       }
-      if (!isObject(line) || line.type !== "assistant" || !isObject(line.message)) continue;
-      const ev = lineEvidence(line.message);
+      if (!isObject(line)) continue;
+      let ev: Evidence | null = null;
+      if (line.type === "assistant" && isObject(line.message)) ev = lineEvidence(line.message); // Claude Code
+      else if (line.type === "turn_context" && isObject(line.payload) && typeof line.payload.cwd === "string") turnCwd = line.payload.cwd; // Codex
+      else if (line.type === "response_item" && isObject(line.payload) && line.payload.type === "function_call") ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd); // Codex
+      if (!ev) continue;
       for (const path of [...ev.writes, ...ev.reads]) dirs.add(path); // a file or a directory; the lookup climbs
     }
     let spawned = 0;

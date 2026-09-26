@@ -2,6 +2,7 @@
 import { runConnect } from "./commands/connect.js";
 import { runStopHook } from "./commands/hook.js";
 import { runInstallHooks } from "./commands/hooks-install.js";
+import { runImport } from "./commands/import.js";
 import { runSync } from "./commands/sync.js";
 import { readLastSync } from "./config.js";
 import { runExclude, runInclude, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
@@ -20,7 +21,7 @@ const USAGE = `centrail — sync local AI agent usage to centrail.org
 Usage:
   centrail connect [--url <base>]   Pair this machine with your account
   centrail sync [--full]            Push new usage events (--full rescans everything)
-  centrail install-hooks            Auto-sync: add the Stop hook to Claude Code's settings
+  centrail install-hooks            Auto-sync: add the Stop hook to Claude Code (and Codex, if present)
   centrail uninstall-hooks          Remove that hook
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
@@ -28,6 +29,7 @@ Usage:
   centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)
   centrail include <repo>           Undo an exclude; in allow mode, add it
   centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli)
+  centrail import <ccusage.json>    Import a ccusage "claude daily/session --json" file as Measured history
   centrail hook stop                (run by the agent's Stop hook; reads JSON on stdin)
 `;
 
@@ -68,6 +70,12 @@ try {
     }
     if (command === "exclude") await runExclude(name);
     else await runInclude(name);
+  } else if (command === "import") {
+    if (!rest[0]) {
+      console.error("Usage: centrail import <ccusage.json>");
+      process.exit(1);
+    }
+    await runImport(rest[0]);
   } else if (command === "surfaces") {
     await runSurfaces(rest);
   } else {

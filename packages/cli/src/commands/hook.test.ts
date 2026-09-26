@@ -189,4 +189,35 @@ describe("runStopHook", () => {
     expect(inWt.roots).toEqual({ [wt]: { key: "github.com/acme/r", label: "r-wt", source: "remote" } });
     expect(inWt.mains).toEqual({ [wt]: repo });
   });
+
+  it("a Codex Stop hook (turn_id, rollout transcript) is recorded as surface codex, with the rollout's shell workdir and patch files as roots", async () => {
+    fx = await scratch();
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const ws = join(fx.root, "ws");
+    await mkdir(ws);
+    const a = await fx.repo("ws/a", { remote: "https://github.com/acme/a.git" });
+    const b = await fx.repo("ws/b", { remote: "https://github.com/acme/b.git" });
+    const sessionsDir = join(fx.root, "codex-home", "sessions", "2026", "09", "26");
+    await mkdir(sessionsDir, { recursive: true });
+    const transcript = join(sessionsDir, "rollout-2026-09-26T10-00-00-thread1.jsonl");
+    const lines = [
+      { type: "session_meta", payload: { id: "thread1", cwd: ws } },
+      { type: "turn_context", payload: { turn_id: "t1", cwd: ws } },
+      { type: "response_item", payload: { type: "function_call", name: "shell", arguments: JSON.stringify({ command: ["bash", "-lc", "ls"], workdir: a }) } },
+      { type: "response_item", payload: { type: "function_call", name: "apply_patch", arguments: JSON.stringify({ input: `*** Begin Patch\n*** Update File: b/x.ts\n*** End Patch` }) } },
+      { type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1, output_tokens: 1 } } } },
+    ];
+    await writeFile(transcript, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+    const sidecarPath = join(fx.root, "sessions.jsonl");
+    const line = (await runStopHook(
+      JSON.stringify({ session_id: "thread1", cwd: ws, transcript_path: transcript, hook_event_name: "Stop", turn_id: "t1", model: "gpt-5", permission_mode: "default", stop_hook_active: false, last_assistant_message: null }),
+      "claude-code", // the plugin cannot tell the harness apart; the hook must
+      { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() },
+    ))!;
+    expect(line.surface).toBe("codex");
+    expect(line.sessionId).toBe("thread1");
+    expect(Object.keys(line.roots!).sort()).toEqual([a, b].sort());
+    expect(line.offset).toBeGreaterThan(0);
+  });
 });
+

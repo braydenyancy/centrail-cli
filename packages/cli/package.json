@@ -4,11 +4,18 @@
   "description": "Sync your local AI coding-agent usage (Claude Code, GitHub Copilot CLI, Codex) to centrail.org.",
   "license": "Apache-2.0",
   "type": "module",
-  "bin": { "centrail": "./dist/index.js" },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "centrail": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "rm -rf dist && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --alias:@centrail/parsers=../parsers/src/index.ts --outfile=dist/index.js",
+    "build": "rm -rf dist && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --alias:@centrail/parsers=../parsers/src/index.ts --outfile=dist/index.js && cp dist/index.js ../../plugins/centrail/scripts/centrail.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "prepublishOnly": "npm run build"

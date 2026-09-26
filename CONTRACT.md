@@ -96,6 +96,15 @@ Anthropic `requestId` (gateways) arrive with
 `externalId = "msg:<message id>:<session id>"` — never the timestamp, which
 differs per content block of one response.
 
+**Import (0.6.0, outside wire 1).** `centrail import <file>` POSTs
+`{ provider: "ccusage", rows: [{ day, model, inputTokens, outputTokens,
+contextTokens }] }` to `POST /api/import` with the device token; the server
+accepts that token as it accepts a signed-in session, stores the rows in the
+imported (Measured) table with replace-per-provider semantics, and never
+mixes them with certified events. `contextTokens` is cache read + cache
+creation. A `session --json` file lands each session on the UTC day of its
+last activity.
+
 ## Versioning
 
 Every request carries two headers:
