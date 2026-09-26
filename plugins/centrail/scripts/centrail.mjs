@@ -1454,7 +1454,8 @@ async function readRepoSize(repoRoot) {
 import { createHmac } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { basename as basename3 } from "node:path";
+import { readFile as readFile6 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname2, join as join6 } from "node:path";
 function remoteKey(url) {
   const raw = url.trim();
   if (!raw)
@@ -1562,6 +1563,24 @@ function folderIdentity(cwd, installId) {
   const digest = createHmac("sha256", installId).update(cwd).digest("hex").slice(0, 16);
   return { key: `dir:${digest}`, label: displayLabel(cwd), source: "folder" };
 }
+async function staleWorktree(dir) {
+  let d = dir;
+  for (; ; ) {
+    try {
+      const text = await readFile6(join6(d, ".git"), "utf-8");
+      const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
+      const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
+      return wt ? { folder: d, main: wt[1] } : null;
+    } catch (err) {
+      if (err.code === "EISDIR")
+        return null;
+    }
+    const parent = dirname2(d);
+    if (parent === d)
+      return null;
+    d = parent;
+  }
+}
 async function readHeadState(repoRoot) {
   let branch = null;
   let head = null;
@@ -1578,12 +1597,15 @@ async function readHeadState(repoRoot) {
   return { branch, head };
 }
 
+// src/resolver.ts
+import { basename as basename4 } from "node:path";
+
 // src/sidecar.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile6, rename as rename2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname2 } from "node:path";
+import { appendFile, mkdir as mkdir2, readFile as readFile7, rename as rename2, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname3 } from "node:path";
 var SIDECAR_PATH = `${CONFIG_DIR}/sessions.jsonl`;
 async function appendSidecar(line, path = SIDECAR_PATH) {
-  await mkdir2(dirname2(path), { recursive: true });
+  await mkdir2(dirname3(path), { recursive: true });
   await appendFile(path, `${JSON.stringify(line)}
 `, { mode: 384 });
 }
@@ -1591,7 +1613,7 @@ async function readSidecar(path = SIDECAR_PATH) {
   const out = /* @__PURE__ */ new Map();
   let text;
   try {
-    text = await readFile6(path, "utf-8");
+    text = await readFile7(path, "utf-8");
   } catch {
     return out;
   }
@@ -1613,7 +1635,7 @@ async function readSidecar(path = SIDECAR_PATH) {
 async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   let text;
   try {
-    text = await readFile6(path, "utf-8");
+    text = await readFile7(path, "utf-8");
   } catch {
     return;
   }
@@ -1762,8 +1784,14 @@ var IdentityResolver = class _IdentityResolver {
       }
       if (fromSidecar?.repo)
         return fromSidecar.repo;
-      if (await this.exists(cwd))
+      if (await this.exists(cwd)) {
+        const stale = await staleWorktree(cwd);
+        const mainRoot = stale ? await this.rootFor(stale.main) : null;
+        const id = mainRoot ? await this.identityForRoot(mainRoot) : null;
+        if (id && stale)
+          return { ...id, label: basename4(stale.folder) };
         return folderIdentity(cwd, this.installId);
+      }
       if (fromSidecar)
         return folderIdentity(fromSidecar.cwd, this.installId);
       return null;
@@ -2124,7 +2152,7 @@ var FIELDS_SHOWN_ONCE = `
 import { spawn as spawn2 } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import { mkdir as mkdir3, open, readdir as readdir5, rm as rm2, stat as stat7 } from "node:fs/promises";
-import { dirname as dirname3, join as join6 } from "node:path";
+import { dirname as dirname4, join as join7 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
@@ -2191,15 +2219,15 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(mains).length > 0)
     line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join6(dirname3(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join7(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl"))
     return [];
-  const dir = join6(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join7(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join6(dir, f));
+    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join7(dir, f));
   } catch {
     return [];
   }
@@ -2330,7 +2358,7 @@ async function claimAutoSync(claimPath, now) {
     } catch (err) {
       const code = err.code;
       if (code === "ENOENT") {
-        await mkdir3(dirname3(claimPath), { recursive: true });
+        await mkdir3(dirname4(claimPath), { recursive: true });
         continue;
       }
       if (code !== "EEXIST")
@@ -2359,15 +2387,15 @@ function spawnDetachedSync() {
 
 // src/commands/hooks-install.ts
 import { realpathSync as realpathSync3 } from "node:fs";
-import { mkdir as mkdir4, readFile as readFile7, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname4, join as join7 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile8, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname5, join as join8 } from "node:path";
 import { stat as stat8 } from "node:fs/promises";
 var HOOK_MARK = "hook stop";
 function claudeSettingsPath() {
-  return join7(claudeConfigDirs()[0], "settings.json");
+  return join8(claudeConfigDirs()[0], "settings.json");
 }
 function codexHooksPath() {
-  return join7(codexHomeDir(), "hooks.json");
+  return join8(codexHomeDir(), "hooks.json");
 }
 function hookCommand(node = process.execPath, script = process.argv[1]) {
   const abs = safeRealpath(script);
@@ -2430,7 +2458,7 @@ function isCentrailGroup(g) {
 }
 async function readSettings(path) {
   try {
-    const parsed = JSON.parse(await readFile7(path, "utf-8"));
+    const parsed = JSON.parse(await readFile8(path, "utf-8"));
     return isObject7(parsed) ? parsed : {};
   } catch (err) {
     if (err.code === "ENOENT")
@@ -2439,7 +2467,7 @@ async function readSettings(path) {
   }
 }
 async function writeSettings(path, settings) {
-  await mkdir4(dirname4(path), { recursive: true });
+  await mkdir4(dirname5(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile3(tmp, `${JSON.stringify(settings, null, 2)}
 `);
@@ -2460,7 +2488,7 @@ function isObject7(v) {
 }
 
 // src/commands/import.ts
-import { readFile as readFile8 } from "node:fs/promises";
+import { readFile as readFile9 } from "node:fs/promises";
 var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_MODEL = 100;
 function parseCcusageExport(json) {
@@ -2514,7 +2542,7 @@ async function runImport(file, deps = {}) {
   assertSecureBaseUrl(auth.baseUrl);
   let json;
   try {
-    json = JSON.parse(await readFile8(file, "utf-8"));
+    json = JSON.parse(await readFile9(file, "utf-8"));
   } catch (err) {
     throw new Error(`Cannot read ${file}: ${err.message}`);
   }

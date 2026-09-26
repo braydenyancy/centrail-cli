@@ -1,7 +1,8 @@
 import { createHmac } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { RepoIdentity } from "@centrail/parsers";
 import { gitExec, resolveDefaultBranch } from "./git.js";
 
@@ -164,6 +165,29 @@ export async function repoIdentity(repoRoot: string): Promise<RepoIdentity | nul
 export function folderIdentity(cwd: string, installId: string): RepoIdentity {
   const digest = createHmac("sha256", installId).update(cwd).digest("hex").slice(0, 16);
   return { key: `dir:${digest}`, label: displayLabel(cwd), source: "folder" };
+}
+
+// A stale worktree: its folder survived, but the main repo no longer lists
+// it (`git worktree prune` after it was moved, or an entry deleted by hand),
+// so every git command inside it fails. Its `.git` FILE still says
+// `gitdir: <main>/.git/worktrees/<name>`; the main checkout's identity is
+// the repo it belongs to. Returns the worktree folder and the main checkout,
+// or null when no such file is found above `dir`.
+export async function staleWorktree(dir: string): Promise<{ folder: string; main: string } | null> {
+  let d = dir;
+  for (;;) {
+    try {
+      const text = await readFile(join(d, ".git"), "utf-8"); // throws EISDIR for a real .git dir
+      const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
+      const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
+      return wt ? { folder: d, main: wt[1] } : null;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EISDIR") return null;
+    }
+    const parent = dirname(d);
+    if (parent === d) return null;
+    d = parent;
+  }
 }
 
 // Current branch (null when detached) and HEAD sha, for the sidecar.

@@ -137,4 +137,26 @@ describe("IdentityResolver", () => {
     expect(nested.metadata.repo).toEqual(top.metadata.repo);
     expect(await r.liveRootFor(nested)).toBe(repo);
   });
+
+  it.each([
+    ["pruned from the main repo (git worktree prune while the folder stayed)", "prune"],
+    ["whose main repo's worktree entry was deleted by hand", "rm-entry"],
+  ])("a stale worktree folder %s still resolves to the main repo's identity, not an anonymous folder", async (_, how) => {
+    fx = await scratch();
+    const repo = await fx.repo("stale", { remote: "https://github.com/acme/stale.git" });
+    const wt = await fx.worktree(repo, "stale-wt", "wt");
+    const { rm, rename } = await import("node:fs/promises");
+    if (how === "prune") {
+      await rename(wt, `${wt}.away`); // prune only drops entries whose folder is missing
+      await fx.git(repo, "worktree", "prune");
+      await rename(`${wt}.away`, wt);
+    } else {
+      await rm(join(repo, ".git", "worktrees", "stale-wt"), { recursive: true, force: true });
+    }
+    const r = await IdentityResolver.create("install-1", join(fx.root, "none.jsonl"));
+    const e = event(wt, "s-stale");
+    await r.stamp(e);
+    expect(e.metadata.repo).toMatchObject({ key: "github.com/acme/stale", label: "stale-wt", source: "remote" });
+  });
 });
+

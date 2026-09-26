@@ -1,7 +1,8 @@
 import { stat } from "node:fs/promises";
 import type { ParsedUsageEvent, RepoIdentity } from "@centrail/parsers";
 import { nearestDirectory, resolveRepoRoot } from "./git.js";
-import { folderIdentity, repoIdentity } from "./identity.js";
+import { folderIdentity, repoIdentity, staleWorktree } from "./identity.js";
+import { basename } from "node:path";
 import { readSidecar, type SidecarLine } from "./sidecar.js";
 
 // Stamps every usage event with a repo identity, in this order:
@@ -123,7 +124,13 @@ export class IdentityResolver {
         return folderIdentity(cwd, this.installId); // repo with no remote and no commit
       }
       if (fromSidecar?.repo) return fromSidecar.repo;
-      if (await this.exists(cwd)) return folderIdentity(cwd, this.installId);
+      if (await this.exists(cwd)) {
+        const stale = await staleWorktree(cwd);
+        const mainRoot = stale ? await this.rootFor(stale.main) : null;
+        const id = mainRoot ? await this.identityForRoot(mainRoot) : null;
+        if (id && stale) return { ...id, label: basename(stale.folder) };
+        return folderIdentity(cwd, this.installId);
+      }
       // Gone, and the hook saw it as a plain folder: the same keyed id it
       // had while alive, so a rule set then still matches.
       if (fromSidecar) return folderIdentity(fromSidecar.cwd, this.installId);
