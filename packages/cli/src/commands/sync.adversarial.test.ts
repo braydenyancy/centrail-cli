@@ -486,3 +486,77 @@ describe("a machine offline for a week", () => {
     expect([...server.rows.keys()].filter((k) => k.startsWith("req_off"))).toHaveLength(8);
   });
 });
+
+describe("cherry-picks and reverts", () => {
+  const dated = async (cwd: string, ...args: string[]) => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { fixtureEnv } = await import("../testing/git-fixture.js");
+    const iso = new Date().toISOString();
+    return promisify(execFile)("git", ["-C", cwd, ...args], { env: { ...fixtureEnv(fx.root), GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } });
+  };
+  const commitOn = async (repo: string, file: string) => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(repo, file), `${file}\n`);
+    await fx.git(repo, "add", file);
+    await dated(repo, "commit", "-q", "-m", file);
+    return fx.git(repo, "rev-parse", "HEAD");
+  };
+  const fateOf = (sha: string) => server.fates.find((f) => f.commitSha === sha) as { fate: string; mergedAs?: string; mine?: boolean } | undefined;
+
+  it("a whole branch cherry-picked onto main ships as the pick; a single middle commit picked ships alone, its neighbours stay in flight", async () => {
+    server.fields = ["repo", "match"];
+    const repo = await fx.repo("cp", { remote: "https://github.com/acme/cp.git" });
+    await fx.git(repo, "config", "user.email", "t@example.com");
+    await writeTranscript(claudeDir, repo, "cp", [line("cp", repo, "req_cp", 1, T0 + 80 * 60_000)]);
+    await hook("cp", repo);
+    await fx.git(repo, "checkout", "-q", "-b", "one");
+    const c = await commitOn(repo, "c.txt");
+    await fx.git(repo, "checkout", "-q", "main");
+    // Main moves first: a pick onto an unmoved parent in the same second is
+    // the byte-identical commit (same parent, tree, message, dates) — the
+    // branch commit itself, an ancestor, shipped with nothing to roll into.
+    await commitOn(repo, "main-moves.txt");
+    await dated(repo, "cherry-pick", c);
+    const cPick = await fx.git(repo, "rev-parse", "HEAD");
+    expect(cPick).not.toBe(c);
+    await fx.git(repo, "checkout", "-q", "-b", "three", "main");
+    const b1 = await commitOn(repo, "b1.txt");
+    const b2 = await commitOn(repo, "b2.txt");
+    const b3 = await commitOn(repo, "b3.txt");
+    await fx.git(repo, "checkout", "-q", "main");
+    await dated(repo, "cherry-pick", b2);
+    const b2Pick = await fx.git(repo, "rev-parse", "HEAD");
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    expect(fateOf(c)).toMatchObject({ fate: "shipped", mergedAs: cPick });
+    expect(fateOf(cPick)?.fate).toBe("shipped");
+    expect(fateOf(b2)?.fate).toBe("shipped"); // cherry-equivalent: shipped, but nothing to roll into
+    expect(fateOf(b2)?.mergedAs).toBeUndefined();
+    expect(fateOf(b2Pick)?.fate).toBe("shipped");
+    expect(fateOf(b1)?.fate).toBe("in_flight");
+    expect(fateOf(b3)?.fate).toBe("in_flight");
+    server.fields = ["repo"];
+  });
+
+  it("a reverted commit stays shipped (a bound: there is no reverted fate); tokens after it and before the revert attribute to the revert", async () => {
+    server.fields = ["repo"];
+    const repo = await fx.repo("rv", { remote: "https://github.com/acme/rv.git" });
+    await fx.git(repo, "config", "user.email", "t@example.com");
+    await writeTranscript(claudeDir, repo, "rv", [line("rv", repo, "req_rv_before", 1, Date.now() - 120_000)]);
+    await hook("rv", repo);
+    const c = await commitOn(repo, "rv.txt");
+    await new Promise((r) => setTimeout(r, 1100)); // a second between the commit and the next event
+    await writeTranscript(claudeDir, repo, "rv", [line("rv", repo, "req_rv_before", 1, Date.now() - 120_000), line("rv", repo, "req_rv_after", 1, Date.now())]);
+    await new Promise((r) => setTimeout(r, 1100));
+    await dated(repo, "revert", "--no-edit", c);
+    const r = await fx.git(repo, "rev-parse", "HEAD");
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    expect(fateOf(c)?.fate).toBe("shipped");
+    expect(fateOf(r)).toMatchObject({ fate: "shipped", mine: true });
+    const attr = (id: string) => server.attributions.filter((a) => a.externalId === id).map((a) => a.commitSha);
+    expect(attr("req_rv_before")).toEqual([c]);
+    expect(attr("req_rv_after")).toEqual([r]);
+  });
+});
