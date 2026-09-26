@@ -131,17 +131,19 @@ export async function gatherShipStatusFacts(
 // like attribution: failures warn, never throw.
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
-  repos: { root: string; name: string; key?: string }[],
+  repos: { root?: string; roots?: string[]; name: string; key?: string }[],
   declared: WireRepo[] = [],
   machineId = "",
 ): Promise<FateTally | null> {
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
 
-  for (const { root, name, key } of repos) {
-    const facts = await gatherShipStatusFacts(root);
+  for (const { root: one, roots: many, name, key } of repos) {
+    const roots = many ?? (one ? [one] : []);
+    const facts = await gatherShipStatusFactsForRoots(roots);
     if (!facts) continue; // no resolvable default branch — skip, never guess
     anyRepoPassed = true;
+    const root = roots[0];
     const email = await readUserEmail(root);
     const bySha = new Map<string, RecentCommit>((facts.shas as RecentCommit[]).map((c) => [c.sha, c]));
     const rows: CommitFateRow[] = computeCommitFates(facts);
@@ -170,10 +172,39 @@ export async function runFatePass(
     // whole set at once. `complete` is false at the sha cap: an incomplete
     // set proves nothing about what vanished.
     const own = declared.filter((r) => (key && r.key === key) || r.name === name);
-    await pushFates(auth, fates, own, { machineId, complete: facts.shas.length < RECENT_SHA_CAP });
+    await pushFates(auth, fates, own, { machineId, complete: facts.complete });
   }
   if (!anyRepoPassed) return null;
   return tally;
+}
+
+type MergedFacts = ShipStatusFacts & { shas: RecentCommit[]; complete: boolean };
+
+// Facts for every live checkout of one identity, unioned: a sha alive in
+// any clone is alive; containment, ancestry, cherry and squash facts add up.
+// Incomplete when any clone hit the sha cap.
+export async function gatherShipStatusFactsForRoots(roots: string[]): Promise<MergedFacts | null> {
+  let merged: MergedFacts | null = null;
+  for (const root of roots) {
+    const f = await gatherShipStatusFacts(root);
+    if (!f) continue;
+    const complete = f.shas.length < RECENT_SHA_CAP;
+    if (!merged) {
+      merged = { ...f, complete };
+      continue;
+    }
+    const seen = new Set(merged.shas.map((c) => c.sha));
+    for (const c of f.shas) if (!seen.has(c.sha)) merged.shas.push(c);
+    merged.ancestorShas = [...new Set([...merged.ancestorShas, ...f.ancestorShas])];
+    merged.cherryEquivalentShas = [...new Set([...merged.cherryEquivalentShas, ...f.cherryEquivalentShas])];
+    merged.squashedInto = { ...(merged.squashedInto ?? {}), ...(f.squashedInto ?? {}) };
+    for (const [sha, branches] of Object.entries(f.branchesBySha)) {
+      merged.branchesBySha[sha] = [...new Set([...(merged.branchesBySha[sha] ?? []), ...branches])];
+    }
+    for (const [b, d] of Object.entries(f.branchTipDates)) if (!(b in merged.branchTipDates)) merged.branchTipDates[b] = d;
+    merged.complete = merged.complete && complete;
+  }
+  return merged;
 }
 
 // POST one repo's fates to /api/cli/attribute (the cap equals the chunk, so

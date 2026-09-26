@@ -419,3 +419,70 @@ describe("a squash merge on the remote, branch deleted, stale origin/<branch> le
     server.fields = ["repo"];
   });
 });
+
+describe("two live clones of one repo on one machine", () => {
+  it("send ONE complete fact set for the key (the union of both clones' commits), so neither clone's unpushed commits read as vanished", async () => {
+    server.fields = ["repo", "match"];
+    const bare = join(fx.root, "tc-origin.git");
+    await fx.git(fx.root, "init", "-q", "--bare", "-b", "main", bare);
+    const a = await fx.repo("tc-a", { remote: bare });
+    await fx.git(a, "push", "-q", "-u", "origin", "main");
+    const b = join(fx.root, "tc-b");
+    await fx.git(fx.root, "clone", "-q", bare, b);
+    for (const r of [a, b]) await fx.git(r, "config", "user.email", "t@example.com");
+    const t = (i: number) => T0 + 60 * 60_000 + i * 1000;
+    await writeTranscript(claudeDir, a, "ta", [line("ta", a, "req_ta", 1, t(0))]);
+    await writeTranscript(claudeDir, b, "tb", [line("tb", b, "req_tb", 1, t(1))]);
+    await hook("ta", a);
+    await hook("tb", b);
+    const shaA = await fx.commit(a, "a-only.txt", undefined, new Date()); // unpushed, only in clone a
+    const shaB = await fx.commit(b, "b-only.txt", undefined, new Date()); // unpushed, only in clone b
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    const key = "sha:" + (await fx.git(a, "rev-list", "--max-parents=0", "refs/heads/main"));
+    const calls = server.attributeBodies.filter((c) => (c.fates ?? []).some((f) => f.repoKey === key));
+    expect(calls).toHaveLength(1);
+    const shas = new Set(calls[0].fates!.map((f) => f.commitSha));
+    expect(shas.has(shaA) && shas.has(shaB)).toBe(true);
+    expect((calls[0] as { facts?: { complete: boolean } }).facts?.complete).toBe(true);
+    server.fields = ["repo"];
+  });
+});
+
+describe("a machine offline for a week", () => {
+  it("failed syncs leave the watermark; the first online sync lands everything once; a flaky capabilities call never downgrades the body to the 0.5 shape", async () => {
+    server.fields = ["repo"];
+    const repo = await fx.repo("offline", { remote: "https://github.com/acme/offline.git" });
+    const t = (i: number) => T0 + 70 * 60_000 + i * 1000;
+    const { readState, writeAuth: setAuth } = await import("../config.js");
+    // Online once, so the server's identity-aware capabilities are known.
+    await writeTranscript(claudeDir, repo, "off", [line("off", repo, "req_off0", 1, t(0))]);
+    await runSync({ full: false });
+    const markOnline = (await readState()).surfaces["claude-code"];
+    // Offline: the base URL points at a closed port. Seven days of turns accumulate.
+    await setAuth({ baseUrl: "http://127.0.0.1:9", token: "t", deviceName: "adv" });
+    const lines = [line("off", repo, "req_off0", 1, t(0))];
+    for (let d = 1; d <= 7; d++) {
+      lines.push(line("off", repo, `req_off${d}`, d, t(d)));
+      await writeTranscript(claudeDir, repo, "off", lines);
+      await hook("off", repo);
+      await expect(runSync({ full: false })).rejects.toThrow();
+      expect((await readState()).surfaces["claude-code"]).toBe(markOnline);
+    }
+    // Back online, but the capabilities endpoint fails while ingest works.
+    await setAuth({ baseUrl: server.url, token: "t", deviceName: "adv" });
+    server.failCapabilities = true;
+    const before = server.ingestBodies.length;
+    await runSync({ full: false });
+    server.failCapabilities = false;
+    const sent = server.ingestBodies.slice(before).flatMap((b) => b.events as Array<{ externalId: string; metadata: Record<string, unknown> }>).filter((e) => e.externalId.startsWith("req_off"));
+    expect(sent.map((e) => e.externalId).sort().join(",")).toBe(Array.from({ length: 8 }, (_, i) => `req_off${i}`).sort().join(","));
+    for (const e of sent) {
+      expect(e.metadata.cwd).toBeUndefined(); // never the 0.5 shape once identity-aware was seen
+      expect(e.metadata.repo).toMatchObject({ key: "github.com/acme/offline" });
+    }
+    // And nothing lands twice.
+    await runSync({ full: true });
+    expect([...server.rows.keys()].filter((k) => k.startsWith("req_off"))).toHaveLength(8);
+  });
+});

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ParsedUsageEvent } from "@centrail/parsers";
 import type { Config } from "./config.js";
 import { toWireEvent, toWireUsageEvent } from "./wire.js";
@@ -166,4 +166,31 @@ describe("toWireEvent", () => {
     expect(m.placement).toBe("sticky");
     expect((m.repo as { key: string }).key).toMatch(/^hidden:/);
   });
+
+  it.each([
+    ["a 503", async () => new Response("{}", { status: 503 })],
+    ["a network failure", async () => { throw new Error("ECONNREFUSED"); }],
+    ["a timeout", async () => { throw new DOMException("aborted", "TimeoutError"); }],
+  ])("readCapabilities on %s keeps what the server said last; with nothing known it is the 0.5 wire", async (_, impl) => {
+    const { readCapabilities } = await import("./wire.js");
+    const fetchMock = vi.fn(impl);
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      expect([...(await readCapabilities({ baseUrl: "https://x" }, { fields: new Set(["repo", "match"]) })).fields]).toEqual(["repo", "match"]);
+      expect([...(await readCapabilities({ baseUrl: "https://x" })).fields]).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("readCapabilities trusts an answering server over the cache, even when it advertises less", async () => {
+    const { readCapabilities } = await import("./wire.js");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ fields: [] }), { status: 200 })));
+    try {
+      expect([...(await readCapabilities({ baseUrl: "https://x" }, { fields: new Set(["repo"]) })).fields]).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
+

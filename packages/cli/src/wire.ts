@@ -42,20 +42,25 @@ export function toWireUsageEvent(event: ParsedUsageEvent): WireUsageEvent {
 // "nothing extra", which is exactly the 0.5.1 wire.
 export type Capabilities = { fields: Set<string> };
 
-export async function readCapabilities(auth: { baseUrl: string }): Promise<Capabilities> {
+// `known` is what the server advertised last time. A server that cannot be
+// asked (down, flaky, a 5xx on this one route) reads as what it said last,
+// never as "nothing extra": that downgrade would strip repo identity from
+// events sent to a server that already keys on it.
+export async function readCapabilities(auth: { baseUrl: string }, known?: Capabilities): Promise<Capabilities> {
+  const fallback = known ?? { fields: new Set<string>() };
   try {
     const res = await fetch(`${auth.baseUrl}/api/cli/capabilities`, {
       headers: versionHeaders(),
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return { fields: new Set() };
+    if (!res.ok) return fallback;
     const body = (await res.json()) as { fields?: unknown };
     const fields = Array.isArray(body.fields)
       ? body.fields.filter((f): f is string => typeof f === "string")
       : [];
     return { fields: new Set(fields) };
   } catch {
-    return { fields: new Set() };
+    return fallback;
   }
 }
 

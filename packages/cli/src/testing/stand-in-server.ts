@@ -30,6 +30,7 @@ export class StandIn {
   attributeBodies: AttributeBody[] = [];
   ingestCalls = 0;
   failNextIngests = 0;
+  failCapabilities = false;
   fields: string[] = ["repo"];
   server!: Server;
   url = "";
@@ -54,6 +55,11 @@ export class StandIn {
       req.on("end", () => {
         res.setHeader("content-type", "application/json");
         if (req.url === "/api/cli/capabilities") {
+          if (this.failCapabilities) {
+            res.statusCode = 503;
+            res.end("{}");
+            return;
+          }
           res.end(JSON.stringify({ wireVersions: ["1"], surfaces: ["claude-code", "codex", "copilot-cli"], fields: this.fields }));
           return;
         }

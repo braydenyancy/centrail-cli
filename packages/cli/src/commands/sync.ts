@@ -74,7 +74,12 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     await writeConfig(config);
   }
   const installId = await ensureInstallId();
-  const caps = await readCapabilities(auth);
+  const caps = await readCapabilities(auth, state.capabilities ? { fields: new Set(state.capabilities) } : undefined);
+  const capsNow = [...caps.fields].sort();
+  if (JSON.stringify(capsNow) !== JSON.stringify(state.capabilities ?? [])) {
+    state.capabilities = capsNow;
+    await writeState(state);
+  }
   await compactSidecar(); // under the sync lock; hook appends are line-atomic
   const resolver = await IdentityResolver.create(installId);
   const placer = new Placer(resolver);
@@ -356,9 +361,15 @@ async function pushAttributions(
   // Fate pass: recompute shipped / in_flight / unshipped for every recent sha
   // in each resolved repo. Repos without a resolvable default branch are
   // skipped inside runFatePass (never guess); when none pass, no line prints.
-  const fateRepos = new Map<string, { root: string; name: string; key?: string }>();
+  // One fact set per KEY: two live clones of one repo on this machine each
+  // hold commits the other has not fetched, and a complete set from one of
+  // them would read the other's as vanished. Their facts are unioned.
+  const fateRepos = new Map<string, { roots: string[]; name: string; key?: string }>();
   for (const b of buckets.values()) {
-    if (!fateRepos.has(b.root)) fateRepos.set(b.root, { root: b.root, name: b.name, key: identityAware ? b.key : undefined });
+    const id = identityAware ? b.key : b.root;
+    const entry = fateRepos.get(id);
+    if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
+    else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
   }
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], installId);
   if (tally) {

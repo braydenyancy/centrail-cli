@@ -899,7 +899,8 @@ function parseSyncState(raw) {
   return {
     lastSyncAt: typeof obj.lastSyncAt === "string" ? obj.lastSyncAt : null,
     surfaces,
-    ...typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {}
+    ...typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {},
+    ...Array.isArray(obj.capabilities) ? { capabilities: obj.capabilities.filter((f) => typeof f === "string") } : {}
   };
 }
 function sinceForSurface(state, surface) {
@@ -2565,11 +2566,13 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
 async function runFatePass(auth, repos, declared = [], machineId = "") {
   let anyRepoPassed = false;
   const tally = { shipped: 0, inFlight: 0, unshipped: 0 };
-  for (const { root, name, key } of repos) {
-    const facts = await gatherShipStatusFacts(root);
+  for (const { root: one, roots: many, name, key } of repos) {
+    const roots = many ?? (one ? [one] : []);
+    const facts = await gatherShipStatusFactsForRoots(roots);
     if (!facts)
       continue;
     anyRepoPassed = true;
+    const root = roots[0];
     const email = await readUserEmail(root);
     const bySha = new Map(facts.shas.map((c) => [c.sha, c]));
     const rows = computeCommitFates(facts);
@@ -2598,11 +2601,39 @@ async function runFatePass(auth, repos, declared = [], machineId = "") {
       });
     }
     const own = declared.filter((r) => key && r.key === key || r.name === name);
-    await pushFates(auth, fates, own, { machineId, complete: facts.shas.length < RECENT_SHA_CAP });
+    await pushFates(auth, fates, own, { machineId, complete: facts.complete });
   }
   if (!anyRepoPassed)
     return null;
   return tally;
+}
+async function gatherShipStatusFactsForRoots(roots) {
+  let merged = null;
+  for (const root of roots) {
+    const f = await gatherShipStatusFacts(root);
+    if (!f)
+      continue;
+    const complete = f.shas.length < RECENT_SHA_CAP;
+    if (!merged) {
+      merged = { ...f, complete };
+      continue;
+    }
+    const seen = new Set(merged.shas.map((c) => c.sha));
+    for (const c of f.shas)
+      if (!seen.has(c.sha))
+        merged.shas.push(c);
+    merged.ancestorShas = [.../* @__PURE__ */ new Set([...merged.ancestorShas, ...f.ancestorShas])];
+    merged.cherryEquivalentShas = [.../* @__PURE__ */ new Set([...merged.cherryEquivalentShas, ...f.cherryEquivalentShas])];
+    merged.squashedInto = { ...merged.squashedInto ?? {}, ...f.squashedInto ?? {} };
+    for (const [sha, branches] of Object.entries(f.branchesBySha)) {
+      merged.branchesBySha[sha] = [.../* @__PURE__ */ new Set([...merged.branchesBySha[sha] ?? [], ...branches])];
+    }
+    for (const [b, d] of Object.entries(f.branchTipDates))
+      if (!(b in merged.branchTipDates))
+        merged.branchTipDates[b] = d;
+    merged.complete = merged.complete && complete;
+  }
+  return merged;
 }
 async function pushFates(auth, fates, repos, facts) {
   if (fates.length === 0)
@@ -2636,19 +2667,20 @@ function formatShipStatusLine(tally) {
 
 // src/wire.ts
 import { createHmac as createHmac2 } from "node:crypto";
-async function readCapabilities(auth) {
+async function readCapabilities(auth, known) {
+  const fallback = known ?? { fields: /* @__PURE__ */ new Set() };
   try {
     const res = await fetch(`${auth.baseUrl}/api/cli/capabilities`, {
       headers: versionHeaders(),
       signal: AbortSignal.timeout(5e3)
     });
     if (!res.ok)
-      return { fields: /* @__PURE__ */ new Set() };
+      return fallback;
     const body = await res.json();
     const fields = Array.isArray(body.fields) ? body.fields.filter((f) => typeof f === "string") : [];
     return { fields: new Set(fields) };
   } catch {
-    return { fields: /* @__PURE__ */ new Set() };
+    return fallback;
   }
 }
 function toWireEvent(e, caps, cfg, installId) {
@@ -2717,7 +2749,12 @@ async function syncLocked(opts) {
     await writeConfig(config);
   }
   const installId = await ensureInstallId();
-  const caps = await readCapabilities(auth);
+  const caps = await readCapabilities(auth, state.capabilities ? { fields: new Set(state.capabilities) } : void 0);
+  const capsNow = [...caps.fields].sort();
+  if (JSON.stringify(capsNow) !== JSON.stringify(state.capabilities ?? [])) {
+    state.capabilities = capsNow;
+    await writeState(state);
+  }
   await compactSidecar();
   const resolver = await IdentityResolver.create(installId);
   const placer = new Placer(resolver);
@@ -2926,8 +2963,12 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
   }
   const fateRepos = /* @__PURE__ */ new Map();
   for (const b of buckets.values()) {
-    if (!fateRepos.has(b.root))
-      fateRepos.set(b.root, { root: b.root, name: b.name, key: identityAware ? b.key : void 0 });
+    const id = identityAware ? b.key : b.root;
+    const entry = fateRepos.get(id);
+    if (!entry)
+      fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : void 0 });
+    else if (!entry.roots.includes(b.root))
+      entry.roots.push(b.root);
   }
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], installId);
   if (tally) {
