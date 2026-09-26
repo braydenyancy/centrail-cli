@@ -40,6 +40,11 @@ export async function scanCodexLogs(opts: {
     ? await findJsonlFiles(opts.basePath)
     : await findCodexUsageFiles();
   const events: ParsedUsageEvent[] = [];
+  const metaByPath = new Map<string, ForkMeta>();
+  for (const path of files) metaByPath.set(path, await readForkMeta(path));
+  const pathBySession = new Map<string, string>();
+  for (const [path, m] of metaByPath) if (m.sessionId && !pathBySession.has(m.sessionId)) pathBySession.set(m.sessionId, path);
+  const parents = new Map<string, ParsedUsageEvent[]>();
 
   for (const path of files) {
     if (opts.since) {
@@ -49,10 +54,70 @@ export async function scanCodexLogs(opts: {
         continue;
       }
     }
-    for (const e of await parseSession(path, opts.since)) events.push(e);
+    // Parse without `since`, drop a fork's replayed prefix, then filter:
+    // the replay carries fresh timestamps, so `since` cannot catch it.
+    let parsed = await parseSession(path, undefined);
+    const fork = metaByPath.get(path);
+    if (fork?.forkedFrom) parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
+    for (const e of parsed) if (!opts.since || e.occurredAt > opts.since) events.push(e);
   }
 
   return suffixDuplicateExternalIds(events);
+}
+
+// A forked Codex session (session_meta.forked_from_id) starts by replaying
+// the parent's history into its own rollout with NEW timestamps — one user's
+// day read $9.64 → $73.89 (ccusage #1337). The replay is the parent's usage
+// recorded up to the fork, so that many leading events of the child are
+// dropped. Without the parent's rollout, the leading burst — events less
+// than a second apart — is the replay (ccusage's fallback, replay.rs).
+type ForkMeta = { sessionId?: string; forkedFrom?: string; forkedAt?: Date };
+const REPLAY_BURST_MS = 1000;
+
+async function readForkMeta(path: string): Promise<ForkMeta> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return {};
+  }
+  for (const line of content.split("\n", 50)) {
+    if (!line.includes('"session_meta"')) continue;
+    try {
+      const raw = JSON.parse(line) as Record<string, unknown>;
+      const p = isObject(raw.payload) ? raw.payload : {};
+      const at = stringOr(p.timestamp) ?? stringOr(raw.timestamp);
+      return {
+        sessionId: stringOr(p.session_id) ?? stringOr(p.id),
+        forkedFrom: stringOr(p.forked_from_id),
+        forkedAt: at ? new Date(at) : undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+async function dropForkReplay(
+  child: ParsedUsageEvent[],
+  fork: ForkMeta,
+  parentPath: string | undefined,
+  parents: Map<string, ParsedUsageEvent[]>,
+): Promise<ParsedUsageEvent[]> {
+  if (parentPath) {
+    let parent = parents.get(parentPath);
+    if (!parent) {
+      parent = await parseSession(parentPath, undefined);
+      parents.set(parentPath, parent);
+    }
+    const at = fork.forkedAt?.getTime();
+    const replayed = at === undefined || Number.isNaN(at) ? parent.length : parent.filter((e) => e.occurredAt.getTime() <= at).length;
+    return child.slice(replayed);
+  }
+  let burst = 0;
+  while (burst + 1 < child.length && child[burst + 1].occurredAt.getTime() - child[burst].occurredAt.getTime() < REPLAY_BURST_MS) burst++;
+  return burst > 0 ? child.slice(burst + 1) : child;
 }
 
 async function findCodexUsageFiles(): Promise<string[]> {
@@ -210,6 +275,13 @@ function parseTokenCount(
   const info = payload.info;
   const total = readTokenUsage(info.total_token_usage);
   const last = readTokenUsage(info.last_token_usage);
+  // Codex re-emits token_count with UNCHANGED session totals on UI refresh
+  // and rate-limit updates, each with a fresh timestamp and often the same
+  // last_token_usage — counting them overstated one user's history by 67%
+  // (ccusage #1288, #1434). Totals that did not advance are not usage.
+  if (total && previousTotals && sameUsage(total, previousTotals)) {
+    return { event: null, total, bareLast: false };
+  }
   // Fall back to cumulative deltas only while the baseline is trustworthy;
   // otherwise the delta would re-emit usage already counted from per-call
   // lines, so the line is absorbed as the new baseline instead.
@@ -272,6 +344,15 @@ function readTokenUsage(raw: unknown): TokenUsage | null {
     cacheWriteInputTokens: numOr0(raw.cache_write_input_tokens),
     outputTokens: numOr0(raw.output_tokens),
   };
+}
+
+function sameUsage(a: TokenUsage, b: TokenUsage): boolean {
+  return (
+    a.inputTokens === b.inputTokens &&
+    a.cachedInputTokens === b.cachedInputTokens &&
+    a.cacheWriteInputTokens === b.cacheWriteInputTokens &&
+    a.outputTokens === b.outputTokens
+  );
 }
 
 function subtractTokenUsage(

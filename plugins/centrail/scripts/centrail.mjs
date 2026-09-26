@@ -249,6 +249,8 @@ async function scanProjectsDir(basePath, since, host, plat) {
         const parsed = parseAssistantEvent(raw, host, plat, turns.current);
         if (parsed && (!since || parsed.occurredAt > since)) {
           events.push(parsed);
+          for (const extra of fallbackIterations(raw, parsed))
+            events.push(extra);
         }
       }
     }
@@ -313,6 +315,33 @@ function lineEvidence(message) {
   for (const block of message.content) {
     if (isObject2(block) && block.type === "tool_use")
       out = mergeEvidence(out, claudeToolEvidence({ name: block.name, input: block.input }));
+  }
+  return out;
+}
+function fallbackIterations(raw, top) {
+  if (!isObject2(raw) || !isObject2(raw.message) || !isObject2(raw.message.usage))
+    return [];
+  const iterations = raw.message.usage.iterations;
+  if (!Array.isArray(iterations) || iterations.length < 2)
+    return [];
+  const out = [];
+  for (let i = 0; i < iterations.length - 1; i++) {
+    const it = iterations[i];
+    if (!isObject2(it) || typeof it.model !== "string" || !it.model || it.model === "<synthetic>")
+      continue;
+    const cc = isObject2(it.cache_creation) ? it.cache_creation : null;
+    out.push({
+      ...top,
+      externalId: `${top.externalId}:iter:${i}`,
+      model: it.model,
+      inputTokens: numOr0(it.input_tokens),
+      outputTokens: numOr0(it.output_tokens),
+      cacheReadTokens: numOr0(it.cache_read_input_tokens),
+      cacheCreationTokens: numOr0(it.cache_creation_input_tokens),
+      cacheCreation5mTokens: cc ? numOr0(cc.ephemeral_5m_input_tokens) : 0,
+      cacheCreation1hTokens: cc ? numOr0(cc.ephemeral_1h_input_tokens) : 0,
+      metadata: { ...top.metadata, touched: { writes: [], reads: [] } }
+    });
   }
   return out;
 }
@@ -542,6 +571,14 @@ async function scanCodexLogs(opts) {
   const host = hostname2();
   const plat = platform2();
   const events = [];
+  const metaByPath = /* @__PURE__ */ new Map();
+  for (const path of files)
+    metaByPath.set(path, await readForkMeta(path));
+  const pathBySession = /* @__PURE__ */ new Map();
+  for (const [path, m] of metaByPath)
+    if (m.sessionId && !pathBySession.has(m.sessionId))
+      pathBySession.set(m.sessionId, path);
+  const parents = /* @__PURE__ */ new Map();
   for (const path of files) {
     if (opts.since) {
       try {
@@ -551,10 +588,57 @@ async function scanCodexLogs(opts) {
         continue;
       }
     }
-    for (const e of await parseSession(path, opts.since, host, plat))
-      events.push(e);
+    let parsed = await parseSession(path, void 0, host, plat);
+    const fork = metaByPath.get(path);
+    if (fork?.forkedFrom)
+      parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents, host, plat);
+    for (const e of parsed)
+      if (!opts.since || e.occurredAt > opts.since)
+        events.push(e);
   }
   return suffixDuplicateExternalIds(events);
+}
+var REPLAY_BURST_MS = 1e3;
+async function readForkMeta(path) {
+  let content;
+  try {
+    content = await readFile3(path, "utf-8");
+  } catch {
+    return {};
+  }
+  for (const line of content.split("\n", 50)) {
+    if (!line.includes('"session_meta"'))
+      continue;
+    try {
+      const raw = JSON.parse(line);
+      const p = isObject4(raw.payload) ? raw.payload : {};
+      const at = stringOr2(p.timestamp) ?? stringOr2(raw.timestamp);
+      return {
+        sessionId: stringOr2(p.session_id) ?? stringOr2(p.id),
+        forkedFrom: stringOr2(p.forked_from_id),
+        forkedAt: at ? new Date(at) : void 0
+      };
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+async function dropForkReplay(child, fork, parentPath, parents, host, plat) {
+  if (parentPath) {
+    let parent = parents.get(parentPath);
+    if (!parent) {
+      parent = await parseSession(parentPath, void 0, host, plat);
+      parents.set(parentPath, parent);
+    }
+    const at = fork.forkedAt?.getTime();
+    const replayed = at === void 0 || Number.isNaN(at) ? parent.length : parent.filter((e) => e.occurredAt.getTime() <= at).length;
+    return child.slice(replayed);
+  }
+  let burst = 0;
+  while (burst + 1 < child.length && child[burst + 1].occurredAt.getTime() - child[burst].occurredAt.getTime() < REPLAY_BURST_MS)
+    burst++;
+  return burst > 0 ? child.slice(burst + 1) : child;
 }
 async function findCodexUsageFiles() {
   const files = [];
@@ -686,6 +770,9 @@ function parseTokenCount(raw, context, previousTotals, baselineValid, host, plat
   const info = payload.info;
   const total = readTokenUsage(info.total_token_usage);
   const last = readTokenUsage(info.last_token_usage);
+  if (total && previousTotals && sameUsage(total, previousTotals)) {
+    return { event: null, total, bareLast: false };
+  }
   const usage = last ?? (total && baselineValid ? subtractTokenUsage(total, previousTotals) : null);
   const bareLast = last !== null && total === null;
   const model = stringOr2(payload.model) ?? stringOr2(info.model) ?? context.model;
@@ -738,6 +825,9 @@ function readTokenUsage(raw) {
     cacheWriteInputTokens: numOr03(raw.cache_write_input_tokens),
     outputTokens: numOr03(raw.output_tokens)
   };
+}
+function sameUsage(a, b) {
+  return a.inputTokens === b.inputTokens && a.cachedInputTokens === b.cachedInputTokens && a.cacheWriteInputTokens === b.cacheWriteInputTokens && a.outputTokens === b.outputTokens;
 }
 function subtractTokenUsage(current, previous) {
   return {
@@ -2032,6 +2122,7 @@ var FIELDS_SHOWN_ONCE = `
 
 // src/commands/hook.ts
 import { spawn as spawn2 } from "node:child_process";
+import { realpathSync as realpathSync2 } from "node:fs";
 import { mkdir as mkdir3, open, rm as rm2, stat as stat7 } from "node:fs/promises";
 import { dirname as dirname3, join as join6 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
@@ -2158,16 +2249,35 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
       if (spawned++ >= MAX_DIRS_PER_TURN)
         break;
       const r = await resolveRepoRoot(dir);
-      if (!r || roots[r])
+      if (!r)
         continue;
-      const id = await repoIdentity(r);
-      if (id)
-        await recordRoot(r, id, roots, mains);
+      const id = roots[r] ?? await repoIdentity(r);
+      if (!id)
+        continue;
+      await recordRoot(r, id, roots, mains);
+      const alias = logicalRoot(dir, r);
+      if (alias && !roots[alias])
+        roots[alias] = id;
     }
     return offset + complete + 1;
   } finally {
     await fh.close();
   }
+}
+function logicalRoot(dir, root) {
+  let physical;
+  try {
+    physical = realpathSync2(dir);
+  } catch {
+    return null;
+  }
+  if (physical !== root && !physical.startsWith(`${root}/`))
+    return null;
+  const suffix = physical.slice(root.length);
+  if (!dir.endsWith(suffix))
+    return null;
+  const logical = dir.slice(0, dir.length - suffix.length);
+  return logical && logical !== root ? logical : null;
 }
 function isObject6(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -2230,7 +2340,7 @@ function spawnDetachedSync() {
 }
 
 // src/commands/hooks-install.ts
-import { realpathSync as realpathSync2 } from "node:fs";
+import { realpathSync as realpathSync3 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile7, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
 import { dirname as dirname4, join as join7 } from "node:path";
 import { stat as stat8 } from "node:fs/promises";
@@ -2319,7 +2429,7 @@ async function writeSettings(path, settings) {
 }
 function safeRealpath(p) {
   try {
-    return realpathSync2(p);
+    return realpathSync3(p);
   } catch {
     return p;
   }
