@@ -59,14 +59,17 @@ export function parseGitLogNumstat(text: string): RepoCommit[] {
 // Attributes each event to the EARLIEST commit at or after it:
 //   prev_commit.committedAt < event.occurredAt <= commit.committedAt
 // Events newer than the last commit are uncommitted/WIP and returned as no
-// attribution (omitted). Commits may arrive in any order; we sort ascending.
+// attribution (omitted). Commits may arrive in any order; we sort ascending,
+// and two commits at the same second tie-break on sha, so the CLI, the
+// server (which runs this same function over rows Postgres returns in no
+// promised order) and every re-run pick the same commit.
 export function matchEventsToCommits(
   events: AttributionEvent[],
   commits: RepoCommit[],
 ): EventAttribution[] {
   if (commits.length === 0) return [];
   const sorted = [...commits].sort(
-    (a, b) => a.committedAt.getTime() - b.committedAt.getTime(),
+    (a, b) => a.committedAt.getTime() - b.committedAt.getTime() || (a.sha < b.sha ? -1 : a.sha > b.sha ? 1 : 0),
   );
 
   const out: EventAttribution[] = [];
