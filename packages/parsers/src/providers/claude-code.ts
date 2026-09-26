@@ -279,6 +279,7 @@ async function scanProjectsDir(
         const parsed = parseAssistantEvent(raw, turns.current);
         if (parsed && (!since || parsed.occurredAt > since)) {
           events.push(parsed);
+          for (const extra of fallbackIterations(raw, parsed)) events.push(extra);
         }
       }
     }
@@ -358,6 +359,37 @@ export function lineEvidence(message: Record<string, unknown>): Evidence {
   if (!Array.isArray(message.content)) return out;
   for (const block of message.content) {
     if (isObject(block) && block.type === "tool_use") out = mergeEvidence(out, claudeToolEvidence({ name: block.name, input: block.input }));
+  }
+  return out;
+}
+
+// A response that fell back to another model carries `usage.iterations`:
+// the first attempt(s) on the original model, then the `fallback_message`
+// the top-level usage describes. Every iteration but the last is billed and
+// otherwise invisible — measured: 6 requests, 1.32M cache-read tokens on the
+// pricier model. Each becomes its own event, `<id>:iter:<i>`, under its own
+// model; the collapse folds their lines per field like any request.
+function fallbackIterations(raw: unknown, top: ParsedUsageEvent): ParsedUsageEvent[] {
+  if (!isObject(raw) || !isObject(raw.message) || !isObject(raw.message.usage)) return [];
+  const iterations = raw.message.usage.iterations;
+  if (!Array.isArray(iterations) || iterations.length < 2) return [];
+  const out: ParsedUsageEvent[] = [];
+  for (let i = 0; i < iterations.length - 1; i++) {
+    const it = iterations[i];
+    if (!isObject(it) || typeof it.model !== "string" || !it.model || it.model === "<synthetic>") continue;
+    const cc = isObject(it.cache_creation) ? it.cache_creation : null;
+    out.push({
+      ...top,
+      externalId: `${top.externalId}:iter:${i}`,
+      model: it.model,
+      inputTokens: numOr0(it.input_tokens),
+      outputTokens: numOr0(it.output_tokens),
+      cacheReadTokens: numOr0(it.cache_read_input_tokens),
+      cacheCreationTokens: numOr0(it.cache_creation_input_tokens),
+      cacheCreation5mTokens: cc ? numOr0(cc.ephemeral_5m_input_tokens) : 0,
+      cacheCreation1hTokens: cc ? numOr0(cc.ephemeral_1h_input_tokens) : 0,
+      metadata: { ...top.metadata, touched: { writes: [], reads: [] } },
+    });
   }
   return out;
 }

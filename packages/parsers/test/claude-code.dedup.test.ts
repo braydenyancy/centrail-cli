@@ -116,3 +116,52 @@ describe("two responses are two events", () => {
     expect(first.externalId).not.toContain("2026-06-01T"); // no timestamp in the key
   });
 });
+
+describe("model fallback: one response, two iterations on two models", () => {
+  // Measured on the reference corpus: 6 requests fell back (fable → opus);
+  // top-level usage is the FALLBACK iteration only, so the first attempt —
+  // 1.32M cache-read and 5.3k output tokens on the pricier model — was lost.
+  const fallbackLine = (at: string, out2: number) =>
+    JSON.stringify({
+      type: "assistant",
+      requestId: "req_fb",
+      timestamp: at,
+      cwd: "/r",
+      sessionId: "s",
+      message: {
+        id: "msg_fb",
+        model: "claude-opus-4-8",
+        usage: {
+          input_tokens: 32, output_tokens: out2, cache_read_input_tokens: 214815, cache_creation_input_tokens: 0,
+          iterations: [
+            { type: "message", model: "claude-fable-5-1", input_tokens: 32, output_tokens: 443, cache_read_input_tokens: 255332, cache_creation_input_tokens: 1826, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1826 } },
+            { type: "fallback_message", model: "claude-opus-4-8", input_tokens: 32, output_tokens: out2, cache_read_input_tokens: 214815, cache_creation_input_tokens: 0 },
+          ],
+        },
+      },
+    });
+
+  it("counts the first attempt as its own event under its own model, and the response once at its final count", async () => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-fb-"));
+    await mkdir(join(base, "p"), { recursive: true });
+    await writeFile(join(base, "p", "s.jsonl"), `${[fallbackLine(T(1), 100), fallbackLine(T(2), 3543)].join("\n")}\n`);
+    const events = (await scanClaudeCodeLogs({ basePath: base })).sort((a, b) => a.externalId.localeCompare(b.externalId));
+    expect(events.map((e) => [e.externalId, e.model, e.outputTokens, e.cacheReadTokens, e.cacheCreationTokens, e.cacheCreation1hTokens])).toEqual([
+      ["req_fb", "claude-opus-4-8", 3543, 214815, 0, 0],
+      ["req_fb:iter:0", "claude-fable-5-1", 443, 255332, 1826, 1826],
+    ]);
+  });
+
+  it.each([
+    ["one iteration (the common case)", [{ type: "message", model: null, input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }]],
+    ["no iterations", undefined],
+    ["an iteration list that is not an array", "x"],
+    ["a non-final iteration with a null model", [{ type: "message", model: null, input_tokens: 1, output_tokens: 2 }, { type: "fallback_message", model: "m", input_tokens: 1, output_tokens: 2 }]],
+  ])("%s adds no event", async (_, iterations) => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-fb-"));
+    await mkdir(join(base, "p"), { recursive: true });
+    const raw = { type: "assistant", requestId: "r1", timestamp: T(1), sessionId: "s", message: { id: "m1", model: "m", usage: { input_tokens: 1, output_tokens: 2, ...(iterations === undefined ? {} : { iterations }) } } };
+    await writeFile(join(base, "p", "s.jsonl"), `${JSON.stringify(raw)}\n`);
+    expect((await scanClaudeCodeLogs({ basePath: base })).map((e) => e.externalId)).toEqual(["r1"]);
+  });
+});
