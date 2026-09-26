@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, open, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
@@ -171,14 +172,37 @@ async function recordTouchedRoots(transcript: string, offset: number, roots: Rec
       seen.add(dir);
       if (spawned++ >= MAX_DIRS_PER_TURN) break;
       const r = await resolveRepoRoot(dir);
-      if (!r || roots[r]) continue;
-      const id = await repoIdentity(r);
-      if (id) await recordRoot(r, id, roots, mains);
+      if (!r) continue;
+      const id = roots[r] ?? (await repoIdentity(r));
+      if (!id) continue;
+      await recordRoot(r, id, roots, mains);
+      // git answers with the physical path; the model may have typed a
+      // logical one (a symlinked ~/code, macOS /tmp → /private/tmp). Record
+      // the root under the prefix the path actually used too, so the path
+      // still places after the folder — and its symlink target — is gone.
+      const alias = logicalRoot(dir, r);
+      if (alias && !roots[alias]) roots[alias] = id;
     }
     return offset + complete + 1;
   } finally {
     await fh.close();
   }
+}
+
+// The prefix of `dir` (as typed) that corresponds to the physical repo
+// root `root`, or null when they are the same or the mapping is unclear.
+function logicalRoot(dir: string, root: string): string | null {
+  let physical: string;
+  try {
+    physical = realpathSync(dir);
+  } catch {
+    return null;
+  }
+  if (physical !== root && !physical.startsWith(`${root}/`)) return null;
+  const suffix = physical.slice(root.length);
+  if (!dir.endsWith(suffix)) return null;
+  const logical = dir.slice(0, dir.length - suffix.length);
+  return logical && logical !== root ? logical : null;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

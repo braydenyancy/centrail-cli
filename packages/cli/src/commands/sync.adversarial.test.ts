@@ -560,3 +560,26 @@ describe("cherry-picks and reverts", () => {
     expect(attr("req_rv_after")).toEqual([r]);
   });
 });
+
+describe("symlinked paths", () => {
+  it("a turn that edits through a symlinked path still places after the worktree is gone", async () => {
+    server.fields = ["repo"];
+    const { symlink } = await import("node:fs/promises");
+    const main = await fx.repo("sym/m", { remote: "https://github.com/acme/sym.git" });
+    const wt = await fx.worktree(main, "sym/m-wt", "wt");
+    const link = join(fx.root, "sym-link");
+    await symlink(join(fx.root, "sym"), link); // ~/code → /mnt/data/code, /tmp → /private/tmp
+    const ws = join(fx.root, "sym-ws");
+    await mkdir(ws);
+    const t = (i: number) => T0 + 90 * 60_000 + i * 1000;
+    const logical = join(link, "m-wt", "src", "x.ts"); // what the model typed
+    const path = await writeTranscript(claudeDir, ws, "sy", [
+      JSON.stringify({ type: "user", timestamp: new Date(t(0)).toISOString(), cwd: ws, sessionId: "sy", message: { role: "user", content: "go" } }),
+      transcriptLine({ sessionId: "sy", cwd: ws, requestId: "req_sym", out: 1, atMs: t(1), toolUse: { name: "Edit", input: { file_path: logical, old_string: "", new_string: "" } } }),
+    ]);
+    await runStopHook(JSON.stringify({ session_id: "sy", cwd: ws, transcript_path: path }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    await fx.git(main, "worktree", "remove", "--force", wt);
+    await runSync({ full: false });
+    expect(server.rows.get("req_sym")?.metadata).toMatchObject({ repo: { key: "github.com/acme/sym", label: "m-wt" }, placement: "files" });
+  });
+});
