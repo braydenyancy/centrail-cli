@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, open, rm, stat } from "node:fs/promises";
+import { mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
 import { readAuth, readState, writeState } from "../config.js";
@@ -107,7 +107,17 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   const roots = { ...(previous?.roots ?? {}) };
   const mains = { ...(previous?.mains ?? {}) };
   if (root && repo) await recordRoot(root, repo, roots, mains);
-  if (transcript) line.offset = await recordTouchedRoots(transcript, previous?.offset ?? 0, roots, mains, cwd);
+  if (transcript) {
+    line.transcript = transcript;
+    line.offset = await recordTouchedRoots(transcript, previous?.offset ?? 0, roots, mains, cwd);
+    // Subagents write their own transcripts beside the session's; a subagent
+    // that edited a worktree is the only record of that worktree's repo.
+    const subOffsets = { ...(previous?.subOffsets ?? {}) };
+    for (const sub of await subagentTranscripts(transcript)) {
+      subOffsets[sub] = await recordTouchedRoots(sub, subOffsets[sub] ?? 0, roots, mains, cwd);
+    }
+    if (Object.keys(subOffsets).length > 0) line.subOffsets = subOffsets;
+  }
   if (Object.keys(roots).length > 0) line.roots = roots;
   if (Object.keys(mains).length > 0) line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
@@ -120,6 +130,16 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
 // tool call touched, and add it to `roots`. Returns the new offset. A
 // directory under a root already known costs nothing; every other distinct
 // one costs one git spawn, capped per turn.
+async function subagentTranscripts(transcript: string): Promise<string[]> {
+  if (!transcript.endsWith(".jsonl")) return [];
+  const dir = join(transcript.slice(0, -".jsonl".length), "subagents");
+  try {
+    return (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
+  } catch {
+    return [];
+  }
+}
+
 // A root and its identity, plus its main checkout when it is a linked
 // worktree — recorded once per root per session.
 async function recordRoot(root: string, id: RepoIdentity, roots: Record<string, RepoIdentity>, mains: Record<string, string>): Promise<void> {

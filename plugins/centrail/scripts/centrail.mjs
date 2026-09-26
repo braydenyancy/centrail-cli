@@ -114,7 +114,7 @@ function claudeConfigDirs() {
   return [join2(homedir(), ".claude"), join2(homedir(), ".config", "claude")];
 }
 function claudeProjectDirs() {
-  return claudeConfigDirs().map((d) => join2(d, "projects"));
+  return claudeConfigDirs().map((d) => basename(d.replace(/[\\/]+$/, "")) === "projects" ? d : join2(d, "projects"));
 }
 function claudeAccountFiles() {
   const env = process.env.CLAUDE_CONFIG_DIR;
@@ -2123,7 +2123,7 @@ var FIELDS_SHOWN_ONCE = `
 // src/commands/hook.ts
 import { spawn as spawn2 } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
-import { mkdir as mkdir3, open, rm as rm2, stat as stat7 } from "node:fs/promises";
+import { mkdir as mkdir3, open, readdir as readdir5, rm as rm2, stat as stat7 } from "node:fs/promises";
 import { dirname as dirname3, join as join6 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
@@ -2176,8 +2176,16 @@ async function stopHook(raw, surface, deps) {
   const mains = { ...previous?.mains ?? {} };
   if (root && repo)
     await recordRoot(root, repo, roots, mains);
-  if (transcript)
+  if (transcript) {
+    line.transcript = transcript;
     line.offset = await recordTouchedRoots(transcript, previous?.offset ?? 0, roots, mains, cwd);
+    const subOffsets = { ...previous?.subOffsets ?? {} };
+    for (const sub of await subagentTranscripts(transcript)) {
+      subOffsets[sub] = await recordTouchedRoots(sub, subOffsets[sub] ?? 0, roots, mains, cwd);
+    }
+    if (Object.keys(subOffsets).length > 0)
+      line.subOffsets = subOffsets;
+  }
   if (Object.keys(roots).length > 0)
     line.roots = roots;
   if (Object.keys(mains).length > 0)
@@ -2185,6 +2193,16 @@ async function stopHook(raw, surface, deps) {
   await appendSidecar(line, deps.sidecarPath);
   await maybeAutoSync(now, deps, deps.claimPath ?? join6(dirname3(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
+}
+async function subagentTranscripts(transcript) {
+  if (!transcript.endsWith(".jsonl"))
+    return [];
+  const dir = join6(transcript.slice(0, -".jsonl".length), "subagents");
+  try {
+    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join6(dir, f));
+  } catch {
+    return [];
+  }
 }
 async function recordRoot(root, id, roots, mains) {
   if (roots[root])
@@ -2866,6 +2884,7 @@ async function syncLocked(opts) {
     await writeState(state);
   }
   await compactSidecar();
+  await learnConfigDirs();
   const resolver = await IdentityResolver.create(installId);
   const placer = new Placer(resolver);
   const minOccurredAt = /* @__PURE__ */ new Date("2020-01-01T00:00:00.000Z");
@@ -2956,6 +2975,22 @@ async function syncLocked(opts) {
   console.log(
     `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped}` + (grandInbox > 0 ? ` \xB7 ${grandInbox} to review in Inbox` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
   );
+}
+async function learnConfigDirs() {
+  const known = claudeConfigDirs();
+  const learned = [];
+  for (const line of (await readSidecar()).values()) {
+    if (line.surface !== "claude-code" || !line.transcript)
+      continue;
+    const i = line.transcript.lastIndexOf("/projects/");
+    if (i <= 0)
+      continue;
+    const dir = line.transcript.slice(0, i);
+    if (!known.includes(dir) && !learned.includes(dir))
+      learned.push(dir);
+  }
+  if (learned.length > 0)
+    process.env.CLAUDE_CONFIG_DIR = [...known, ...learned].join(",");
 }
 async function stampSurface(state, surface, scanStartedAt) {
   state.surfaces[surface] = scanStartedAt.toISOString();

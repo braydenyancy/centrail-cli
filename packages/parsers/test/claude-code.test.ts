@@ -392,6 +392,14 @@ describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
     ]);
   });
 
+  it("an entry that IS a projects dir is scanned as one, not as <it>/projects (ccusage paths.rs)", async () => {
+    const cfg = await makeBase();
+    await writeSession(join(cfg, "projects"), "-Users-dev-myrepo", "a.jsonl", [ASSISTANT_LINE]);
+    process.env.CLAUDE_CONFIG_DIR = join(cfg, "projects");
+    expect(claudeProjectDirs()).toEqual([join(cfg, "projects")]);
+    expect((await scanClaudeCodeLogs({})).map((e) => e.externalId)).toEqual(["req_001"]);
+  });
+
   it("scanClaudeCodeLogs with no basePath reads from CLAUDE_CONFIG_DIR", async () => {
     const cfg = await makeBase();
     await writeSession(join(cfg, "projects"), "-Users-dev-myrepo", "a.jsonl", [

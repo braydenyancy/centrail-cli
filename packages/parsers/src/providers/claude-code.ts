@@ -86,8 +86,10 @@ export function claudeConfigDirs(): string[] {
   return [join(homedir(), ".claude"), join(homedir(), ".config", "claude")];
 }
 
+// An entry may name the config dir (…/.claude) or its projects dir itself
+// (ccusage accepts both, paths.rs); the latter is scanned as it is.
 export function claudeProjectDirs(): string[] {
-  return claudeConfigDirs().map((d) => join(d, "projects"));
+  return claudeConfigDirs().map((d) => (basename(d.replace(/[\\/]+$/, "")) === "projects" ? d : join(d, "projects")));
 }
 
 // Account-file candidates: <config-dir>/.claude.json when CLAUDE_CONFIG_DIR is

@@ -33,6 +33,11 @@ export type SidecarLine = {
   // root → its main checkout, for roots that are linked worktrees: where a
   // dead worktree's branches still live. Never on the wire.
   mains?: Record<string, string>;
+  // The session's transcript, so sync can scan a relocated config dir even
+  // when the hook's environment (and so the sync it spawns) was scrubbed of
+  // CLAUDE_CONFIG_DIR. Byte offsets into its subagent transcripts. Local only.
+  transcript?: string;
+  subOffsets?: Record<string, number>;
 };
 
 export async function appendSidecar(line: SidecarLine, path: string = SIDECAR_PATH): Promise<void> {

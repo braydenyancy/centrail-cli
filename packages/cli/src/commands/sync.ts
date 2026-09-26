@@ -1,4 +1,5 @@
 import {
+  claudeConfigDirs,
   matchEventsToCommits,
   SCANNERS,
   type AttributionEvent,
@@ -22,7 +23,7 @@ import { assertSecureBaseUrl } from "../url.js";
 import { readRepoCommits, readRepoSize } from "../git.js";
 import { Placer } from "../placer.js";
 import { IdentityResolver } from "../resolver.js";
-import { compactSidecar } from "../sidecar.js";
+import { compactSidecar, readSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
 import { eventInScope, surfaceEnabled } from "../scope.js";
 import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
@@ -81,6 +82,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     await writeState(state);
   }
   await compactSidecar(); // under the sync lock; hook appends are line-atomic
+  await learnConfigDirs();
   const resolver = await IdentityResolver.create(installId);
   const placer = new Placer(resolver);
   const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
@@ -194,6 +196,23 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
       (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
+}
+
+// A hook run with a scrubbed environment (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)
+// spawns a sync that cannot see CLAUDE_CONFIG_DIR, so a relocated config
+// dir would never be scanned. The hook recorded each transcript's path;
+// every config dir those paths live under joins the scan.
+async function learnConfigDirs(): Promise<void> {
+  const known = claudeConfigDirs();
+  const learned: string[] = [];
+  for (const line of (await readSidecar()).values()) {
+    if (line.surface !== "claude-code" || !line.transcript) continue;
+    const i = line.transcript.lastIndexOf("/projects/");
+    if (i <= 0) continue;
+    const dir = line.transcript.slice(0, i);
+    if (!known.includes(dir) && !learned.includes(dir)) learned.push(dir);
+  }
+  if (learned.length > 0) process.env.CLAUDE_CONFIG_DIR = [...known, ...learned].join(",");
 }
 
 async function stampSurface(

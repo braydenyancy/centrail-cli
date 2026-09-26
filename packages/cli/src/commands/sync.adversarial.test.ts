@@ -583,3 +583,41 @@ describe("symlinked paths", () => {
     expect(server.rows.get("req_sym")?.metadata).toMatchObject({ repo: { key: "github.com/acme/sym", label: "m-wt" }, placement: "files" });
   });
 });
+
+describe("where transcripts live", () => {
+  it("a hook whose environment was scrubbed (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB) still gets its relocated transcripts synced: the sidecar remembers the config dir", async () => {
+    server.fields = ["repo"];
+    const repo = await fx.repo("reloc", { remote: "https://github.com/acme/reloc.git" });
+    const relocated = join(home, "claude-relocated");
+    const path = await writeTranscript(relocated, repo, "rl", [line("rl", repo, "req_reloc", 1, T0 + 100 * 60_000)]);
+    await runStopHook(JSON.stringify({ session_id: "rl", cwd: repo, transcript_path: path }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    // The background sync inherits the scrubbed environment: CLAUDE_CONFIG_DIR is the default one.
+    await runSync({ full: false });
+    expect(server.rows.get("req_reloc")?.metadata.repo).toMatchObject({ key: "github.com/acme/reloc" });
+  });
+
+  it("a subagent that edited a worktree which died before sync: its turn still places by files", async () => {
+    server.fields = ["repo"];
+    const main = await fx.repo("sub/m", { remote: "https://github.com/acme/sub.git" });
+    const wt = await fx.worktree(main, "sub/m-wt", "wt");
+    const ws = join(fx.root, "sub-ws");
+    await mkdir(ws);
+    const t = (i: number) => T0 + 110 * 60_000 + i * 1000;
+    const path = await writeTranscript(claudeDir, ws, "sa", [
+      JSON.stringify({ type: "user", timestamp: new Date(t(0)).toISOString(), cwd: ws, sessionId: "sa", message: { role: "user", content: "go" } }),
+      transcriptLine({ sessionId: "sa", cwd: ws, requestId: "req_parent", out: 1, atMs: t(1), toolUse: { name: "Agent", input: { prompt: "edit it" } } }),
+    ]);
+    // Claude Code writes the subagent's transcript beside the session: <project>/<session>/subagents/<agent>.jsonl
+    const { writeFile } = await import("node:fs/promises");
+    const subDir = join(path.replace(/\.jsonl$/, ""), "subagents");
+    await mkdir(subDir, { recursive: true });
+    await writeFile(join(subDir, "agent-1.jsonl"), `${[
+      JSON.stringify({ type: "user", timestamp: new Date(t(2)).toISOString(), cwd: ws, sessionId: "sa", isSidechain: true, message: { role: "user", content: "edit it" } }),
+      transcriptLine({ sessionId: "sa", cwd: ws, requestId: "req_sub", out: 1, atMs: t(3), toolUse: { name: "Edit", input: { file_path: join(wt, "x.ts"), old_string: "", new_string: "" } } }),
+    ].join("\n")}\n`);
+    await runStopHook(JSON.stringify({ session_id: "sa", cwd: ws, transcript_path: path }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    await fx.git(main, "worktree", "remove", "--force", wt);
+    await runSync({ full: false });
+    expect(server.rows.get("req_sub")?.metadata).toMatchObject({ repo: { key: "github.com/acme/sub", label: "m-wt" }, placement: "files" });
+  });
+});
