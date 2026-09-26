@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedUsageEvent } from "@centrail/parsers";
-import { toWireUsageEvent } from "./wire.js";
+import type { Config } from "./config.js";
+import { toWireEvent, toWireUsageEvent } from "./wire.js";
 
 describe("toWireUsageEvent", () => {
   it("uploads only the explicit usage allowlist", () => {
@@ -74,5 +75,62 @@ describe("toWireUsageEvent", () => {
     } satisfies ParsedUsageEvent;
 
     expect(toWireUsageEvent(event).model).toBe("vendor-model-next-2099");
+  });
+});
+
+const base: ParsedUsageEvent = {
+  externalId: "req_1",
+  provider: "anthropic",
+  model: "claude-opus-4-8",
+  inputTokens: 1,
+  outputTokens: 2,
+  cacheReadTokens: 3,
+  cacheCreationTokens: 4,
+  cacheCreation5mTokens: 4,
+  cacheCreation1hTokens: 0,
+  occurredAt: new Date("2026-06-01T00:00:00Z"),
+  metadata: {
+    cwd: "/Users/jane/work/repo",
+    gitBranch: "feature/x",
+    sessionId: "s1",
+    version: "2.0.0",
+    entrypoint: "cli",
+    repo: { key: "github.com/acme/repo", label: "repo", source: "remote" },
+    origin: { host: "janes-mbp", platform: "darwin", client: "cli", clientVersion: "2.0.0" },
+  },
+};
+const cfg: Config = { denyRepos: [], installId: "i", hideRepoNames: false, hideBranchNames: false };
+const legacy = { fields: new Set<string>() };
+const aware = { fields: new Set(["repo"]) };
+
+describe("toWireEvent", () => {
+  it("against a server that does not list \"repo\": the 0.5.1 allowlist exactly, no metadata", () => {
+    expect(toWireEvent(base, legacy, cfg, "install-1")).toEqual(toWireUsageEvent(base));
+  });
+
+  it("against an identity-aware server: repo, session, branch and install id ship; path, host, platform, client do not", () => {
+    const w = toWireEvent(base, aware, cfg, "install-1");
+    expect(w.metadata).toEqual({
+      repo: { key: "github.com/acme/repo", label: "repo", source: "remote" },
+      sessionId: "s1",
+      gitBranch: "feature/x",
+      origin: { machineId: "install-1" },
+    });
+    for (const local of ["janes-mbp", "/Users/jane", "darwin", "2.0.0"]) {
+      expect(JSON.stringify(w)).not.toContain(local);
+    }
+  });
+
+  it("hideBranchNames drops the branch; hideRepoNames hashes the key and blanks the label", () => {
+    const w = toWireEvent(
+      base,
+      aware,
+      { ...cfg, hideBranchNames: true, hideRepoNames: true },
+      "install-1",
+    ) as { metadata: { gitBranch?: string; repo: { key: string; label: string } } };
+    expect(w.metadata.gitBranch).toBeUndefined();
+    expect(w.metadata.repo.key).toMatch(/^hidden:[0-9a-f]{16}$/);
+    expect(w.metadata.repo.label).toBe("");
+    expect(JSON.stringify(w)).not.toContain("acme");
   });
 });

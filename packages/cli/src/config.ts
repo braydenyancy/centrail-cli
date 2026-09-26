@@ -6,7 +6,7 @@ import { parseSyncState, type SyncState } from "./watermarks.js";
 
 export type { SyncState } from "./watermarks.js";
 
-const CONFIG_DIR = join(homedir(), ".config", "centrail");
+export const CONFIG_DIR = join(homedir(), ".config", "centrail");
 const AUTH_PATH = join(CONFIG_DIR, "auth.json");
 const STATE_PATH = join(CONFIG_DIR, "state.json");
 
@@ -156,7 +156,17 @@ function processIsAlive(pid: number): boolean {
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 export type Config = {
-  denyRepos: string[]; // repo names (basenames) to never attribute
+  denyRepos: string[]; // repo keys ("github.com/o/r") or labels to never attribute
+  installId: string | null; // random per-install id; null until first ensureInstallId
+  hideRepoNames: boolean; // ship repo identity as a keyed hash, no label
+  hideBranchNames: boolean; // never ship gitBranch
+};
+
+const DEFAULT_CONFIG: Config = {
+  denyRepos: [],
+  installId: null,
+  hideRepoNames: false,
+  hideBranchNames: false,
 };
 
 export async function readConfig(): Promise<Config> {
@@ -165,17 +175,53 @@ export async function readConfig(): Promise<Config> {
       string,
       unknown
     >;
-    const denyRepos = Array.isArray(raw.denyRepos)
-      ? raw.denyRepos.filter((r): r is string => typeof r === "string")
-      : [];
-    return { denyRepos };
+    return {
+      denyRepos: Array.isArray(raw.denyRepos)
+        ? raw.denyRepos.filter((r): r is string => typeof r === "string")
+        : [],
+      installId: typeof raw.installId === "string" && raw.installId ? raw.installId : null,
+      hideRepoNames: raw.hideRepoNames === true,
+      hideBranchNames: raw.hideBranchNames === true,
+    };
   } catch {
-    return { denyRepos: [] };
+    return { ...DEFAULT_CONFIG };
   }
+}
+
+export async function writeConfig(cfg: Config): Promise<void> {
+  await writeJsonAtomic(CONFIG_PATH, cfg);
 }
 
 export async function addDenyRepo(name: string): Promise<void> {
   const cfg = await readConfig();
   if (!cfg.denyRepos.includes(name)) cfg.denyRepos.push(name);
-  await writeJsonAtomic(CONFIG_PATH, cfg);
+  await writeConfig(cfg);
+}
+
+// The install id replaces the hostname on the wire: a random uuid minted
+// once per machine, meaningless off it, and the HMAC key for folder ids.
+// Created lazily so a config written by an older CLI upgrades in place.
+export async function ensureInstallId(): Promise<string> {
+  const cfg = await readConfig();
+  if (cfg.installId) return cfg.installId;
+  cfg.installId = randomUUID();
+  await writeConfig(cfg);
+  return cfg.installId;
+}
+
+// The last ingest body exactly as sent, for `centrail inspect --last`. One
+// file, overwritten per batch, mode 0600: it is the answer to "what leaves
+// my machine", and it must be the real payload, not a description of it.
+const LAST_SYNC_PATH = join(CONFIG_DIR, "last-sync.json");
+
+export async function writeLastSync(body: unknown): Promise<void> {
+  await writeJsonAtomic(LAST_SYNC_PATH, body, 0o600);
+}
+
+export async function readLastSync(): Promise<string | null> {
+  try {
+    return await readFile(LAST_SYNC_PATH, "utf-8");
+  } catch {
+    return null;
+  }
 }

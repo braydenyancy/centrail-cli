@@ -5,18 +5,23 @@ import {
   type EventAttribution,
   type ParsedUsageEvent,
 } from "@centrail/parsers";
-import { acquireSyncLock, readAuth, readConfig, readState, writeState } from "../config.js";
+import {
+  acquireSyncLock,
+  ensureInstallId,
+  readAuth,
+  readConfig,
+  readState,
+  writeLastSync,
+  writeState,
+  type Config,
+} from "../config.js";
 import { sinceForSurface, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
-import {
-  readRepoCommits,
-  readRepoSize,
-  repoName,
-  resolveRepoRoot,
-} from "../git.js";
+import { readRepoCommits, readRepoSize } from "../git.js";
+import { IdentityResolver } from "../resolver.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
-import { toWireUsageEvent } from "../wire.js";
+import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
@@ -57,6 +62,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   assertSecureBaseUrl(auth.baseUrl);
 
   const state = await readState();
+  const config = await readConfig();
+  const installId = await ensureInstallId();
+  const caps = await readCapabilities(auth);
+  const resolver = await IdentityResolver.create(installId);
   const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
   const maxOccurredAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -90,12 +99,20 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       continue;
     }
     anyEvents = true;
+    // Repo identity is stamped here, while the folder may still exist; the
+    // sidecar covers the sessions whose folder is already gone.
+    for (const e of events) await resolver.stamp(e);
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
       attributionEvents.push(...events);
     }
 
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
+      const body = {
+        source: { surface: scanner.surface, kind: "local_logs" },
+        events: batch.map((e) => toWireEvent(e, caps, config, installId)),
+      };
+      await writeLastSync(body); // `centrail inspect --last`: exactly what left
       const res = await fetch(`${auth.baseUrl}/api/cli/ingest`, {
         method: "POST",
         headers: {
@@ -103,10 +120,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
           authorization: `Bearer ${auth.token}`,
           ...versionHeaders(),
         },
-        body: JSON.stringify({
-          source: { surface: scanner.surface, kind: "local_logs" },
-          events: batch.map(toWireUsageEvent),
-        }),
+        body: JSON.stringify(body),
       });
       if (res.status === 401) {
         throw new Error("Token revoked or expired — run `centrail connect`");
@@ -138,7 +152,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
 
   if (attributionEvents.length > 0) {
-    await pushAttributions(auth, attributionEvents);
+    await pushAttributions(auth, attributionEvents, resolver, config, caps);
   }
 
   console.log(
@@ -161,6 +175,7 @@ async function stampSurface(
 type WireAttribution = {
   externalId: string;
   repoName: string;
+  repoKey?: string; // identity key; the server binds rules to this once it can
   commitSha: string;
   committedAt: string;
   branch: string | null;
@@ -169,48 +184,65 @@ type WireAttribution = {
   filesChanged: number;
 };
 
-// Group events by cwd -> repo, match each repo's events to its commits, and
-// POST the mapping. Git history never leaves the machine; only the derived
-// rows do. Failures here are logged, not thrown — attribution is best-effort
-// and must never brick a successful event sync.
+// Group events by repo, match each repo's events to its commits, and POST the
+// mapping. Git history never leaves the machine; only the derived rows do.
+// Failures here are logged, not thrown — attribution is best-effort and must
+// never brick a successful event sync.
+//
+// A session whose folder is gone (a deleted worktree — 70% of tokens on the
+// reference machine) still attributes when ANY live checkout of the same
+// repo identity exists on this machine: commits are shared across
+// worktrees and clones, so its history answers for the dead folder.
 async function pushAttributions(
   auth: { baseUrl: string; token: string },
   events: ParsedUsageEvent[],
+  resolver: IdentityResolver,
+  config: Config,
+  caps: Capabilities,
 ): Promise<void> {
-  const config = await readConfig();
   const deny = new Set(config.denyRepos);
+  const identityAware = caps.fields.has("repo");
 
-  // Bucket events by cwd; resolve each distinct cwd to a repo root once.
-  const byCwd = new Map<string, ParsedUsageEvent[]>();
-  for (const e of events) {
-    const cwd = e.metadata.cwd;
-    if (!cwd) continue;
-    (byCwd.get(cwd) ?? byCwd.set(cwd, []).get(cwd)!).push(e);
-  }
-
-  // repoRoot -> { name, events }
+  // repoRoot -> { name, key, events }: one bucket per live checkout root.
   const byRepo = new Map<
     string,
-    { name: string; events: ParsedUsageEvent[] }
+    { name: string; key: string; events: ParsedUsageEvent[] }
   >();
-  for (const [cwd, cwdEvents] of byCwd) {
-    const root = await resolveRepoRoot(cwd);
-    if (!root) continue;
-    const name = repoName(root);
-    if (deny.has(name)) continue;
-    const bucket = byRepo.get(root) ?? { name, events: [] };
-    bucket.events.push(...cwdEvents);
+  const orphans: ParsedUsageEvent[] = []; // repo known, folder gone
+  for (const e of events) {
+    const repo = e.metadata.repo;
+    if (!repo || repo.source === "folder") continue;
+    if (deny.has(repo.key) || deny.has(repo.label)) continue;
+    const root = await resolver.liveRootFor(e);
+    if (!root) {
+      orphans.push(e);
+      continue;
+    }
+    const bucket = byRepo.get(root) ?? { name: repo.label, key: repo.key, events: [] };
+    bucket.events.push(e);
     byRepo.set(root, bucket);
+  }
+  // Orphans join the first live bucket carrying their identity.
+  const rootByKey = new Map<string, string>();
+  for (const [root, b] of byRepo) if (!rootByKey.has(b.key)) rootByKey.set(b.key, root);
+  for (const e of orphans) {
+    const root = rootByKey.get(e.metadata.repo!.key);
+    if (root) byRepo.get(root)!.events.push(e);
   }
   if (byRepo.size === 0) return;
 
-  const repos: { name: string; totalLoc: number | null; fileCount: number }[] = [];
+  const repos: { name: string; key?: string; totalLoc: number | null; fileCount: number }[] = [];
   const attributions: WireAttribution[] = [];
 
-  for (const [root, { name, events: repoEvents }] of byRepo) {
+  for (const [root, { name, key, events: repoEvents }] of byRepo) {
     const commits = await readRepoCommits(root);
     const size = await readRepoSize(root);
-    repos.push({ name, totalLoc: size.totalLoc, fileCount: size.fileCount });
+    repos.push({
+      name,
+      ...(identityAware ? { key } : {}),
+      totalLoc: size.totalLoc,
+      fileCount: size.fileCount,
+    });
 
     const input: AttributionEvent[] = repoEvents.map((e) => ({
       externalId: e.externalId,
@@ -225,6 +257,7 @@ async function pushAttributions(
       attributions.push({
         externalId: m.externalId,
         repoName: name,
+        ...(identityAware ? { repoKey: key } : {}),
         commitSha: m.sha,
         committedAt: m.committedAt.toISOString(),
         branch: branchByExternalId.get(m.externalId) ?? null,
@@ -273,7 +306,7 @@ async function pushAttributions(
   // skipped inside runFatePass (never guess); when none pass, no line prints.
   const tally = await runFatePass(
     auth,
-    [...byRepo].map(([root, { name }]) => ({ root, name })),
+    [...byRepo].map(([root, { name, key }]) => ({ root, name, key: identityAware ? key : undefined })),
   );
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);

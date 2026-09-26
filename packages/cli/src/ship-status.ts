@@ -16,6 +16,7 @@ import { versionHeaders } from "./version.js";
 // Wire row for the optional `fates` section of POST /api/cli/attribute.
 export type WireFate = {
   repoName: string;
+  repoKey?: string;
   commitSha: string;
   branch: string | null;
   fate: "shipped" | "in_flight" | "unshipped";
@@ -98,13 +99,13 @@ export async function gatherShipStatusFacts(
 // like attribution: failures warn, never throw.
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
-  repos: { root: string; name: string }[],
+  repos: { root: string; name: string; key?: string }[],
 ): Promise<FateTally | null> {
   const fates: WireFate[] = [];
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
 
-  for (const { root, name } of repos) {
+  for (const { root, name, key } of repos) {
     const facts = await gatherShipStatusFacts(root);
     if (!facts) continue; // no resolvable default branch — skip, never guess
     anyRepoPassed = true;
@@ -115,6 +116,7 @@ export async function runFatePass(
       else tally.unshipped++;
       fates.push({
         repoName: name,
+        ...(key ? { repoKey: key } : {}),
         commitSha: row.sha,
         branch: row.branch,
         fate: row.fate,

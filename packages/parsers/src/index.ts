@@ -15,6 +15,7 @@ export {
   claudeProjectDirs,
   type ClaudeCodeAccount,
   type ParsedUsageEvent,
+  type RepoIdentity,
 } from "./providers/claude-code.js";
 
 export { scanCopilotLogs } from "./providers/copilot-cli.js";

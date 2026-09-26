@@ -15,6 +15,15 @@ import { join } from "node:path";
 // dev mode) and the centrail CLI (hosted mode) — keep it free of any
 // framework or server-only imports.
 
+// One identity per repo, the same for every checkout of it. `key` is what
+// rules and grouping bind to; `label` is what a human sees. Computed by the
+// CLI (which has git); the parsers only carry it. See identity.ts in the CLI.
+export type RepoIdentity = {
+  key: string; // "github.com/owner/repo" | "sha:<root commit>" | "dir:<hmac>"
+  label: string; // folder basename, display only
+  source: "remote" | "root" | "folder";
+};
+
 export type ParsedUsageEvent = {
   externalId: string; // Anthropic request id, used for dedup
   provider: string;
@@ -28,17 +37,19 @@ export type ParsedUsageEvent = {
   cacheCreation1hTokens: number; // Anthropic 1h; 0 for providers without it
   occurredAt: Date;
   metadata: {
-    cwd?: string;
+    cwd?: string; // dropped from the wire once the server accepts `repo`
     gitBranch?: string;
     sessionId?: string;
     version?: string;
     entrypoint?: string;
     isSidechain?: boolean;
+    repo?: RepoIdentity; // set by the CLI at sync time; absent = unresolved
     origin?: {
       host: string;
       platform: string;
       client?: string; // e.g. "claude-vscode" — from entrypoint
       clientVersion?: string; // Claude Code version
+      machineId?: string; // random per-install id; replaces host
     };
   };
 };

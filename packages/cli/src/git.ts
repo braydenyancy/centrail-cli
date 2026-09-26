@@ -36,6 +36,15 @@ function exec(
   return execFileAsync(cmd, args, { ...opts, env: gitEnv() });
 }
 
+// Every git spawn in the CLI goes through here, so the GIT_DIR scrub above
+// cannot be bypassed by a new caller.
+export function gitExec(
+  args: string[],
+  opts: { maxBuffer?: number } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  return exec("git", args, opts);
+}
+
 // Resolve the git toplevel for a working dir. Returns null if not a repo.
 export async function resolveRepoRoot(cwd: string): Promise<string | null> {
   try {
