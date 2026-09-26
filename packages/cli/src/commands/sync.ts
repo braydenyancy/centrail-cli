@@ -89,13 +89,15 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   // attribution remains deferred until its session semantics are proven.
   const attributionEvents: ParsedUsageEvent[] = [];
 
+  // A widened scope (include, allow-list edit) rescans everything once: the
+  // events it held back were already behind the watermark.
+  const full = opts.full || config.pendingBackfill;
+
   for (const scanner of SCANNERS) {
     if (!surfaceEnabled(config, scanner.surface)) continue; // switched off; no watermark moves
     // Each surface keeps its own watermark so a scanner added in an upgrade
     // backfills its full history instead of inheriting another's cutoff.
-    const mark = opts.full
-      ? undefined
-      : sinceForSurface(state, scanner.surface, scanner.revision);
+    const mark = full ? undefined : sinceForSurface(state, scanner.surface, scanner.revision);
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
@@ -155,6 +157,11 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
     await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
+  }
+
+  if (config.pendingBackfill) {
+    config.pendingBackfill = false; // every enabled surface got its full pass above
+    await writeConfig(config);
   }
 
   if (!anyEvents) {

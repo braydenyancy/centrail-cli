@@ -1,0 +1,64 @@
+{
+  "source": {
+    "surface": "claude-code",
+    "kind": "local_logs"
+  },
+  "account": {
+    "accountUuid": "db2e85a1-8696-4a69-9e29-2920cac54146",
+    "emailAddress": "aus10lynes@gmail.com",
+    "organizationUuid": "21586603-adea-4e4b-b1b0-52329e793fd6",
+    "billingType": "stripe_subscription"
+  },
+  "events": [
+    {
+      "externalId": "req_live",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "inputTokens": 10,
+      "outputTokens": 7,
+      "cacheReadTokens": 1000,
+      "cacheCreationTokens": 0,
+      "cacheCreation5mTokens": 0,
+      "cacheCreation1hTokens": 0,
+      "occurredAt": "2026-09-26T04:12:52.053Z",
+      "metadata": {
+        "sessionId": "s-live",
+        "gitBranch": "HEAD",
+        "repo": {
+          "key": "github.com/acme/probe",
+          "label": "repo",
+          "source": "remote"
+        },
+        "origin": {
+          "platform": "linux",
+          "machineId": "3c4b6dad-29ff-41e5-b599-1419dc22ff62"
+        }
+      }
+    },
+    {
+      "externalId": "req_dead",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "inputTokens": 10,
+      "outputTokens": 140,
+      "cacheReadTokens": 1000,
+      "cacheCreationTokens": 0,
+      "cacheCreation5mTokens": 0,
+      "cacheCreation1hTokens": 0,
+      "occurredAt": "2026-09-26T04:12:52.053Z",
+      "metadata": {
+        "sessionId": "s-dead",
+        "gitBranch": "HEAD",
+        "repo": {
+          "key": "github.com/acme/probe",
+          "label": "repo-wt",
+          "source": "remote"
+        },
+        "origin": {
+          "platform": "linux",
+          "machineId": "3c4b6dad-29ff-41e5-b599-1419dc22ff62"
+        }
+      }
+    }
+  ]
+}

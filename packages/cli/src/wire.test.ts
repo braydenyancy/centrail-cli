@@ -106,6 +106,7 @@ const cfg: Config = {
   denyRepos: [],
   surfaces: {},
   scopeDecidedAt: null,
+  pendingBackfill: false,
   hideRepoNames: false,
   hideBranchNames: false,
 };

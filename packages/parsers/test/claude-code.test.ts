@@ -120,6 +120,21 @@ describe("scanClaudeCodeLogs", () => {
     expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:00.000Z");
   });
 
+  it("collapses the same request across files — a resumed session copies the prefix", async () => {
+    const base = await makeBase();
+    const early = JSON.parse(ASSISTANT_LINE);
+    early.message.usage.output_tokens = 5;
+    const final = JSON.parse(ASSISTANT_LINE);
+    final.message.usage.output_tokens = 140;
+    await writeSession(base, "p", "original.jsonl", [JSON.stringify(early)]);
+    await writeSession(base, "p", "resumed.jsonl", [JSON.stringify(final)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].outputTokens).toBe(140);
+  });
+
   it("falls back to message id + session + timestamp when requestId is absent", async () => {
     // Gateways omit requestId and can reuse a message id across responses;
     // the fallback key is stable across rescans, which the server's unique

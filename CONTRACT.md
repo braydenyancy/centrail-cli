@@ -103,3 +103,10 @@ fixed — the server must accept a payload before any published CLI can send it:
 
 Escape hatches for the check itself: `CENTRAIL_CONTRACT_URL` points it at a
 staging deployment; `CENTRAIL_CONTRACT_ATTEMPTS` bounds the retry loop.
+
+## Wire samples
+
+`wire-samples/ingest-0.6.json` is a real ingest body captured from the CLI
+(`centrail inspect --last`) against a server advertising `fields: ["repo"]`.
+The server repo carries a copy under its wire tests and parses it; when the
+shape changes, regenerate this file from a real sync and update both.

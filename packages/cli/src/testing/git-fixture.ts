@@ -40,7 +40,7 @@ export type Scratch = {
   repo: (name: string, opts?: { remote?: string; empty?: boolean }) => Promise<string>;
   // `git worktree add` at `path` (absolute or relative to root) on a new branch.
   worktree: (repo: string, path: string, branch?: string) => Promise<string>;
-  commit: (cwd: string, file: string, content?: string) => Promise<string>;
+  commit: (cwd: string, file: string, content?: string, at?: Date) => Promise<string>;
   cleanup: () => Promise<void>;
 };
 
@@ -52,10 +52,17 @@ export async function scratch(): Promise<Scratch> {
     const { stdout } = await run("git", ["-C", cwd, ...args], { env });
     return stdout.trim();
   };
-  const commit = async (cwd: string, file: string, content = `${file}\n`): Promise<string> => {
+  // `at` overrides the pinned 2026-06-01 commit date, for tests that need a
+  // commit AFTER an event stamped near the wall clock.
+  const commit = async (cwd: string, file: string, content = `${file}\n`, at?: Date): Promise<string> => {
     await writeFile(join(cwd, file), content);
     await git(cwd, "add", file);
-    await git(cwd, "commit", "-q", "-m", file);
+    if (at) {
+      const dated = { ...env, GIT_AUTHOR_DATE: at.toISOString(), GIT_COMMITTER_DATE: at.toISOString() };
+      await run("git", ["-C", cwd, "commit", "-q", "-m", file], { env: dated });
+    } else {
+      await git(cwd, "commit", "-q", "-m", file);
+    }
     return git(cwd, "rev-parse", "HEAD");
   };
   const repo = async (name: string, opts: { remote?: string; empty?: boolean } = {}): Promise<string> => {

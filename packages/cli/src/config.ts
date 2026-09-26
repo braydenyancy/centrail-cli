@@ -172,6 +172,7 @@ export type Config = {
   denyRepos: string[]; // used in both modes
   surfaces: Record<string, boolean>; // scanner surface -> enabled; absent = enabled
   scopeDecidedAt: string | null; // when the preview was shown and answered
+  pendingBackfill: boolean; // scope widened: next sync rescans everything once
   hideRepoNames: boolean; // ship repo identity as a keyed hash, no label
   hideBranchNames: boolean; // never ship gitBranch
 };
@@ -183,6 +184,7 @@ const DEFAULT_CONFIG: Config = {
   denyRepos: [],
   surfaces: {},
   scopeDecidedAt: null,
+  pendingBackfill: false,
   hideRepoNames: false,
   hideBranchNames: false,
 };
@@ -203,6 +205,7 @@ export function parseConfig(raw: unknown): Config {
     denyRepos: stringList(o.denyRepos),
     surfaces,
     scopeDecidedAt: typeof o.scopeDecidedAt === "string" ? o.scopeDecidedAt : null,
+    pendingBackfill: o.pendingBackfill === true,
     hideRepoNames: o.hideRepoNames === true,
     hideBranchNames: o.hideBranchNames === true,
   };

@@ -56,6 +56,7 @@ export async function runSetup(opts: { interactive: boolean }): Promise<void> {
   try {
     const all = (await ask("  Sync all of these, and any new repo this machine touches? [Y/n] ")).trim().toLowerCase();
     if (all === "" || all.startsWith("y")) {
+      if (cfg.mode === "allow") cfg.pendingBackfill = true;
       cfg.mode = "all";
     } else {
       const answer = await ask("  Numbers to EXCLUDE (e.g. 2,5), or `only 1,3` to sync just those: ");
@@ -65,6 +66,7 @@ export async function runSetup(opts: { interactive: boolean }): Promise<void> {
         if (sel.mode === "allow") {
           cfg.mode = "allow";
           cfg.allowRepos = keys;
+          cfg.pendingBackfill = true;
         } else {
           cfg.mode = "all";
           for (const k of keys) if (!cfg.denyRepos.includes(k)) cfg.denyRepos.push(k);
@@ -99,10 +101,14 @@ function printScope(rows: RepoRow[], cfg: Config): void {
   console.log(`  Surfaces: ${surfaces}   (centrail surfaces <name> on|off)`);
 }
 
+// Widening the scope sets pendingBackfill: events held back earlier were
+// scanned and the watermark moved past them, so only a full rescan (once)
+// brings the repo's history in. Narrowing never needs it.
 export async function runInclude(name: string): Promise<void> {
   const cfg = await updateConfig((c) => {
     c.denyRepos = c.denyRepos.filter((r) => r !== name);
     if (!c.allowRepos.includes(name)) c.allowRepos.push(name);
+    c.pendingBackfill = true;
   });
   console.log(
     cfg.mode === "allow"

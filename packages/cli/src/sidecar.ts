@@ -58,10 +58,13 @@ export async function readSidecar(path: string = SIDECAR_PATH): Promise<Map<stri
   return out;
 }
 
-// Rewrite the file as its last line per session, atomically. Called under
-// the sync lock so no hook append can be lost: appends that race the rename
-// land in the old inode and are re-read next sync from... nowhere. To close
-// that gap the compaction keeps every line from the last hour verbatim.
+// Rewrite the file as its last line per session, atomically. Hooks do not
+// take the sync lock (they must stay fast), so an append that lands between
+// the read below and the rename goes to the old inode and is lost. The bound
+// on that loss: one turn's line, and only for a session with no earlier line
+// kept — its next turn appends again. Lines from the last hour are kept
+// verbatim so a session's most recent branch/head is never collapsed away
+// while it is still live.
 export async function compactSidecar(path: string = SIDECAR_PATH, now = Date.now()): Promise<void> {
   let text: string;
   try {
