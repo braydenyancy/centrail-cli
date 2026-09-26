@@ -1,63 +1,84 @@
-{
-  "repos": [
-    {
-      "name": "a",
-      "key": "github.com/acme/a",
-      "totalLoc": 4,
-      "fileCount": 2
-    },
-    {
-      "name": "b-wt",
-      "key": "github.com/acme/b",
-      "totalLoc": 2,
-      "fileCount": 1
+[
+  {
+    "repos": [
+      {
+        "name": "a",
+        "key": "github.com/acme/a",
+        "totalLoc": 4,
+        "fileCount": 2
+      }
+    ],
+    "attributions": [],
+    "fates": [
+      {
+        "repoName": "a",
+        "repoKey": "github.com/acme/a",
+        "commitSha": "0669f810251de2930ce75dcb4a956967b8b14b9b",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-09-26T09:30:28.000Z",
+        "linesAdded": 1,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      },
+      {
+        "repoName": "a",
+        "repoKey": "github.com/acme/a",
+        "commitSha": "00c9046d21c341a2739242005e1ac8e121ac4e00",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-09-26T09:30:28.000Z",
+        "linesAdded": 1,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      }
+    ],
+    "facts": {
+      "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f",
+      "complete": true
     }
-  ],
-  "attributions": [],
-  "fates": [
-    {
-      "repoName": "a",
-      "repoKey": "github.com/acme/a",
-      "commitSha": "6382b0ccedb2b59696f506b9fe2e15da2a0dd8d3",
-      "branch": "main",
-      "fate": "shipped",
-      "committedAt": "2026-09-26T08:53:17.000Z",
-      "linesAdded": 1,
-      "linesDeleted": 0,
-      "filesChanged": 1
-    },
-    {
-      "repoName": "a",
-      "repoKey": "github.com/acme/a",
-      "commitSha": "02b4bb23798022ab4f4400fc5915c993428787f4",
-      "branch": "main",
-      "fate": "shipped",
-      "committedAt": "2026-09-26T08:53:17.000Z",
-      "linesAdded": 1,
-      "linesDeleted": 0,
-      "filesChanged": 1
-    },
-    {
-      "repoName": "b-wt",
-      "repoKey": "github.com/acme/b",
-      "commitSha": "02b4bb23798022ab4f4400fc5915c993428787f4",
-      "branch": "main",
-      "fate": "shipped",
-      "committedAt": "2026-09-26T08:53:17.000Z",
-      "linesAdded": 1,
-      "linesDeleted": 0,
-      "filesChanged": 1
-    },
-    {
-      "repoName": "b-wt",
-      "repoKey": "github.com/acme/b",
-      "commitSha": "ed6b603335ad3e3615af55c4e8e949a9798349d8",
-      "branch": "wt",
-      "fate": "in_flight",
-      "committedAt": "2026-09-26T08:53:17.000Z",
-      "linesAdded": 2,
-      "linesDeleted": 0,
-      "filesChanged": 1
+  },
+  {
+    "repos": [
+      {
+        "name": "b-wt",
+        "key": "github.com/acme/b",
+        "totalLoc": 2,
+        "fileCount": 1
+      }
+    ],
+    "attributions": [],
+    "fates": [
+      {
+        "repoName": "b-wt",
+        "repoKey": "github.com/acme/b",
+        "commitSha": "00c9046d21c341a2739242005e1ac8e121ac4e00",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-09-26T09:30:28.000Z",
+        "linesAdded": 1,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      },
+      {
+        "repoName": "b-wt",
+        "repoKey": "github.com/acme/b",
+        "commitSha": "75b659192dd3b644bccb5bd150b98106b5bc91d9",
+        "branch": "wt",
+        "fate": "in_flight",
+        "committedAt": "2026-09-26T09:30:28.000Z",
+        "linesAdded": 2,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      }
+    ],
+    "facts": {
+      "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f",
+      "complete": true
     }
-  ]
-}
+  }
+]
