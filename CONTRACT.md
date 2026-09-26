@@ -32,6 +32,39 @@ aggregate for storage compatibility and must not be added to cost separately.
 Servers default a missing `cacheWriteTokens` to zero, so wire version 1 clients
 remain valid.
 
+## Capabilities and the identity fields (wire 1, additive)
+
+`GET /api/cli/capabilities` returns `{ wireVersions, surfaces, fields? }`.
+`fields` lists optional event fields the deployed server accepts beyond the
+base shape. The CLI reads it once per sync; unreachable or absent means the
+0.5 shape exactly.
+
+When `fields` contains `"repo"` the CLI sends, per event:
+
+- `metadata.repo: { key, label, source }` — `key` is `host/owner/repo`
+  (canonical remote, lowercase, `.git` stripped), `sha:<root commit>` (no
+  remote), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
+  `hideRepoNames`; `label` is the folder basename (empty when hidden);
+  `source` is `remote | root | folder`.
+- `metadata.origin.machineId` — random per-install uuid.
+- and **omits** `metadata.cwd` and `metadata.origin.host`. A server that
+  advertises `"repo"` must therefore accept `origin` without `host`, and key
+  Inbox grouping and rules on `repo.key`, not `cwd`.
+
+Attribution and fate rows gain `repoKey` next to `repoName`; `repos[]` gains
+`key`. `repoName` stays the display label. Several checkouts of one repo
+carry one `key` and possibly different labels; the server picks one label
+per key.
+
+**One event per request.** The CLI now collapses the transcript lines of one
+request to one event holding the per-field maximum (Claude Code re-stamps
+usage on every content block and `output_tokens` grows across them). A
+server that previously stored the first line for a request should upsert
+`output_tokens = GREATEST(existing, incoming)` on conflict so the 24 h
+overlap re-send corrects rows inserted mid-stream. Events without an
+Anthropic `requestId` (gateways) arrive with
+`externalId = "msg:<message id>:<session id>:<timestamp>"`.
+
 ## Versioning
 
 Every request carries two headers:

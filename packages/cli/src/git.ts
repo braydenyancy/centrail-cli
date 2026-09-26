@@ -59,12 +59,15 @@ export function repoName(repoRoot: string): string {
   return basename(repoRoot);
 }
 
-// All commits in the repo with numstat. Empty array for an empty repo.
-export async function readRepoCommits(repoRoot: string): Promise<RepoCommit[]> {
+// Commits reachable from `ref` with numstat — HEAD for a live checkout, a
+// branch ref for a session whose own worktree is gone (branches outlive
+// worktrees), or "--all" when nothing better is known. Empty for an empty
+// repo or an unknown ref.
+export async function readRepoCommits(repoRoot: string, ref = "HEAD"): Promise<RepoCommit[]> {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--numstat", "--pretty=format:%x1e%H%x1f%cI"],
+      ["-C", repoRoot, "log", ref, "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout);

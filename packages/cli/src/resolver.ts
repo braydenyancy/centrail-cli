@@ -38,6 +38,13 @@ export class IdentityResolver {
     return cwd ? this.rootFor(cwd) : null;
   }
 
+  // The branch the Stop hook saw for this session, or null (detached / no
+  // sidecar). A dead worktree's commits are read from this ref in a sibling.
+  sidecarBranchFor(e: ParsedUsageEvent): string | null {
+    const line = e.metadata.sessionId ? this.sidecar.get(e.metadata.sessionId) : undefined;
+    return line?.branch ?? null;
+  }
+
   private async identityFor(e: ParsedUsageEvent): Promise<RepoIdentity | null> {
     const cwd = e.metadata.cwd;
     const fromSidecar = e.metadata.sessionId ? this.sidecar.get(e.metadata.sessionId) : undefined;

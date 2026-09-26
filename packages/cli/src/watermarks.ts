@@ -8,6 +8,7 @@ export type SyncState = {
   lastSyncAt: string | null; // pre-0.4.1 shared watermark; frozen, read-only
   surfaces: Record<string, string>; // surface -> ISO time of its last successful sync
   scannerRevisions: Record<string, number>; // surface -> discovery logic revision
+  autoSyncAt?: string; // last time the Stop hook started a background sync
 };
 
 // The scanner registry as of the last release with the shared watermark
@@ -35,6 +36,7 @@ export function parseSyncState(raw: unknown): SyncState {
     lastSyncAt: typeof obj.lastSyncAt === "string" ? obj.lastSyncAt : null,
     surfaces,
     scannerRevisions,
+    ...(typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {}),
   };
 }
 

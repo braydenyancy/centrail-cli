@@ -20,6 +20,7 @@ import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 import { readRepoCommits, readRepoSize } from "../git.js";
 import { IdentityResolver } from "../resolver.js";
+import { compactSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
 import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
 
@@ -65,6 +66,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   const config = await readConfig();
   const installId = await ensureInstallId();
   const caps = await readCapabilities(auth);
+  await compactSidecar(); // under the sync lock; hook appends are line-atomic
   const resolver = await IdentityResolver.create(installId);
   const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
   const maxOccurredAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -203,11 +205,18 @@ async function pushAttributions(
   const deny = new Set(config.denyRepos);
   const identityAware = caps.fields.has("repo");
 
-  // repoRoot -> { name, key, events }: one bucket per live checkout root.
-  const byRepo = new Map<
-    string,
-    { name: string; key: string; events: ParsedUsageEvent[] }
-  >();
+  // One bucket per (checkout root, ref). A live checkout reads its own HEAD
+  // log, as before. A session whose folder is gone joins a live checkout of
+  // the same identity and reads the branch its sidecar line recorded —
+  // branches outlive worktrees — or every ref when it was detached.
+  type Bucket = { root: string; ref: string; name: string; key: string; events: ParsedUsageEvent[] };
+  const buckets = new Map<string, Bucket>();
+  const bucket = (root: string, ref: string, name: string, key: string): Bucket => {
+    const id = `${root}\u0000${ref}`;
+    let b = buckets.get(id);
+    if (!b) buckets.set(id, (b = { root, ref, name, key, events: [] }));
+    return b;
+  };
   const orphans: ParsedUsageEvent[] = []; // repo known, folder gone
   for (const e of events) {
     const repo = e.metadata.repo;
@@ -218,31 +227,35 @@ async function pushAttributions(
       orphans.push(e);
       continue;
     }
-    const bucket = byRepo.get(root) ?? { name: repo.label, key: repo.key, events: [] };
-    bucket.events.push(e);
-    byRepo.set(root, bucket);
+    bucket(root, "HEAD", repo.label, repo.key).events.push(e);
   }
-  // Orphans join the first live bucket carrying their identity.
   const rootByKey = new Map<string, string>();
-  for (const [root, b] of byRepo) if (!rootByKey.has(b.key)) rootByKey.set(b.key, root);
+  for (const b of buckets.values()) if (!rootByKey.has(b.key)) rootByKey.set(b.key, b.root);
   for (const e of orphans) {
-    const root = rootByKey.get(e.metadata.repo!.key);
-    if (root) byRepo.get(root)!.events.push(e);
+    const repo = e.metadata.repo!;
+    const root = rootByKey.get(repo.key);
+    if (!root) continue; // no live checkout on this machine: usage ships, commits wait
+    const branch = resolver.sidecarBranchFor(e);
+    bucket(root, branch ? `refs/heads/${branch}` : "--all", repo.label, repo.key).events.push(e);
   }
-  if (byRepo.size === 0) return;
+  if (buckets.size === 0) return;
 
   const repos: { name: string; key?: string; totalLoc: number | null; fileCount: number }[] = [];
   const attributions: WireAttribution[] = [];
+  const sizedRoots = new Set<string>();
 
-  for (const [root, { name, key, events: repoEvents }] of byRepo) {
-    const commits = await readRepoCommits(root);
-    const size = await readRepoSize(root);
-    repos.push({
-      name,
-      ...(identityAware ? { key } : {}),
-      totalLoc: size.totalLoc,
-      fileCount: size.fileCount,
-    });
+  for (const { root, ref, name, key, events: repoEvents } of buckets.values()) {
+    const commits = await readRepoCommits(root, ref);
+    if (!sizedRoots.has(root)) {
+      sizedRoots.add(root);
+      const size = await readRepoSize(root);
+      repos.push({
+        name,
+        ...(identityAware ? { key } : {}),
+        totalLoc: size.totalLoc,
+        fileCount: size.fileCount,
+      });
+    }
 
     const input: AttributionEvent[] = repoEvents.map((e) => ({
       externalId: e.externalId,
@@ -304,10 +317,11 @@ async function pushAttributions(
   // Fate pass: recompute shipped / in_flight / unshipped for every recent sha
   // in each resolved repo. Repos without a resolvable default branch are
   // skipped inside runFatePass (never guess); when none pass, no line prints.
-  const tally = await runFatePass(
-    auth,
-    [...byRepo].map(([root, { name, key }]) => ({ root, name, key: identityAware ? key : undefined })),
-  );
+  const fateRepos = new Map<string, { root: string; name: string; key?: string }>();
+  for (const b of buckets.values()) {
+    if (!fateRepos.has(b.root)) fateRepos.set(b.root, { root: b.root, name: b.name, key: identityAware ? b.key : undefined });
+  }
+  const tally = await runFatePass(auth, [...fateRepos.values()]);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }

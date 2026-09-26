@@ -6,7 +6,10 @@ import { parseSyncState, type SyncState } from "./watermarks.js";
 
 export type { SyncState } from "./watermarks.js";
 
-export const CONFIG_DIR = join(homedir(), ".config", "centrail");
+// Overridable so tests and probes can run the real binary against a scratch
+// dir; never documented as a user knob.
+export const CONFIG_DIR =
+  process.env.CENTRAIL_CONFIG_DIR?.trim() || join(homedir(), ".config", "centrail");
 const AUTH_PATH = join(CONFIG_DIR, "auth.json");
 const STATE_PATH = join(CONFIG_DIR, "state.json");
 

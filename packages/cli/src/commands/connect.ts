@@ -67,7 +67,9 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
       });
       console.log(`  ✓ Paired (${PRIVATE_DEVICE_NAME})`);
       await reportDetectedLogs();
-      console.log("  Run `npx centrail sync` to push usage.");
+      console.log(FIELDS_SHOWN_ONCE);
+      console.log("  Run `npx centrail sync` to push usage, and `npx centrail install-hooks`");
+      console.log("  so Claude Code syncs by itself after each turn.");
       return;
     }
     if (body.status === "expired") {
@@ -106,3 +108,17 @@ async function reportDetectedLogs(): Promise<void> {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// Shown once, at pairing: the complete list of what sync sends. Kept in step
+// with toWireEvent (wire.ts) — that function is the policy, this is its
+// summary. `centrail inspect --last` prints the real payload any time.
+const FIELDS_SHOWN_ONCE = `
+  What leaves this machine on each sync — and nothing else:
+    tokens per model, timestamps, the agent and CLI version, session id,
+    repo identity (host/owner/repo or a root-commit hash), folder name,
+    branch, commit shas and line counts, a random per-install id.
+  Never: source, prompts, completions, secrets, paths, hostname, platform,
+  account details.
+  Verify any time:  npx centrail inspect --last
+  Toggles in ~/.config/centrail/config.json: hideRepoNames, hideBranchNames.
+`;
