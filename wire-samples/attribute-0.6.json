@@ -5,6 +5,12 @@
       "key": "github.com/acme/a",
       "totalLoc": 4,
       "fileCount": 2
+    },
+    {
+      "name": "b-wt",
+      "key": "github.com/acme/b",
+      "totalLoc": 2,
+      "fileCount": 1
     }
   ],
   "attributions": [],
@@ -12,10 +18,10 @@
     {
       "repoName": "a",
       "repoKey": "github.com/acme/a",
-      "commitSha": "1f8b8d777a7ed7c5496bddd97139d736474f925d",
+      "commitSha": "6382b0ccedb2b59696f506b9fe2e15da2a0dd8d3",
       "branch": "main",
       "fate": "shipped",
-      "committedAt": "2026-09-26T08:43:33.000Z",
+      "committedAt": "2026-09-26T08:53:17.000Z",
       "linesAdded": 1,
       "linesDeleted": 0,
       "filesChanged": 1
@@ -23,11 +29,33 @@
     {
       "repoName": "a",
       "repoKey": "github.com/acme/a",
-      "commitSha": "468d270e9eac7e0024632c8de2262d569af07604",
+      "commitSha": "02b4bb23798022ab4f4400fc5915c993428787f4",
       "branch": "main",
       "fate": "shipped",
-      "committedAt": "2026-09-26T08:43:33.000Z",
+      "committedAt": "2026-09-26T08:53:17.000Z",
       "linesAdded": 1,
+      "linesDeleted": 0,
+      "filesChanged": 1
+    },
+    {
+      "repoName": "b-wt",
+      "repoKey": "github.com/acme/b",
+      "commitSha": "02b4bb23798022ab4f4400fc5915c993428787f4",
+      "branch": "main",
+      "fate": "shipped",
+      "committedAt": "2026-09-26T08:53:17.000Z",
+      "linesAdded": 1,
+      "linesDeleted": 0,
+      "filesChanged": 1
+    },
+    {
+      "repoName": "b-wt",
+      "repoKey": "github.com/acme/b",
+      "commitSha": "ed6b603335ad3e3615af55c4e8e949a9798349d8",
+      "branch": "wt",
+      "fate": "in_flight",
+      "committedAt": "2026-09-26T08:53:17.000Z",
+      "linesAdded": 2,
       "linesDeleted": 0,
       "filesChanged": 1
     }
