@@ -85,25 +85,25 @@ describe("resolveDefaultBranch", () => {
 });
 
 describe("listRecentShas", () => {
-  it("parses sha\\x1fdate lines from git log --all", async () => {
+  const rec = (sha: string, iso: string, files: string[] = []) => `\x1e${sha}\x1f${iso}\n${files.join("\n")}${files.length ? "\n" : ""}`;
+
+  it("parses one numstat record per commit from git log --all: sha, date and line counts (§ 3.8 facts)", async () => {
     routeGit({
-      log: "aaa\x1f2026-07-20T10:00:00+00:00\nbbb\x1f2026-07-19T09:00:00+00:00\n",
+      log: rec("aaa", "2026-07-20T10:00:00+00:00", ["3\t1\tsrc/a.ts", "-\t-\timg.png"]) + rec("bbb", "2026-07-19T09:00:00+00:00"),
     });
     expect(await listRecentShas(ROOT)).toEqual([
-      { sha: "aaa", committedAt: "2026-07-20T10:00:00+00:00" },
-      { sha: "bbb", committedAt: "2026-07-19T09:00:00+00:00" },
+      { sha: "aaa", committedAt: "2026-07-20T10:00:00.000Z", linesAdded: 3, linesDeleted: 1, filesChanged: 2 },
+      { sha: "bbb", committedAt: "2026-07-19T09:00:00.000Z", linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
     ]);
     const args = execMock.mock.calls[0][1] as string[];
     expect(args).toContain("--all");
     expect(args).toContain("--since=90 days ago");
+    expect(args).toContain("--numstat");
   });
 
-  it("caps output at RECENT_SHA_CAP and skips malformed lines", async () => {
-    const lines = Array.from(
-      { length: RECENT_SHA_CAP + 50 },
-      (_, i) => `sha${i}\x1f2026-07-01T00:00:00+00:00`,
-    );
-    routeGit({ log: `garbage-line\n${lines.join("\n")}\n` });
+  it("caps output at RECENT_SHA_CAP and skips malformed records", async () => {
+    const records = Array.from({ length: RECENT_SHA_CAP + 50 }, (_, i) => rec(`sha${i}`, "2026-07-01T00:00:00+00:00"));
+    routeGit({ log: `garbage-line\n\x1enot-a-record\n${records.join("")}` });
     const shas = await listRecentShas(ROOT);
     expect(shas).toHaveLength(RECENT_SHA_CAP);
     expect(shas[0].sha).toBe("sha0");

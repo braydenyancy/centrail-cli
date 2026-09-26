@@ -143,26 +143,34 @@ export async function resolveDefaultBranch(repoRoot: string): Promise<string | n
   return null;
 }
 
-// Recent commits across ALL refs — shas + committer dates only, newest first,
-// capped so a monorepo can't flood the fate pass.
-export async function listRecentShas(
-  repoRoot: string,
-  sinceDays = 90,
-): Promise<{ sha: string; committedAt: string }[]> {
+// Recent commits across ALL refs with their facts — sha, committer date,
+// line counts — newest first, in ONE spawn, capped so a monorepo can't
+// flood the fate pass. The facts ride every fate row (§ 3.8) so the server
+// can match events to commits without a window, on any machine.
+export type RecentCommit = {
+  sha: string;
+  committedAt: string; // ISO
+  linesAdded: number;
+  linesDeleted: number;
+  filesChanged: number;
+};
+
+export async function listRecentShas(repoRoot: string, sinceDays = 90): Promise<RecentCommit[]> {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--pretty=format:%H%x1f%cI"],
-      { maxBuffer: FACT_BUFFER },
+      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI"],
+      { maxBuffer: 64 * 1024 * 1024 },
     );
-    const out: { sha: string; committedAt: string }[] = [];
-    for (const line of stdout.split("\n")) {
-      if (out.length >= RECENT_SHA_CAP) break;
-      const [sha, iso] = line.split("\x1f");
-      if (!sha?.trim() || !iso?.trim()) continue;
-      out.push({ sha: sha.trim(), committedAt: iso.trim() });
-    }
-    return out;
+    return parseGitLogNumstat(stdout)
+      .slice(0, RECENT_SHA_CAP)
+      .map((c) => ({
+        sha: c.sha,
+        committedAt: c.committedAt.toISOString(),
+        linesAdded: c.linesAdded,
+        linesDeleted: c.linesDeleted,
+        filesChanged: c.filesChanged,
+      }));
   } catch {
     return [];
   }

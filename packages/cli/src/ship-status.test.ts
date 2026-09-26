@@ -32,9 +32,9 @@ function tip(name: string, tipDate: string) {
 function stubHappyRepo(): void {
   git.resolveDefaultBranch.mockResolvedValue("main");
   git.listRecentShas.mockResolvedValue([
-    { sha: "aaa", committedAt: daysAgo(1) },
-    { sha: "bbb", committedAt: daysAgo(2) },
-    { sha: "ccc", committedAt: daysAgo(40) },
+    { sha: "aaa", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3 },
+    { sha: "bbb", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
+    { sha: "ccc", committedAt: daysAgo(40), linesAdded: 7, linesDeleted: 7, filesChanged: 1 },
   ]);
   git.listBranchTips.mockResolvedValue([
     tip("main", daysAgo(0)),
@@ -109,11 +109,31 @@ describe("runFatePass", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://centrail.org/api/cli/attribute");
     const body = JSON.parse((init as RequestInit).body as string);
+    // Every fate row carries the commit's facts (§ 3.8): the server matches
+    // events to commits from these, without a window, on any machine.
     expect(body.fates).toEqual([
-      { repoName: "repo", commitSha: "aaa", branch: "main", fate: "shipped" },
-      { repoName: "repo", commitSha: "bbb", branch: "feature/x", fate: "in_flight" },
-      { repoName: "repo", commitSha: "ccc", branch: "feature/dead", fate: "unshipped" },
+      { repoName: "repo", commitSha: "aaa", branch: "main", fate: "shipped", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3 },
+      { repoName: "repo", commitSha: "bbb", branch: "feature/x", fate: "in_flight", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
+      { repoName: "repo", commitSha: "ccc", branch: "feature/dead", fate: "unshipped", committedAt: daysAgo(40), linesAdded: 7, linesDeleted: 7, filesChanged: 1 },
     ]);
+    expect(body.repos).toEqual([]); // no repos passed: none declared
+  });
+
+  it("declares the repos in the FIRST fates call only, so a matching server learns sizes and keys in one round trip", async () => {
+    git.resolveDefaultBranch.mockResolvedValue("main");
+    git.listRecentShas.mockResolvedValue(Array.from({ length: 2001 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 1, linesDeleted: 0, filesChanged: 1 })));
+    git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
+    git.listReachableShas.mockResolvedValue(Array.from({ length: 2001 }, (_, i) => `s${i}`));
+    git.cherryEquivalentShas.mockResolvedValue([]);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ linked: 0 }), { status: 200 }));
+    const repos = [{ name: "repo", key: "github.com/acme/repo", totalLoc: 10, fileCount: 2 }];
+    await runFatePass(AUTH, [{ root: "/repo", name: "repo", key: "github.com/acme/repo" }], repos);
+    const first = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const second = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(first.repos).toEqual(repos);
+    expect(first.attributions).toEqual([]);
+    expect(second.repos).toEqual([]);
+    expect(first.fates[0]).toMatchObject({ repoKey: "github.com/acme/repo", committedAt: daysAgo(1) });
   });
 
   it("survives a server that rejects the fates call (old server, non-2xx)", async () => {
@@ -147,10 +167,7 @@ describe("runFatePass", () => {
   it("chunks fates at 2000 per call", async () => {
     git.resolveDefaultBranch.mockResolvedValue("main");
     git.listRecentShas.mockResolvedValue(
-      Array.from({ length: 2001 }, (_, i) => ({
-        sha: `s${i}`,
-        committedAt: daysAgo(1),
-      })),
+      Array.from({ length: 2001 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 0, linesDeleted: 0, filesChanged: 0 })),
     );
     git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
     git.listReachableShas.mockResolvedValue(

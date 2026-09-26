@@ -28,6 +28,11 @@ versioning.
   out there) shipped the login as its label; it is `~`. A plain folder
   deleted after its hook line lost its folder id. The hook's throttle was
   silenced by a clock stepped back, and an unwritable sidecar threw.
+- **Commit facts ride every fate row** (`committedAt`, line counts; decision
+  § 3.8), and against a server that advertises `"match"` the CLI stops
+  computing attributions: the server matches every still-unattributed event
+  of the repo key to the commits it knows, on any machine, with no window —
+  the 8% of tokens that attributed late or never on the reference machine.
 - **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
   hit the call-stack limit at 177k lines on the reference machine.
 - Shared stand-in server for harness tests; 220 CLI and 115 parsers tests.

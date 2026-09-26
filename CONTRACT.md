@@ -63,6 +63,16 @@ Attribution and fate rows gain `repoKey` next to `repoName`; `repos[]` gains
 carry one `key` and possibly different labels; the server picks one label
 per key.
 
+**Commit facts on fate rows, and `"match"` (0.6.0, decision § 3.8).** Every
+fate row now carries the commit's facts: `committedAt` (ISO), `linesAdded`,
+`linesDeleted`, `filesChanged`. When `fields` also contains `"match"`, the
+server attributes this user's still-unattributed events of each `repoKey` to
+those commits itself (earliest commit at or after the event, the same rule
+the CLI used, with no window), and the CLI sends **no** `attributions[]` —
+it declares `repos[]` with the first `fates` call instead. Without `"match"`
+the CLI attributes as before and the facts ride along unused. Matching is
+per user: another member's commit never absorbs your tokens by time alone.
+
 **One event per request.** The CLI now collapses the transcript lines of one
 request to one event holding the per-field maximum (Claude Code re-stamps
 usage on every content block and `output_tokens` grows across them). A

@@ -240,3 +240,27 @@ describe("§ 3.9 placement: sessions outside a repo find their home", () => {
     expect((server.rows.get("req_q1")?.metadata.repo as { key: string }).key).toMatch(/^dir:/);
   });
 });
+
+describe("§ 3.8 the server matches; the CLI ships commit facts", () => {
+  it.each([
+    ["a server that matches", ["repo", "match"], false],
+    ["a server that does not", ["repo"], true],
+  ])("against %s: fate rows carry committedAt and line counts; attribution rows are sent only when the server cannot match", async (_, fields, cliMatches) => {
+    server.fields = fields;
+    const repo = await fx.repo(`facts-${fields.length}`, { remote: `https://github.com/acme/facts-${fields.length}.git` });
+    const id = `req_facts_${fields.length}`;
+    await writeTranscript(claudeDir, repo, `sf${fields.length}`, [line(`sf${fields.length}`, repo, id, 3, T0)]);
+    await hook(`sf${fields.length}`, repo);
+    const sha = await fx.commit(repo, "facts.txt", "one\ntwo\n", new Date());
+    server.attributeBodies.length = 0;
+    await runSync({ full: false });
+    const fate = server.fates.find((f) => f.commitSha === sha) as (typeof server.fates)[number] & { committedAt?: string; linesAdded?: number; linesDeleted?: number; filesChanged?: number };
+    expect(fate).toMatchObject({ repoKey: `github.com/acme/facts-${fields.length}`, linesAdded: 2, linesDeleted: 0, filesChanged: 1 });
+    expect(Math.abs(new Date(fate.committedAt!).getTime() - Date.now())).toBeLessThan(5 * 60_000);
+    expect(server.attributions.some((a) => a.externalId === id)).toBe(cliMatches);
+    // The repos are declared either way — with the attributions, or with the first fates call.
+    expect(server.repos.map((r) => r.key)).toContain(`github.com/acme/facts-${fields.length}`);
+    server.fields = ["repo"];
+  });
+});
+

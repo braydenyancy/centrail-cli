@@ -231,6 +231,11 @@ async function pushAttributions(
   caps: Capabilities,
 ): Promise<void> {
   const identityAware = caps.fields.has("repo");
+  // § 3.8: a server that advertises "match" attributes events to commits
+  // itself, from the facts on the fate rows — every still-unattributed event
+  // of the repo key, no 24 h window, any machine. The CLI then declares its
+  // repos with the fates and computes no attributions at all.
+  const serverMatches = identityAware && caps.fields.has("match");
 
   // One bucket per (checkout root, ref). A live checkout reads its own HEAD
   // log, as before. A session whose folder is gone joins a live checkout of
@@ -271,7 +276,7 @@ async function pushAttributions(
   const sizedRoots = new Set<string>();
 
   for (const { root, ref, name, key, events: repoEvents } of buckets.values()) {
-    const commits = await readRepoCommits(root, ref);
+    const commits = serverMatches ? [] : await readRepoCommits(root, ref);
     if (!sizedRoots.has(root)) {
       sizedRoots.add(root);
       const size = await readRepoSize(root);
@@ -283,6 +288,7 @@ async function pushAttributions(
       });
     }
 
+    if (serverMatches) continue;
     const input: AttributionEvent[] = repoEvents.map((e) => ({
       externalId: e.externalId,
       occurredAt: e.occurredAt,
@@ -347,7 +353,7 @@ async function pushAttributions(
   for (const b of buckets.values()) {
     if (!fateRepos.has(b.root)) fateRepos.set(b.root, { root: b.root, name: b.name, key: identityAware ? b.key : undefined });
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()]);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : []);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }

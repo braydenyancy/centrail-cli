@@ -10,6 +10,7 @@ import {
   listRecentShas,
   resolveDefaultBranch,
   type BranchTip,
+  type RecentCommit,
 } from "./git.js";
 import { versionHeaders } from "./version.js";
 
@@ -20,7 +21,17 @@ export type WireFate = {
   commitSha: string;
   branch: string | null;
   fate: "shipped" | "in_flight" | "unshipped";
+  // The commit's facts (§ 3.8): a server that advertises "match" attributes
+  // this user's still-unattributed events of `repoKey` to these commits.
+  committedAt: string;
+  linesAdded: number;
+  linesDeleted: number;
+  filesChanged: number;
 };
+
+// The repos section the attribute route already knows, declared with the
+// first fates call when the server matches (no attributions call then).
+export type WireRepo = { name: string; key?: string; totalLoc: number | null; fileCount: number };
 
 export type FateTally = { shipped: number; inFlight: number; unshipped: number };
 
@@ -41,11 +52,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export async function gatherShipStatusFacts(
   repoRoot: string,
   now: Date = new Date(),
-): Promise<ShipStatusFacts | null> {
+): Promise<(ShipStatusFacts & { shas: RecentCommit[] }) | null> {
   const defaultBranch = await resolveDefaultBranch(repoRoot);
   if (!defaultBranch) return null;
 
-  const shas = await listRecentShas(repoRoot, WINDOW_DAYS);
+  const shas: RecentCommit[] = await listRecentShas(repoRoot, WINDOW_DAYS);
   const recent = new Set(shas.map((s) => s.sha));
   const cutoffMs = now.getTime() - WINDOW_DAYS * DAY_MS;
 
@@ -100,6 +111,7 @@ export async function gatherShipStatusFacts(
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
   repos: { root: string; name: string; key?: string }[],
+  declared: WireRepo[] = [],
 ): Promise<FateTally | null> {
   const fates: WireFate[] = [];
   let anyRepoPassed = false;
@@ -109,23 +121,29 @@ export async function runFatePass(
     const facts = await gatherShipStatusFacts(root);
     if (!facts) continue; // no resolvable default branch — skip, never guess
     anyRepoPassed = true;
+    const bySha = new Map<string, RecentCommit>((facts.shas as RecentCommit[]).map((c) => [c.sha, c]));
     const rows: CommitFateRow[] = computeCommitFates(facts);
     for (const row of rows) {
       if (row.fate === "shipped") tally.shipped++;
       else if (row.fate === "in_flight") tally.inFlight++;
       else tally.unshipped++;
+      const c = bySha.get(row.sha);
       fates.push({
         repoName: name,
         ...(key ? { repoKey: key } : {}),
         commitSha: row.sha,
         branch: row.branch,
         fate: row.fate,
+        committedAt: c?.committedAt ?? "",
+        linesAdded: c?.linesAdded ?? 0,
+        linesDeleted: c?.linesDeleted ?? 0,
+        filesChanged: c?.filesChanged ?? 0,
       });
     }
   }
   if (!anyRepoPassed) return null;
 
-  await pushFates(auth, fates);
+  await pushFates(auth, fates, declared);
   return tally;
 }
 
@@ -135,11 +153,13 @@ export async function runFatePass(
 async function pushFates(
   auth: { baseUrl: string; token: string },
   fates: WireFate[],
+  declared: WireRepo[],
 ): Promise<void> {
   if (fates.length === 0) return;
   try {
     for (let i = 0; i < fates.length; i += FATE_CHUNK) {
       const chunk = fates.slice(i, i + FATE_CHUNK);
+      const repos = i === 0 ? declared : [];
       const res = await fetch(`${auth.baseUrl}/api/cli/attribute`, {
         method: "POST",
         headers: {
@@ -147,7 +167,7 @@ async function pushFates(
           authorization: `Bearer ${auth.token}`,
           ...versionHeaders(),
         },
-        body: JSON.stringify({ repos: [], attributions: [], fates: chunk }),
+        body: JSON.stringify({ repos, attributions: [], fates: chunk }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
