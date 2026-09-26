@@ -404,3 +404,21 @@ describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
     expect(events.map((e) => e.externalId)).toEqual(["req_001"]);
   });
 });
+
+describe("a year of transcripts", () => {
+  it("scans 150,000 assistant lines in one project dir without overflowing the stack", async () => {
+    // `events.push(...perDir)` crashed at 177k lines on the reference machine
+    // (RangeError: Maximum call stack size exceeded): a `--full` sync would
+    // never complete there. Spread into a call is bounded; a loop is not.
+    const base = await makeBase();
+    const proto = JSON.parse(ASSISTANT_LINE);
+    const lines: string[] = [];
+    for (let i = 0; i < 150_000; i++) {
+      proto.requestId = `req_${i}`;
+      lines.push(JSON.stringify(proto));
+    }
+    await writeSession(base, "big", "s.jsonl", lines);
+    const events = await scanClaudeCodeLogs({ basePath: base });
+    expect(events).toHaveLength(150_000);
+  }, 60_000);
+});

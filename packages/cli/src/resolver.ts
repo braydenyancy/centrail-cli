@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import type { ParsedUsageEvent, RepoIdentity } from "@centrail/parsers";
-import { resolveRepoRoot } from "./git.js";
+import { nearestDirectory, resolveRepoRoot } from "./git.js";
 import { folderIdentity, repoIdentity } from "./identity.js";
 import { readSidecar, type SidecarLine } from "./sidecar.js";
 
@@ -29,7 +29,34 @@ export class IdentityResolver {
   async stamp(e: ParsedUsageEvent): Promise<void> {
     if (e.metadata.repo) return;
     const identity = await this.identityFor(e);
-    if (identity) e.metadata.repo = identity;
+    if (identity) {
+      e.metadata.repo = identity;
+      e.metadata.placement = identity.source === "folder" ? "folder" : "cwd";
+    }
+  }
+
+  // The repo a touched path falls under: first the roots the Stop hook
+  // recorded for the session (the folder may be gone), then live git on
+  // the path's directory. Null for a path in no repo.
+  async identityForPath(path: string, sessionId: string | undefined): Promise<RepoIdentity | null> {
+    const roots = sessionId ? this.sidecar.get(sessionId)?.roots : undefined;
+    if (roots) {
+      let best: string | null = null;
+      for (const root of Object.keys(roots)) {
+        if ((path === root || path.startsWith(`${root}/`)) && (!best || root.length > best.length)) best = root;
+      }
+      if (best) return roots[best];
+    }
+    // A path under a root already resolved live costs nothing; otherwise
+    // one git spawn per distinct existing directory, never per file (a
+    // turn touches many files in few directories).
+    for (const root of this.liveRoots) {
+      if (path === root || path.startsWith(`${root}/`)) return this.identityForRoot(root);
+    }
+    const dir = await nearestDirectory(path);
+    if (!dir) return null;
+    const root = await this.rootFor(dir);
+    return root ? this.identityForRoot(root) : null;
   }
 
   // The live checkout root for this event's cwd, or null when the folder is
@@ -46,7 +73,7 @@ export class IdentityResolver {
     return line?.branch ?? null;
   }
 
-  private async identityFor(e: ParsedUsageEvent): Promise<RepoIdentity | null> {
+  async identityFor(e: ParsedUsageEvent): Promise<RepoIdentity | null> {
     const cwd = e.metadata.cwd;
     const fromSidecar = e.metadata.sessionId ? this.sidecar.get(e.metadata.sessionId) : undefined;
     if (cwd) {
@@ -68,11 +95,14 @@ export class IdentityResolver {
     return null;
   }
 
+  private readonly liveRoots = new Set<string>();
+
   private async rootFor(cwd: string): Promise<string | null> {
     let root = this.rootByCwd.get(cwd);
     if (root === undefined) {
       root = await resolveRepoRoot(cwd);
       this.rootByCwd.set(cwd, root);
+      if (root) this.liveRoots.add(root);
     }
     return root;
   }

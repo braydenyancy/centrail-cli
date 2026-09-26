@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import type { ParsedUsageEvent } from "./claude-code.js";
 import { suffixDuplicateExternalIds } from "./external-id.js";
+import { codexCallEvidence, mergeEvidence, type Evidence } from "./evidence.js";
 
 // Codex stores one JSONL rollout per session under
 // $CODEX_HOME/sessions/YYYY/MM/DD (default: ~/.codex/sessions). We only read
@@ -48,7 +49,7 @@ export async function scanCodexLogs(opts: {
         continue;
       }
     }
-    events.push(...(await parseSession(path, opts.since)));
+    for (const e of await parseSession(path, opts.since)) events.push(e);
   }
 
   return suffixDuplicateExternalIds(events);
@@ -75,7 +76,7 @@ async function findCodexUsageFiles(): Promise<string[]> {
 
     // A custom CODEX_HOME may point directly at saved `codex exec --json`
     // output. Session-shaped JSONL within it is still safe to inspect.
-    if (!foundStandardRoot) files.push(...(await findJsonlFiles(home)));
+    if (!foundStandardRoot) for (const f of await findJsonlFiles(home)) files.push(f);
   }
 
   return files;
@@ -101,7 +102,7 @@ async function findJsonlFiles(basePath: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of entries) {
     const path = join(basePath, entry.name);
-    if (entry.isDirectory()) files.push(...(await findJsonlFiles(path)));
+    if (entry.isDirectory()) for (const f of await findJsonlFiles(path)) files.push(f);
     else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(path);
   }
   return files;
@@ -115,6 +116,7 @@ type SessionContext = {
   turnId?: string;
   client?: string;
   clientVersion?: string;
+  touched?: Evidence; // this turn's function_call evidence so far
 };
 
 async function parseSession(
@@ -154,6 +156,10 @@ async function parseSession(
       readTurnContext(raw.payload, context);
       continue;
     }
+    if (raw.type === "response_item" && raw.payload.type === "function_call") {
+      context.touched = mergeEvidence(context.touched, codexCallEvidence(raw.payload.name, raw.payload.arguments, context.cwd ?? "/"));
+      continue;
+    }
     if (raw.type !== "event_msg" || raw.payload.type !== "token_count") continue;
 
     const parsed = parseTokenCount(raw, context, previousTotals, baselineValid);
@@ -179,7 +185,9 @@ function readSessionMeta(payload: Record<string, unknown>, context: SessionConte
 }
 
 function readTurnContext(payload: Record<string, unknown>, context: SessionContext): void {
-  context.turnId = stringOr(payload.turn_id);
+  const turnId = stringOr(payload.turn_id);
+  if (turnId !== context.turnId) context.touched = undefined; // a new turn starts its own evidence
+  context.turnId = turnId;
   context.model = stringOr(payload.model);
   context.cwd = stringOr(payload.cwd) ?? context.cwd;
 }
@@ -240,6 +248,8 @@ function parseTokenCount(
         sessionId: context.sessionId,
         version: context.clientVersion,
         entrypoint: context.client,
+        turn: context.turnId ? `${context.sessionId}#${context.turnId}` : undefined,
+        touched: context.touched ? { writes: [...context.touched.writes], reads: [...context.touched.reads] } : { writes: [], reads: [] },
       },
     },
     total,

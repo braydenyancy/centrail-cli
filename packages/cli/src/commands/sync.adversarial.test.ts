@@ -177,3 +177,66 @@ describe("the username never leaves", () => {
     expect(text).not.toContain(hostname());
   });
 });
+
+describe("§ 3.9 placement: sessions outside a repo find their home", () => {
+  const toolLine = (sessionId: string, cwd: string, requestId: string, atMs: number, name: string, input: Record<string, unknown>) =>
+    transcriptLine({ sessionId, cwd, requestId, out: 1, atMs, toolUse: { name, input } });
+  const userLine = (sessionId: string, cwd: string, atMs: number) =>
+    JSON.stringify({ type: "user", timestamp: new Date(atMs).toISOString(), cwd, sessionId, message: { role: "user", content: "go" } });
+  const placementOf = (id: string) => [(server.rows.get(id)?.metadata.repo as { key?: string } | undefined)?.key, server.rows.get(id)?.metadata.placement];
+
+  it("parent-folder session across two repos: each turn placed by its files, a text-only turn sticky, all through the hook's offset, surviving a deleted worktree and a full rescan", async () => {
+    const ws = join(fx.root, "ws");
+    await mkdir(ws);
+    const a = await fx.repo("ws/a", { remote: "https://github.com/acme/a.git" });
+    const b = await fx.repo("ws/b", { remote: "https://github.com/acme/b.git" });
+    const bwt = await fx.worktree(b, "ws/b-wt", "wt");
+    const t = (i: number) => T0 + 10 * 60_000 + i * 1000;
+    const lines = [
+      userLine("sp", ws, t(0)),
+      line("sp", ws, "req_p1", 1, t(1)), // thinking, before any tool call
+      toolLine("sp", ws, "req_p2", t(2), "Edit", { file_path: join(a, "src", "x.ts"), old_string: "", new_string: "" }),
+      userLine("sp", ws, t(3)),
+      toolLine("sp", ws, "req_p3", t(4), "Bash", { command: `cd ${bwt} && npm test` }), // Bash-only turn, in the worktree
+      userLine("sp", ws, t(5)),
+      line("sp", ws, "req_p4", 1, t(6)), // text only: sticky
+    ];
+    const path = await writeTranscript(claudeDir, ws, "sp", lines.slice(0, 3));
+    await runStopHook(JSON.stringify({ session_id: "sp", cwd: ws, transcript_path: path }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    await writeTranscript(claudeDir, ws, "sp", lines);
+    await runStopHook(JSON.stringify({ session_id: "sp", cwd: ws, transcript_path: path }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    await fx.git(b, "worktree", "remove", "--force", bwt); // gone before sync
+    await runSync({ full: false });
+    expect(placementOf("req_p1")).toEqual(["github.com/acme/a", "files"]);
+    expect(placementOf("req_p2")).toEqual(["github.com/acme/a", "files"]);
+    expect(placementOf("req_p3")).toEqual(["github.com/acme/b", "files"]);
+    expect(server.rows.get("req_p3")?.metadata.repo).toMatchObject({ label: "b-wt" });
+    expect(placementOf("req_p4")).toEqual(["github.com/acme/b", "sticky"]);
+    // Nothing local leaves: touched paths and turn ids stay on the machine.
+    for (const id of ["req_p1", "req_p2", "req_p3", "req_p4"]) {
+      const text = JSON.stringify(server.rows.get(id));
+      expect(text).not.toContain(ws);
+      expect(text).not.toContain("touched");
+      expect(text).not.toContain('"turn"');
+    }
+    // A full rescan with repo a also gone places identically.
+    await rm(a, { recursive: true, force: true });
+    const before = [...server.rows].map(([k, v]) => [k, v.metadata.repo, v.metadata.placement]);
+    await runSync({ full: true });
+    expect([...server.rows].map(([k, v]) => [k, v.metadata.repo, v.metadata.placement])).toEqual(before);
+  });
+
+  it("a session inside a repo is placed by cwd whatever it touches; a session in a folder with no evidence is the folder", async () => {
+    const inside = await fx.repo("inside", { remote: "https://github.com/acme/inside.git" });
+    const other = await fx.repo("other2", { remote: "https://github.com/acme/other2.git" });
+    const plain = join(fx.root, "plain");
+    await mkdir(plain);
+    const t = (i: number) => T0 + 20 * 60_000 + i * 1000;
+    await writeTranscript(claudeDir, inside, "si", [userLine("si", inside, t(0)), toolLine("si", inside, "req_i1", t(1), "Write", { file_path: join(other, "z.ts"), content: "" })]);
+    await writeTranscript(claudeDir, plain, "sq", [userLine("sq", plain, t(2)), line("sq", plain, "req_q1", 1, t(3))]);
+    await runSync({ full: false });
+    expect(placementOf("req_i1")).toEqual(["github.com/acme/inside", "cwd"]);
+    expect(placementOf("req_q1")[1]).toBe("folder");
+    expect((server.rows.get("req_q1")?.metadata.repo as { key: string }).key).toMatch(/^dir:/);
+  });
+});

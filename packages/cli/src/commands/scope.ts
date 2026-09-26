@@ -19,7 +19,7 @@ export async function discoverRepos(): Promise<RepoRow[]> {
   const events: ParsedUsageEvent[] = [];
   for (const scanner of SCANNERS) {
     try {
-      events.push(...(await scanner.scan({})));
+      for (const e of await scanner.scan({})) events.push(e);
     } catch {
       // one unreadable surface must not hide the others
     }

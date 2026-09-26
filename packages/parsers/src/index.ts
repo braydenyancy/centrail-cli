@@ -9,14 +9,25 @@ import { scanCodexLogs } from "./providers/codex.js";
 
 export {
   collapseUsageEvents,
+  lineEvidence,
   readClaudeCodeAccount,
   scanClaudeCodeLogs,
   claudeConfigDirs,
   claudeProjectDirs,
+  TurnCounter,
   type ClaudeCodeAccount,
   type ParsedUsageEvent,
+  type Placement,
   type RepoIdentity,
 } from "./providers/claude-code.js";
+
+export {
+  bashPaths,
+  claudeToolEvidence,
+  codexCallEvidence,
+  mergeEvidence,
+  type Evidence,
+} from "./providers/evidence.js";
 
 export { scanCopilotLogs } from "./providers/copilot-cli.js";
 export {

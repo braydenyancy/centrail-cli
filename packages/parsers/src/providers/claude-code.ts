@@ -1,7 +1,8 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { claudeToolEvidence, mergeEvidence, type Evidence } from "./evidence.js";
 
 // Scans Claude Code's local JSONL logs and returns parsed usage events.
 //
@@ -24,6 +25,12 @@ export type RepoIdentity = {
   source: "remote" | "root" | "folder";
 };
 
+// How a request's repo was chosen (§ 3.9): its session's cwd is inside the
+// repo; its turn's touched files name it; the session's previous turn
+// did; or nothing did and it is the folder's own id. Shipped as the
+// disclaimer next to `repo`.
+export type Placement = "cwd" | "files" | "sticky" | "folder";
+
 export type ParsedUsageEvent = {
   externalId: string; // Anthropic request id, used for dedup
   provider: string;
@@ -44,12 +51,14 @@ export type ParsedUsageEvent = {
     entrypoint?: string;
     isSidechain?: boolean;
     repo?: RepoIdentity; // set by the CLI at sync time; absent = unresolved
+    placement?: Placement; // how `repo` was chosen; set with it
+    turn?: string; // local only: the transcript turn this request belongs to
+    touched?: Evidence; // local only: files this request wrote and read
     origin?: {
       host: string;
       platform: string;
       client?: string; // e.g. "claude-vscode" — from entrypoint
       clientVersion?: string; // Claude Code version
-      machineId?: string; // random per-install id; replaces host
     };
   };
 };
@@ -139,7 +148,9 @@ export async function scanClaudeCodeLogs(opts: {
 
   const events: ParsedUsageEvent[] = [];
   for (const base of bases) {
-    events.push(...(await scanProjectsDir(base, since)));
+    // Never `push(...big)`: a year of transcripts is more arguments than a
+    // call takes, and the spread crashed a full scan at 177k lines.
+    for (const e of await scanProjectsDir(base, since)) events.push(e);
   }
   return collapseUsageEvents(events);
 }
@@ -181,6 +192,8 @@ export function collapseUsageEvents(events: ParsedUsageEvent[]): ParsedUsageEven
     if (e.cacheWriteTokens !== undefined) {
       prev.cacheWriteTokens = Math.max(prev.cacheWriteTokens ?? 0, e.cacheWriteTokens);
     }
+    if (e.metadata.touched) prev.metadata.touched = mergeEvidence(prev.metadata.touched, e.metadata.touched);
+    if (!prev.metadata.turn) prev.metadata.turn = e.metadata.turn;
     // The earliest timestamp is the request's start; keep it.
     if (e.occurredAt < prev.occurredAt) prev.occurredAt = e.occurredAt;
   }
@@ -251,6 +264,9 @@ async function scanProjectsDir(
       } catch {
         continue;
       }
+      // Turns are numbered per file: a subagent transcript restarts at 1
+      // and must not share turn ids with its parent.
+      const turns = new TurnCounter(basename(path, ".jsonl"));
       for (const line of content.split("\n")) {
         if (!line.trim()) continue;
         let raw: unknown;
@@ -259,7 +275,8 @@ async function scanProjectsDir(
         } catch {
           continue;
         }
-        const parsed = parseAssistantEvent(raw);
+        turns.observe(raw);
+        const parsed = parseAssistantEvent(raw, turns.current);
         if (parsed && (!since || parsed.occurredAt > since)) {
           events.push(parsed);
         }
@@ -315,7 +332,37 @@ async function listJsonlBelow(dir: string, remainingDepth: number): Promise<stri
   return files;
 }
 
-function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
+// A turn starts at a human prompt: a `user` line whose content is a string
+// or a block list with no tool_result, and that is not meta. Everything up
+// to the next one — tool results, every assistant response — is one turn,
+// and § 3.9's measurement is that a turn never names two repos.
+export class TurnCounter {
+  private n = 0;
+  constructor(private readonly scope: string) {}
+  get current(): string {
+    return `${this.scope}#${this.n}`;
+  }
+  observe(raw: unknown): void {
+    if (!isObject(raw) || raw.type !== "user" || raw.isMeta === true) return;
+    const message = raw.message;
+    if (!isObject(message)) return;
+    const content = message.content;
+    if (typeof content === "string") this.n++;
+    else if (Array.isArray(content) && !content.some((b) => isObject(b) && b.type === "tool_result")) this.n++;
+  }
+}
+
+// The files one assistant line's tool_use block names (one block per line).
+export function lineEvidence(message: Record<string, unknown>): Evidence {
+  let out: Evidence = { writes: [], reads: [] };
+  if (!Array.isArray(message.content)) return out;
+  for (const block of message.content) {
+    if (isObject(block) && block.type === "tool_use") out = mergeEvidence(out, claudeToolEvidence({ name: block.name, input: block.input }));
+  }
+  return out;
+}
+
+function parseAssistantEvent(raw: unknown, turn?: string): ParsedUsageEvent | null {
   if (!isObject(raw)) return null;
   if (raw.type !== "assistant") return null;
 
@@ -364,6 +411,8 @@ function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
       version,
       entrypoint,
       isSidechain: boolOr(raw.isSidechain),
+      turn,
+      touched: lineEvidence(message),
     },
   };
 }

@@ -25,6 +25,11 @@ export type SidecarLine = {
   root: string | null; // repo toplevel, for a live re-resolve
   branch: string | null; // null when detached
   head: string | null;
+  // § 3.9: how far into the session's transcript the hook has read, and
+  // the identity of every repo root a touched path fell under — recorded
+  // while those folders existed. Cumulative across the session's lines.
+  offset?: number;
+  roots?: Record<string, RepoIdentity>;
 };
 
 export async function appendSidecar(line: SidecarLine, path: string = SIDECAR_PATH): Promise<void> {

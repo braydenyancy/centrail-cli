@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
+import { open } from "node:fs/promises";
+import { lineEvidence, type RepoIdentity } from "@centrail/parsers";
 import { readAuth, readState, writeState } from "../config.js";
-import { resolveRepoRoot } from "../git.js";
+import { nearestDirectory, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
-import { appendSidecar, type SidecarLine } from "../sidecar.js";
+import { appendSidecar, readSidecar, type SidecarLine } from "../sidecar.js";
 import type { SyncState } from "../watermarks.js";
 
 // `centrail hook stop` — the collection trigger. Claude Code runs it at the
@@ -25,8 +27,14 @@ export const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 export type HookInput = {
   session_id?: unknown;
   cwd?: unknown;
+  transcript_path?: unknown;
   hook_event_name?: unknown;
 };
+
+// Bounds on the transcript read per turn: distinct directories that cost
+// a git spawn, and bytes. A turn past either is recorded with what fit.
+const MAX_DIRS_PER_TURN = 64;
+const MAX_BYTES_PER_TURN = 64 * 1024 * 1024;
 
 export type HookDeps = {
   sidecarPath?: string;
@@ -75,10 +83,77 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
     branch: head.branch,
     head: head.head,
   };
+  // § 3.9: a session outside a repo is placed by the files its turns
+  // touch. Their repos must be identified NOW, while the folders exist;
+  // the transcript is read from where the last turn's hook left off.
+  const transcript = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  if (transcript) {
+    const previous = (await readSidecar(deps.sidecarPath)).get(sessionId);
+    const roots = { ...(previous?.roots ?? {}) };
+    if (root && repo) roots[root] = repo;
+    line.offset = await recordTouchedRoots(transcript, previous?.offset ?? 0, roots);
+    line.roots = roots;
+  }
   await appendSidecar(line, deps.sidecarPath);
 
   await maybeAutoSync(now, deps);
   return line;
+}
+
+// Read the transcript from `offset`, resolve the repo of every directory a
+// tool call touched, and add it to `roots`. Returns the new offset. A
+// directory under a root already known costs nothing; every other distinct
+// one costs one git spawn, capped per turn.
+async function recordTouchedRoots(transcript: string, offset: number, roots: Record<string, RepoIdentity>): Promise<number> {
+  let fh;
+  try {
+    fh = await open(transcript, "r");
+  } catch {
+    return offset;
+  }
+  try {
+    const size = (await fh.stat()).size;
+    if (size <= offset) return size < offset ? 0 : offset; // truncated or rewritten: start over next turn
+    const length = Math.min(size - offset, MAX_BYTES_PER_TURN);
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buf, 0, length, offset);
+    const text = buf.toString("utf-8", 0, bytesRead);
+    const complete = text.lastIndexOf("\n");
+    if (complete < 0) return offset; // no whole line yet
+    const dirs = new Set<string>();
+    for (const raw of text.slice(0, complete).split("\n")) {
+      if (!raw.includes('"tool_use"')) continue;
+      let line: unknown;
+      try {
+        line = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!isObject(line) || line.type !== "assistant" || !isObject(line.message)) continue;
+      const ev = lineEvidence(line.message);
+      for (const path of [...ev.writes, ...ev.reads]) dirs.add(path); // a file or a directory; the lookup climbs
+    }
+    let spawned = 0;
+    const seen = new Set<string>();
+    for (const path of dirs) {
+      if (Object.keys(roots).some((r) => path === r || path.startsWith(`${r}/`))) continue;
+      const dir = await nearestDirectory(path);
+      if (!dir || seen.has(dir)) continue;
+      seen.add(dir);
+      if (spawned++ >= MAX_DIRS_PER_TURN) break;
+      const r = await resolveRepoRoot(dir);
+      if (!r || roots[r]) continue;
+      const id = await repoIdentity(r);
+      if (id) roots[r] = id;
+    }
+    return offset + complete + 1;
+  } finally {
+    await fh.close();
+  }
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
 // The throttle. The stamp is written BEFORE the spawn so two hooks racing

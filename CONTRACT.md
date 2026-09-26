@@ -46,6 +46,13 @@ When `fields` contains `"repo"` the CLI sends, per event:
   remote), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
   `hideRepoNames`; `label` is the folder basename (empty when hidden);
   `source` is `remote | root | folder`.
+- `metadata.placement: "cwd" | "files" | "sticky" | "folder"` — how `repo`
+  was chosen, sent with it (0.6.0, decision § 3.9): the session's folder is
+  inside the repo; the turn's touched files named it (edits, then reads,
+  then Bash paths); the session's previous turn was placed there; or it is
+  the folder's own `dir:` id. The tag is the disclaimer next to the
+  identity; a server may weight or filter on it and must accept its
+  absence. The touched paths themselves never leave the machine.
 - `metadata.origin.machineId` — random per-install uuid.
 - and **omits** `metadata.cwd` and `metadata.origin.host`. A server that
   advertises `"repo"` must therefore accept `origin` without `host`, and key
@@ -63,7 +70,8 @@ server that previously stored the first line for a request should upsert
 `output_tokens = GREATEST(existing, incoming)` on conflict so the 24 h
 overlap re-send corrects rows inserted mid-stream. Events without an
 Anthropic `requestId` (gateways) arrive with
-`externalId = "msg:<message id>:<session id>:<timestamp>"`.
+`externalId = "msg:<message id>:<session id>"` — never the timestamp, which
+differs per content block of one response.
 
 ## Versioning
 

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
 import { parseGitLogNumstat, type RepoCommit } from "@centrail/parsers";
 
@@ -52,6 +52,29 @@ export async function resolveRepoRoot(cwd: string): Promise<string | null> {
     return stdout.trim() || null;
   } catch {
     return null;
+  }
+}
+
+// The repo root for a path that may not exist (a file the turn created in
+// a new directory, a Bash argument, a worktree since deleted): climb to
+// the nearest existing ancestor and ask git there. Null past the top.
+export async function resolveRepoRootNear(path: string): Promise<string | null> {
+  const dir = await nearestDirectory(path);
+  return dir ? resolveRepoRoot(dir) : null;
+}
+
+// The closest existing directory at or above a path; null past the top.
+export async function nearestDirectory(path: string): Promise<string | null> {
+  let dir = path;
+  for (;;) {
+    try {
+      if ((await stat(dir)).isDirectory()) return dir;
+    } catch {
+      // missing: climb
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
 }
 

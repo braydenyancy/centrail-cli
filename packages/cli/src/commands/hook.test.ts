@@ -136,4 +136,51 @@ describe("runStopHook", () => {
     expect(result).toBeNull();
     expect(spawns).toBe(0); // nothing to sync that this turn recorded
   });
+
+  it("reads the transcript from the previous line's offset, records each touched root once, and starts over if the file shrank", async () => {
+    fx = await scratch();
+    const { writeFile, appendFile, mkdir } = await import("node:fs/promises");
+    const ws = join(fx.root, "ws");
+    await mkdir(ws);
+    const a = await fx.repo("ws/a", { remote: "https://github.com/acme/a.git" });
+    const b = await fx.repo("ws/b", { remote: "https://github.com/acme/b.git" });
+    const sidecarPath = join(fx.root, "sessions.jsonl");
+    const transcript = join(fx.root, "t.jsonl");
+    const tool = (name: string, input: Record<string, unknown>) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "x", name, input }] } })}\n`;
+    const deps = { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() };
+    const fire = () => runStopHook(JSON.stringify({ session_id: "s", cwd: ws, transcript_path: transcript }), "claude-code", deps);
+
+    // Turn 1: an edit in a, plus a partial trailing line that must wait.
+    await writeFile(transcript, tool("Edit", { file_path: join(a, "new-dir", "x.ts") }) + '{"type":"assistant","partial');
+    const l1 = (await fire())!;
+    expect(Object.values(l1.roots!)).toEqual([{ key: "github.com/acme/a", label: "a", source: "remote" }]);
+    const firstLineBytes = Buffer.byteLength(tool("Edit", { file_path: join(a, "new-dir", "x.ts") }));
+    expect(l1.offset).toBe(firstLineBytes);
+
+    // Turn 2: the partial line completes (it was thinking), then a Bash in b; a must not be re-resolved.
+    await writeFile(transcript, tool("Edit", { file_path: join(a, "new-dir", "x.ts") }) + '{"type":"assistant","partial":true}\n' + tool("Bash", { command: `cd ${b} && ls` }));
+    const l2 = (await fire())!;
+    expect(Object.keys(l2.roots!).sort()).toEqual([a, b].sort());
+    expect(l2.offset).toBe((await (await import("node:fs/promises")).stat(transcript)).size);
+
+    // The transcript is rewritten shorter (Claude Code compaction): offset resets, roots are kept.
+    await writeFile(transcript, tool("Read", { file_path: join(b, "y.ts") }));
+    const l3 = (await fire())!;
+    expect(l3.offset).toBe(0); // shrank: nothing consumed until the next turn
+    expect(Object.keys(l3.roots!).sort()).toEqual([a, b].sort());
+    await appendFile(transcript, tool("Read", { file_path: join(a, "z.ts") }));
+    const l4 = (await fire())!;
+    expect(l4.offset).toBeGreaterThan(0);
+    expect((await readSidecar(sidecarPath)).get("s")?.roots).toEqual(l4.roots);
+  });
+
+  it("without a transcript_path (another harness, an older Claude Code) the line has no offset and no roots", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
+    const line = (await runStopHook(JSON.stringify({ session_id: "s", cwd: repo }), "claude-code", { sidecarPath: join(fx.root, "sc.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState() }))!;
+    expect(line.offset).toBeUndefined();
+    expect(line.roots).toBeUndefined();
+    expect(line.repo?.key).toBe("github.com/acme/r");
+  });
 });

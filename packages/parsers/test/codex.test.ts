@@ -284,3 +284,27 @@ describe("Codex path resolution", () => {
     ]);
   });
 });
+
+describe("Codex turns and touched files", () => {
+  it("attaches the turn id and the turn's shell workdir and patch files to its token counts", async () => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-codex-ev-"));
+    const at = (s: number) => `2026-06-01T12:00:${String(s).padStart(2, "0")}.000Z`;
+    const lines = [
+      { timestamp: at(0), type: "session_meta", payload: { id: "sess", cwd: "/ws", originator: "codex-tui", cli_version: "0.1" } },
+      { timestamp: at(1), type: "turn_context", payload: { turn_id: "t1", model: "gpt-5", cwd: "/ws" } },
+      { timestamp: at(2), type: "response_item", payload: { type: "function_call", name: "shell", arguments: JSON.stringify({ command: ["bash", "-lc", "ls"], workdir: "/ws/a" }) } },
+      { timestamp: at(3), type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 10, output_tokens: 1 } } } },
+      { timestamp: at(4), type: "response_item", payload: { type: "function_call", name: "apply_patch", arguments: JSON.stringify({ input: "*** Begin Patch\n*** Update File: a/x.ts\n*** End Patch" }) } },
+      { timestamp: at(5), type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 10, output_tokens: 2 } } } },
+      { timestamp: at(6), type: "turn_context", payload: { turn_id: "t2", model: "gpt-5", cwd: "/ws" } },
+      { timestamp: at(7), type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 10, output_tokens: 3 } } } },
+    ];
+    await mkdir(base, { recursive: true });
+    await writeFile(join(base, "r.jsonl"), `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+    const events = (await scanCodexLogs({ basePath: base })).sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
+    expect(events.map((e) => e.metadata.turn)).toEqual(["sess#t1", "sess#t1", "sess#t2"]);
+    expect(events[0].metadata.touched).toEqual({ writes: [], reads: ["/ws/a"] });
+    expect(events[1].metadata.touched).toEqual({ writes: ["/ws/a/x.ts"], reads: ["/ws/a"] });
+    expect(events[2].metadata.touched).toEqual({ writes: [], reads: [] }); // a new turn starts clean
+  });
+});

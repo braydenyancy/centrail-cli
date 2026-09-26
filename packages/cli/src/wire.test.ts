@@ -143,4 +143,27 @@ describe("toWireEvent", () => {
     expect(w.metadata.repo.label).toBe("");
     expect(JSON.stringify(w)).not.toContain("acme");
   });
+
+  it.each([
+    ["identity-aware", ["repo"], true],
+    ["0.5-era", [], false],
+  ])("%s server: the placement tag travels with the identity and only then; touched paths and turn ids never leave", (_, fields, aware) => {
+    const e: ParsedUsageEvent = { ...base, metadata: { ...base.metadata, placement: "files", turn: "s1#3", touched: { writes: ["/Users/jane/work/repo/x.ts"], reads: ["/Users/jane/work/other"] } } };
+    const wire = toWireEvent(e, { fields: new Set(fields) }, cfg, "install");
+    const metadata = wire.metadata as Record<string, unknown>;
+    expect(metadata.placement).toBe(aware ? "files" : undefined);
+    expect(metadata.touched).toBeUndefined();
+    expect(metadata.turn).toBeUndefined();
+    expect(JSON.stringify(wire)).not.toContain("/Users/jane/work/other");
+    if (aware) expect(JSON.stringify(wire)).not.toContain("/Users/jane");
+  });
+
+  it("no placement without an identity, and a hidden identity keeps its tag", () => {
+    const bare: ParsedUsageEvent = { ...base, metadata: { ...base.metadata, repo: undefined, placement: "files" } };
+    expect((toWireEvent(bare, { fields: new Set(["repo"]) }, cfg, "i").metadata as Record<string, unknown>).placement).toBeUndefined();
+    const hidden: ParsedUsageEvent = { ...base, metadata: { ...base.metadata, placement: "sticky" } };
+    const m = toWireEvent(hidden, { fields: new Set(["repo"]) }, { ...cfg, hideRepoNames: true }, "i").metadata as Record<string, unknown>;
+    expect(m.placement).toBe("sticky");
+    expect((m.repo as { key: string }).key).toMatch(/^hidden:/);
+  });
 });

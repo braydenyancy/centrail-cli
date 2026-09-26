@@ -5,6 +5,33 @@ versioning.
 
 ## [Unreleased]
 
+### 0.6.0 — sessions outside a repo find their home (decision § 3.9), and an adversarial pass over 0.6
+- **Placement by touched files, one repo per turn.** A session started in a
+  workstream root or the home directory is placed by the files its turns
+  touch: the session's cwd if it is a repo, else the turn's edits, else its
+  reads (Read/Glob/Grep, Bash absolute paths, Codex `workdir` and patch
+  headers), else the session's previous turn, else the folder's own id. A
+  turn is placed whole, so totals never split. The Stop hook reads the
+  transcript from a per-session byte offset and records the identity of
+  every repo a touched path fell under while the folder still exists
+  (`transcript_path` in the hook input); the placer runs at sync over the
+  same evidence, so a `--full` rescan places identically after the worktree
+  is gone. Ships `metadata.placement` next to `metadata.repo`; touched paths
+  stay on the machine.
+- **Five 0.6 claims fell to their own tests and are fixed.** The
+  no-`requestId` fallback id carried the line's timestamp and split one
+  gateway response into one event per content block (99.3% of multi-line
+  responses differ per line); it is now message id + session. A
+  remote-less repo's root sha came from `--all`, so a `--single-branch`
+  clone of a repo with an orphan branch keyed differently; it is the default
+  branch's root. A session in the home directory (or a dotfiles repo checked
+  out there) shipped the login as its label; it is `~`. A plain folder
+  deleted after its hook line lost its folder id. The hook's throttle was
+  silenced by a clock stepped back, and an unwritable sidecar threw.
+- **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
+  hit the call-stack limit at 177k lines on the reference machine.
+- Shared stand-in server for harness tests; 220 CLI and 115 parsers tests.
+
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,
   hostnames, session IDs, provider-account details, and parser metadata remain

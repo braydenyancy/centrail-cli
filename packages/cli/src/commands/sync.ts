@@ -20,6 +20,7 @@ import { sinceForSurface, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 import { readRepoCommits, readRepoSize } from "../git.js";
+import { Placer } from "../placer.js";
 import { IdentityResolver } from "../resolver.js";
 import { compactSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
@@ -76,6 +77,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   const caps = await readCapabilities(auth);
   await compactSidecar(); // under the sync lock; hook appends are line-atomic
   const resolver = await IdentityResolver.create(installId);
+  const placer = new Placer(resolver);
   const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
   const maxOccurredAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -108,10 +110,11 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         e.occurredAt >= minOccurredAt &&
         e.occurredAt <= maxOccurredAt,
     );
-    // Repo identity is stamped here, while the folder may still exist; the
-    // sidecar covers the sessions whose folder is already gone. Then the
-    // scope decides what leaves: an excluded repo's events stop here.
-    for (const e of scanned) await resolver.stamp(e);
+    // Repo identity is placed here (§ 3.9: cwd → files → sticky → folder),
+    // while the folder may still exist; the sidecar covers the sessions
+    // whose folder is already gone. Then the scope decides what leaves: an
+    // excluded repo's events stop here.
+    await placer.place(scanned);
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
     if (events.length === 0) {
@@ -120,7 +123,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     }
     anyEvents = true;
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
-      attributionEvents.push(...events);
+      for (const e of events) attributionEvents.push(e);
     }
 
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
