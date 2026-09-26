@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { open } from "node:fs/promises";
+import { mkdir, open, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
 import { readAuth, readState, writeState } from "../config.js";
 import { nearestDirectory, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
-import { appendSidecar, readSidecar, type SidecarLine } from "../sidecar.js";
+import { appendSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
 import type { SyncState } from "../watermarks.js";
 
 // `centrail hook stop` — the collection trigger. Claude Code runs it at the
@@ -55,6 +56,7 @@ export type HookDeps = {
   readState?: () => Promise<SyncState>;
   writeState?: (s: SyncState) => Promise<void>;
   connected?: () => Promise<boolean>;
+  claimPath?: string; // the atomic throttle claim; beside the sidecar by default
 };
 
 export async function runStopHook(
@@ -109,7 +111,7 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   if (Object.keys(mains).length > 0) line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
 
-  await maybeAutoSync(now, deps);
+  await maybeAutoSync(now, deps, deps.claimPath ?? join(dirname(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 
@@ -183,27 +185,60 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-// The throttle. The stamp is written BEFORE the spawn so two hooks racing
-// past the interval together start at most one sync between them (and the
-// sync lock covers the rest).
-// A stamp in the future is a clock that stepped back; treating it as a
-// fresh stamp would silence auto-sync until the wall clock caught up.
+// A stamp well in the future is a clock that stepped back; treating it as
+// fresh would silence auto-sync until the wall clock caught up. "Well":
+// racing hooks capture `now` before their git spawns, so a claim another
+// racer just made can sit a few hundred ms ahead of this one's `now` and
+// is not a clock step.
+export const CLOCK_STEP_MS = 60 * 1000;
+
 export function shouldAutoSync(state: SyncState, now: Date): boolean {
   if (!state.autoSyncAt) return true;
   const last = new Date(state.autoSyncAt).getTime();
-  return Number.isNaN(last) || last > now.getTime() || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
+  return Number.isNaN(last) || last - now.getTime() > CLOCK_STEP_MS || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
 }
 
-async function maybeAutoSync(now: Date, deps: HookDeps): Promise<void> {
+// Parallel sessions fire parallel hooks. A read-then-write stamp let twelve
+// racing hooks start four syncs (measured); the sync lock made three of them
+// exit, but the claim is "one". The claim is an atomic mkdir whose mtime is
+// the stamp: exactly one racer creates it, a stale one is reclaimed once.
+// The state file keeps the last stamp for humans and `inspect`.
+async function maybeAutoSync(now: Date, deps: HookDeps, claimPath: string): Promise<void> {
   const read = deps.readState ?? readState;
   const write = deps.writeState ?? writeState;
   const connected = deps.connected ?? (async () => (await readAuth()) !== null);
   const state = await read();
   if (!shouldAutoSync(state, now)) return;
   if (!(await connected())) return; // nothing to sync to; the sidecar still grew
+  if (!(await claimAutoSync(claimPath, now))) return;
   state.autoSyncAt = now.toISOString();
   await write(state);
   (deps.spawnSync ?? spawnDetachedSync)();
+}
+
+async function claimAutoSync(claimPath: string, now: Date): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await mkdir(claimPath, { recursive: false });
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        await mkdir(dirname(claimPath), { recursive: true });
+        continue;
+      }
+      if (code !== "EEXIST") return false;
+      let at: number;
+      try {
+        at = (await stat(claimPath)).mtimeMs;
+      } catch {
+        continue; // reclaimed between our mkdir and stat — try once more
+      }
+      if (!shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: new Date(at).toISOString() }, now)) return false;
+      await rm(claimPath, { recursive: true, force: true }); // stale: reclaim
+    }
+  }
+  return false;
 }
 
 // The same node and the same bundle that ran the hook, so what syncs is

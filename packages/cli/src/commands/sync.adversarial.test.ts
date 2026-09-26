@@ -330,3 +330,92 @@ describe("attributions follow the facts: what the CLI ships so the server can", 
   });
 });
 
+
+describe("parallel sessions in one checkout, one branch", () => {
+  it("two sessions' hooks racing, one commit after both: both attribute, both sidecar lines survive, one auto-sync between them", async () => {
+    server.fields = ["repo"];
+    const repo = await fx.repo("shared", { remote: "https://github.com/acme/shared.git" });
+    const t = (i: number) => T0 + 40 * 60_000 + i * 1000;
+    const ws = join(fx.root, "shared-ws");
+    await mkdir(ws);
+    // Session A inside the checkout; session B in a parent folder editing files in it.
+    const pa = await writeTranscript(claudeDir, repo, "pa", [line("pa", repo, "req_pa", 2, t(0))]);
+    const pb = await writeTranscript(claudeDir, ws, "pb", [
+      JSON.stringify({ type: "user", timestamp: new Date(t(1)).toISOString(), cwd: ws, sessionId: "pb", message: { role: "user", content: "go" } }),
+      transcriptLine({ sessionId: "pb", cwd: ws, requestId: "req_pb", out: 3, atMs: t(2), toolUse: { name: "Edit", input: { file_path: join(repo, "shared.ts"), old_string: "", new_string: "" } } }),
+    ]);
+    let spawns = 0;
+    const claimPath = join(fx.root, "parallel.claim"); // fresh: the throttle test above already claimed the shared one
+    const deps = (ms: number) => ({ now: () => new Date(Date.now() + ms), spawnSync: () => spawns++, connected: async () => true, claimPath });
+    // Twelve hooks, both sessions interleaved, all in flight at once.
+    await Promise.all(
+      Array.from({ length: 12 }, (_, i) =>
+        runStopHook(JSON.stringify({ session_id: i % 2 ? "pb" : "pa", cwd: i % 2 ? ws : repo, transcript_path: i % 2 ? pb : pa }), "claude-code", deps(i)),
+      ),
+    );
+    expect(spawns).toBe(1);
+    const { readSidecar } = await import("../sidecar.js");
+    const { CONFIG_DIR } = await import("../config.js");
+    const lines = await readSidecar(join(CONFIG_DIR, "sessions.jsonl"));
+    expect(lines.get("pa")?.roots).toEqual({ [repo]: { key: "github.com/acme/shared", label: "shared", source: "remote" } });
+    expect(lines.get("pb")?.roots).toEqual({ [repo]: { key: "github.com/acme/shared", label: "shared", source: "remote" } });
+    const sha = await fx.commit(repo, "shared.ts", undefined, new Date());
+    server.attributeBodies.length = 0;
+    await runSync({ full: false });
+    expect(server.rows.get("req_pa")?.metadata.placement).toBe("cwd");
+    expect(server.rows.get("req_pb")?.metadata.placement).toBe("files");
+    expect(server.attributions.filter((a) => a.commitSha === sha).map((a) => a.externalId).sort()).toEqual(["req_pa", "req_pb"]);
+    expect(server.attributions.filter((a) => a.externalId === "req_pa")).toHaveLength(1); // never twice
+  });
+});
+
+describe("a squash merge on the remote, branch deleted, stale origin/<branch> left behind", () => {
+  it("branch commits read shipped as the squash commit, the squash commit reads shipped via origin/main, and a prune changes only which shas exist", async () => {
+    server.fields = ["repo", "match"];
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { fixtureEnv } = await import("../testing/git-fixture.js");
+    const { writeFile } = await import("node:fs/promises");
+    const dated = (cwd: string, ...args: string[]) => {
+      const iso = new Date().toISOString();
+      return promisify(execFile)("git", ["-C", cwd, ...args], { env: { ...fixtureEnv(fx.root), GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } });
+    };
+    const bare = join(fx.root, "sq-origin.git");
+    await fx.git(fx.root, "init", "-q", "--bare", "-b", "main", bare);
+    const repo = await fx.repo("sq", { remote: bare });
+    await fx.git(repo, "config", "user.email", "t@example.com");
+    await fx.git(repo, "push", "-q", "-u", "origin", "main");
+    await fx.git(repo, "remote", "set-head", "origin", "main");
+    await writeTranscript(claudeDir, repo, "sq", [line("sq", repo, "req_sq", 1, T0 + 50 * 60_000)]);
+    await hook("sq", repo);
+    await fx.git(repo, "checkout", "-q", "-b", "feat");
+    await writeFile(join(repo, "f1"), "1\n"); await fx.git(repo, "add", "f1"); await dated(repo, "commit", "-q", "-m", "one");
+    const b1 = await fx.git(repo, "rev-parse", "HEAD");
+    await writeFile(join(repo, "f2"), "2\n"); await fx.git(repo, "add", "f2"); await dated(repo, "commit", "-q", "-m", "two");
+    const b2 = await fx.git(repo, "rev-parse", "HEAD");
+    await fx.git(repo, "push", "-q", "-u", "origin", "feat");
+    const gh = join(fx.root, "sq-gh");
+    await fx.git(fx.root, "clone", "-q", bare, gh);
+    await fx.git(gh, "config", "user.email", "t@example.com");
+    await fx.git(gh, "merge", "--squash", "-q", "origin/feat");
+    await dated(gh, "commit", "-q", "-m", "feat (#1)");
+    const squash = await fx.git(gh, "rev-parse", "HEAD");
+    await fx.git(gh, "push", "-q", "origin", "main");
+    await fx.git(gh, "push", "-q", "origin", "--delete", "feat");
+    await fx.git(repo, "fetch", "-q", "origin");
+    await fx.git(repo, "switch", "-q", "--detach", "origin/main");
+    await fx.git(repo, "branch", "-D", "feat");
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    const fate = (sha: string) => server.fates.find((f) => f.commitSha === sha) as { fate: string; mergedAs?: string } | undefined;
+    expect(fate(squash)?.fate).toBe("shipped"); // via origin/main, even though local main is stale
+    expect(fate(b1)).toMatchObject({ fate: "shipped", mergedAs: squash });
+    expect(fate(b2)).toMatchObject({ fate: "shipped", mergedAs: squash });
+    await fx.git(repo, "fetch", "-q", "--prune", "origin");
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    expect(server.fates.map((f) => f.commitSha).filter((s) => [b1, b2, squash].includes(s))).toEqual([squash]);
+    expect(fate(squash)?.fate).toBe("shipped");
+    server.fields = ["repo"];
+  });
+});

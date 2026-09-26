@@ -102,7 +102,8 @@ describe("runStopHook", () => {
     ["9 min ago", -9 * 60 * 1000, false],
     ["exactly the interval ago", -AUTO_SYNC_INTERVAL_MS, true],
     ["an hour ago", -60 * 60 * 1000, true],
-    ["1 min in the FUTURE (clock stepped back)", 60 * 1000, true],
+    ["300 ms in the future (a racing hook's claim, not a clock step)", 300, false],
+    ["2 min in the FUTURE (clock stepped back)", 2 * 60 * 1000, true],
     ["a day in the future", 24 * 60 * 60 * 1000, true],
     ["garbage", "not-a-date", true],
   ])("shouldAutoSync with stamp %s → %s", (_, offset, expected) => {

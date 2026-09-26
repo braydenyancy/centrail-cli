@@ -96,6 +96,14 @@ Anthropic `requestId` (gateways) arrive with
 `externalId = "msg:<message id>:<session id>"` — never the timestamp, which
 differs per content block of one response.
 
+**Squash merges (0.6.0).** A fate row may carry `mergedAs: <sha>`: the
+default-branch commit whose patch equals this sha's branch prefix from its
+merge base — a multi-commit squash merge, which `git cherry` cannot see.
+Such a row is `shipped`; the server excludes the sha from matching, moves
+its attributions to `mergedAs`, and rolls it up under that commit. "Shipped"
+is judged against `origin/<default>` when the checkout tracks one, so a
+worktree parked detached at `origin/main` reads correctly.
+
 **Import (0.6.0, outside wire 1).** `centrail import <file>` POSTs
 `{ provider: "ccusage", rows: [{ day, model, inputTokens, outputTokens,
 contextTokens }] }` to `POST /api/import` with the device token; the server

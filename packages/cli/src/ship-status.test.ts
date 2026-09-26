@@ -4,6 +4,8 @@ const git = vi.hoisted(() => ({
   resolveDefaultBranch: vi.fn(),
   listRecentShas: vi.fn(),
   readUserEmail: vi.fn(),
+  resolveAncestryRef: vi.fn(),
+  squashedShas: vi.fn(),
   RECENT_SHA_CAP: 2000,
   listBranchTips: vi.fn(),
   listReachableShas: vi.fn(),
@@ -34,6 +36,8 @@ function tip(name: string, tipDate: string) {
 function stubHappyRepo(): void {
   git.resolveDefaultBranch.mockResolvedValue("main");
   git.readUserEmail.mockResolvedValue("me@example.com");
+  git.resolveAncestryRef.mockResolvedValue("refs/heads/main");
+  git.squashedShas.mockResolvedValue({});
   git.listRecentShas.mockResolvedValue([
     { sha: "aaa", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3, authorEmail: "me@example.com" },
     { sha: "bbb", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0, authorEmail: "teammate@example.com" },
@@ -97,6 +101,29 @@ describe("gatherShipStatusFacts", () => {
   });
 });
 
+describe("gatherShipStatusFacts squash detection", () => {
+  it("ancestry follows the ref git.resolveAncestryRef names (origin/main on a parked worktree); a squashed branch's shas carry mergedAs and read shipped", async () => {
+    stubHappyRepo();
+    git.resolveAncestryRef.mockResolvedValue("refs/remotes/origin/main");
+    git.listReachableShas.mockImplementation(async (_root: string, ref: string) => {
+      if (ref === "refs/remotes/origin/main") return ["aaa", "sss"];
+      if (ref === "refs/heads/main") return ["aaa"]; // the stale local main: still a branch for containment, never for ancestry
+      if (ref === "refs/heads/feature/x") return ["bbb"];
+      if (ref === "refs/heads/feature/dead") return ["ccc"];
+      if (ref === "refs/heads/feature/merged") return ["aaa"];
+      throw new Error(`rev-list must not run on a stale branch: ${ref}`);
+    });
+    git.squashedShas.mockImplementation(async (_root: string, _def: string, tip: string) => (tip === "refs/heads/feature/x" ? { bbb: "sss" } : {}));
+    const facts = (await gatherShipStatusFacts("/repo", NOW))!;
+    expect(facts.ancestorShas).toEqual(["aaa"]);
+    expect(facts.squashedInto).toEqual({ bbb: "sss" });
+    const { computeCommitFates } = await import("@centrail/parsers");
+    const rows = computeCommitFates(facts);
+    expect(rows.find((r) => r.sha === "bbb")).toEqual({ sha: "bbb", branch: "feature/x", fate: "shipped", mergedAs: "sss" });
+    expect(git.squashedShas.mock.calls.map((c) => c[2]).sort()).toEqual(["refs/heads/feature/dead", "refs/heads/feature/x"]); // only branches with unmerged recent commits, never main or a merged one
+  });
+});
+
 describe("runFatePass", () => {
   it("posts fates and tallies even when the server ignores the fates section", async () => {
     stubHappyRepo();
@@ -153,6 +180,8 @@ describe("runFatePass", () => {
   it("a repo at the sha cap is sent in two calls and both say the set is incomplete, so the server vanishes nothing", async () => {
     git.resolveDefaultBranch.mockResolvedValue("main");
     git.readUserEmail.mockResolvedValue("me@example.com");
+  git.resolveAncestryRef.mockResolvedValue("refs/heads/main");
+  git.squashedShas.mockResolvedValue({});
     git.listRecentShas.mockResolvedValue(Array.from({ length: 2000 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 1, linesDeleted: 0, filesChanged: 1 })));
     git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
     git.listReachableShas.mockResolvedValue(Array.from({ length: 2000 }, (_, i) => `s${i}`));

@@ -10,6 +10,8 @@ import {
   listRecentShas,
   readUserEmail,
   RECENT_SHA_CAP,
+  resolveAncestryRef,
+  squashedShas,
   resolveDefaultBranch,
   type BranchTip,
   type RecentCommit,
@@ -29,6 +31,7 @@ export type WireFate = {
   linesAdded: number;
   linesDeleted: number;
   filesChanged: number;
+  mergedAs?: string; // squashed into this default-branch commit (§ ship status)
   // The commit's author is this machine's git identity. Absent when either
   // side is unknown. The server prefers own commits when several fit; a
   // teammate's commit never absorbs this user's tokens by time alone.
@@ -72,8 +75,9 @@ export async function gatherShipStatusFacts(
   const recent = new Set(shas.map((s) => s.sha));
   const cutoffMs = now.getTime() - WINDOW_DAYS * DAY_MS;
 
+  const ancestryRef = await resolveAncestryRef(repoRoot, defaultBranch);
   const ancestorShas = (
-    await listReachableShas(repoRoot, `refs/heads/${defaultBranch}`, WINDOW_DAYS)
+    await listReachableShas(repoRoot, ancestryRef, WINDOW_DAYS)
   ).filter((sha) => recent.has(sha));
   const ancestors = new Set(ancestorShas);
 
@@ -99,9 +103,13 @@ export async function gatherShipStatusFacts(
   }
 
   const cherrySet = new Set<string>();
+  const squashedInto: Record<string, string> = {};
   for (const tip of cherryCandidates) {
     for (const sha of await cherryEquivalentShas(repoRoot, defaultBranch, tip.name)) {
       cherrySet.add(sha);
+    }
+    for (const [sha, into] of Object.entries(await squashedShas(repoRoot, ancestryRef, tip.ref))) {
+      if (recent.has(sha)) squashedInto[sha] = into;
     }
   }
 
@@ -110,6 +118,7 @@ export async function gatherShipStatusFacts(
     shas,
     ancestorShas,
     cherryEquivalentShas: [...cherrySet],
+    squashedInto,
     branchesBySha,
     branchTipDates,
     now: now.toISOString(),
@@ -149,6 +158,7 @@ export async function runFatePass(
         commitSha: row.sha,
         branch: row.branch,
         fate: row.fate,
+        ...(row.mergedAs ? { mergedAs: row.mergedAs } : {}),
         committedAt: c?.committedAt ?? "",
         linesAdded: c?.linesAdded ?? 0,
         linesDeleted: c?.linesDeleted ?? 0,

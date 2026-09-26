@@ -841,8 +841,9 @@ function computeCommitFates(facts) {
       const remote = nonDefault.find((b) => b.startsWith("origin/"));
       branch = local ?? (remote !== void 0 ? remote.slice("origin/".length) : containing.length > 0 ? facts.defaultBranch : null);
     }
+    const mergedAs = facts.squashedInto?.[sha];
     let fate;
-    if (shippedViaAncestry || cherryEquivalent.has(sha)) {
+    if (shippedViaAncestry || cherryEquivalent.has(sha) || mergedAs) {
       fate = "shipped";
     } else {
       const hasFreshBranch = containing.some((b) => {
@@ -856,7 +857,7 @@ function computeCommitFates(facts) {
       });
       fate = hasFreshBranch ? "in_flight" : "unshipped";
     }
-    out.push({ sha, branch, fate });
+    out.push({ sha, branch, fate, ...mergedAs ? { mergedAs } : {} });
   }
   return out;
 }
@@ -1065,7 +1066,7 @@ import { createInterface } from "node:readline/promises";
 import { stat as stat6 } from "node:fs/promises";
 
 // src/git.ts
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile as readFile5, stat as stat5 } from "node:fs/promises";
 import { basename as basename2, dirname } from "node:path";
 import { promisify } from "node:util";
@@ -1178,6 +1179,66 @@ async function resolveDefaultBranch(repoRoot) {
     }
   }
   return null;
+}
+async function resolveAncestryRef(repoRoot, defaultBranch) {
+  const remote = `refs/remotes/origin/${defaultBranch}`;
+  try {
+    await exec("git", ["-C", repoRoot, "rev-parse", "--verify", "--quiet", remote]);
+    return remote;
+  } catch {
+    return `refs/heads/${defaultBranch}`;
+  }
+}
+var SQUASH_CANDIDATE_CAP = 200;
+var SQUASH_PREFIX_CAP = 50;
+async function squashedShas(repoRoot, defaultRef, tipRef) {
+  try {
+    const { stdout: baseOut } = await exec("git", ["-C", repoRoot, "merge-base", defaultRef, tipRef]);
+    const base = baseOut.trim();
+    if (!base)
+      return {};
+    const { stdout: branchOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--max-count=${SQUASH_PREFIX_CAP}`, "--pretty=format:%H%x1f%cI", `${base}..${tipRef}`]);
+    const branch = branchOut.split("\n").filter((l) => !l.startsWith("commit ") && l.includes("")).map((l) => l.split("")).map(([sha, iso]) => ({ sha: sha.trim(), at: iso.trim() }));
+    if (branch.length === 0)
+      return {};
+    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", `--max-count=${SQUASH_CANDIDATE_CAP}`, `--since=${branch[0].at}`, `${base}..${defaultRef}`]);
+    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (candidates.length === 0)
+      return {};
+    const byPatchId = /* @__PURE__ */ new Map();
+    for (const sha of candidates) {
+      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff-tree", "-p", "--root", sha], { maxBuffer: FACT_BUFFER });
+      const id = await patchId(repoRoot, diff);
+      if (id && !byPatchId.has(id))
+        byPatchId.set(id, sha);
+    }
+    for (let k = branch.length; k >= 1; k--) {
+      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff", base, branch[k - 1].sha], { maxBuffer: FACT_BUFFER });
+      if (!diff.trim())
+        continue;
+      const id = await patchId(repoRoot, diff);
+      const into = id ? byPatchId.get(id) : void 0;
+      if (!into)
+        continue;
+      const out = {};
+      for (const b of branch.slice(0, k))
+        out[b.sha] = into;
+      return out;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+function patchId(repoRoot, diff) {
+  return new Promise((resolve) => {
+    const child = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], { env: gitEnv() });
+    let out = "";
+    child.stdout.on("data", (d) => out += d);
+    child.on("error", () => resolve(null));
+    child.on("close", () => resolve(out.trim().split(/\s+/)[0] || null));
+    child.stdin.end(diff);
+  });
 }
 async function listRecentShas(repoRoot, sinceDays = 90) {
   try {
@@ -1969,8 +2030,9 @@ var FIELDS_SHOWN_ONCE = `
 `;
 
 // src/commands/hook.ts
-import { spawn } from "node:child_process";
-import { open } from "node:fs/promises";
+import { spawn as spawn2 } from "node:child_process";
+import { mkdir as mkdir3, open, rm as rm2, stat as stat7 } from "node:fs/promises";
+import { dirname as dirname3, join as join6 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
@@ -2029,7 +2091,7 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(mains).length > 0)
     line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps);
+  await maybeAutoSync(now, deps, deps.claimPath ?? join6(dirname3(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function recordRoot(root, id, roots, mains) {
@@ -2109,13 +2171,14 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
 function isObject6(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
+var CLOCK_STEP_MS = 60 * 1e3;
 function shouldAutoSync(state, now) {
   if (!state.autoSyncAt)
     return true;
   const last = new Date(state.autoSyncAt).getTime();
-  return Number.isNaN(last) || last > now.getTime() || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
+  return Number.isNaN(last) || last - now.getTime() > CLOCK_STEP_MS || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
 }
-async function maybeAutoSync(now, deps) {
+async function maybeAutoSync(now, deps, claimPath) {
   const read = deps.readState ?? readState;
   const write = deps.writeState ?? writeState;
   const connected = deps.connected ?? (async () => await readAuth() !== null);
@@ -2124,12 +2187,40 @@ async function maybeAutoSync(now, deps) {
     return;
   if (!await connected())
     return;
+  if (!await claimAutoSync(claimPath, now))
+    return;
   state.autoSyncAt = now.toISOString();
   await write(state);
   (deps.spawnSync ?? spawnDetachedSync)();
 }
+async function claimAutoSync(claimPath, now) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await mkdir3(claimPath, { recursive: false });
+      return true;
+    } catch (err) {
+      const code = err.code;
+      if (code === "ENOENT") {
+        await mkdir3(dirname3(claimPath), { recursive: true });
+        continue;
+      }
+      if (code !== "EEXIST")
+        return false;
+      let at;
+      try {
+        at = (await stat7(claimPath)).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (!shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: new Date(at).toISOString() }, now))
+        return false;
+      await rm2(claimPath, { recursive: true, force: true });
+    }
+  }
+  return false;
+}
 function spawnDetachedSync() {
-  const child = spawn(process.execPath, [process.argv[1], "sync"], {
+  const child = spawn2(process.execPath, [process.argv[1], "sync"], {
     detached: true,
     stdio: "ignore",
     env: process.env
@@ -2139,15 +2230,15 @@ function spawnDetachedSync() {
 
 // src/commands/hooks-install.ts
 import { realpathSync as realpathSync2 } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile7, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, join as join6 } from "node:path";
-import { stat as stat7 } from "node:fs/promises";
+import { mkdir as mkdir4, readFile as readFile7, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname4, join as join7 } from "node:path";
+import { stat as stat8 } from "node:fs/promises";
 var HOOK_MARK = "hook stop";
 function claudeSettingsPath() {
-  return join6(claudeConfigDirs()[0], "settings.json");
+  return join7(claudeConfigDirs()[0], "settings.json");
 }
 function codexHooksPath() {
-  return join6(codexHomeDir(), "hooks.json");
+  return join7(codexHomeDir(), "hooks.json");
 }
 function hookCommand(node = process.execPath, script = process.argv[1]) {
   const abs = safeRealpath(script);
@@ -2198,7 +2289,7 @@ Nothing leaves this machine except what \`centrail inspect --last\` shows.`
 }
 async function isDir(p) {
   try {
-    return (await stat7(p)).isDirectory();
+    return (await stat8(p)).isDirectory();
   } catch {
     return false;
   }
@@ -2219,7 +2310,7 @@ async function readSettings(path) {
   }
 }
 async function writeSettings(path, settings) {
-  await mkdir3(dirname3(path), { recursive: true });
+  await mkdir4(dirname4(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile3(tmp, `${JSON.stringify(settings, null, 2)}
 `);
@@ -2426,7 +2517,8 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
   const shas = await listRecentShas(repoRoot, WINDOW_DAYS);
   const recent = new Set(shas.map((s) => s.sha));
   const cutoffMs = now.getTime() - WINDOW_DAYS * DAY_MS2;
-  const ancestorShas = (await listReachableShas(repoRoot, `refs/heads/${defaultBranch}`, WINDOW_DAYS)).filter((sha) => recent.has(sha));
+  const ancestryRef = await resolveAncestryRef(repoRoot, defaultBranch);
+  const ancestorShas = (await listReachableShas(repoRoot, ancestryRef, WINDOW_DAYS)).filter((sha) => recent.has(sha));
   const ancestors = new Set(ancestorShas);
   const isDefaultRef = (b) => b === defaultBranch || b === `origin/${defaultBranch}`;
   const branchesBySha = {};
@@ -2449,9 +2541,14 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
       cherryCandidates.push(tip);
   }
   const cherrySet = /* @__PURE__ */ new Set();
+  const squashedInto = {};
   for (const tip of cherryCandidates) {
     for (const sha of await cherryEquivalentShas(repoRoot, defaultBranch, tip.name)) {
       cherrySet.add(sha);
+    }
+    for (const [sha, into] of Object.entries(await squashedShas(repoRoot, ancestryRef, tip.ref))) {
+      if (recent.has(sha))
+        squashedInto[sha] = into;
     }
   }
   return {
@@ -2459,6 +2556,7 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
     shas,
     ancestorShas,
     cherryEquivalentShas: [...cherrySet],
+    squashedInto,
     branchesBySha,
     branchTipDates,
     now: now.toISOString()
@@ -2491,6 +2589,7 @@ async function runFatePass(auth, repos, declared = [], machineId = "") {
         commitSha: row.sha,
         branch: row.branch,
         fate: row.fate,
+        ...row.mergedAs ? { mergedAs: row.mergedAs } : {},
         committedAt: c?.committedAt ?? "",
         linesAdded: c?.linesAdded ?? 0,
         linesDeleted: c?.linesDeleted ?? 0,

@@ -41,6 +41,14 @@ versioning.
   (author is this machine's git identity; the email never leaves) and the
   Stop hook's branch replaces the transcript's `HEAD`, so the server prefers
   your own commits on the session's branch.
+- **Squash merges resolve, and "shipped" is judged against the remote.**
+  A multi-commit branch squash-merged on GitHub, its local branch deleted, its
+  stale `origin/<branch>` ref left behind: `git cherry` never saw it, so its
+  commits read in flight and kept the events. Fate rows now carry `mergedAs`
+  from whole-branch-prefix patch-ids, and ancestry comes from `origin/main`
+  when it exists (a parked worktree's local `main` is stale by design). Two
+  parallel sessions' racing hooks started four syncs; the throttle is now an
+  atomic claim, one sync per interval whatever races.
 - **The wrappers (§ 4 step 6).** `plugins/centrail` is a Claude Code plugin —
   one `Stop` hook over a bundled copy of this CLI, pinned by the plugin version —
   and Codex reads the same `hooks.json` with a Claude-compatible Stop input, so
