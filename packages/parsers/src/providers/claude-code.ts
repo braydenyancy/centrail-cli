@@ -55,6 +55,7 @@ export type ParsedUsageEvent = {
     turn?: string; // local only: the transcript turn this request belongs to
     touched?: Evidence; // local only: files this request wrote and read
     fallback?: boolean; // local only: this line carries the fallback iteration; see collapse
+    messageId?: string; // local only: for sidechain-replay folding
     origin?: {
       host: string;
       platform: string;
@@ -84,7 +85,12 @@ export function claudeConfigDirs(): string[] {
       .map((s) => s.trim())
       .filter(Boolean);
   }
-  return [join(homedir(), ".claude"), join(homedir(), ".config", "claude")];
+  return [
+    join(homedir(), ".claude"),
+    join(homedir(), ".config", "claude"),
+    // Xcode's Claude agent keeps its own config (phuryn/claude-usage scanner.py:21).
+    join(homedir(), "Library", "Developer", "Xcode", "CodingAssistant", "ClaudeAgentConfig"),
+  ];
 }
 
 // An entry may name the config dir (…/.claude) or its projects dir itself
@@ -155,7 +161,29 @@ export async function scanClaudeCodeLogs(opts: {
     // call takes, and the spread crashed a full scan at 177k lines.
     for (const e of await scanProjectsDir(base, since)) events.push(e);
   }
-  return collapseUsageEvents(events);
+  return collapseUsageEvents(foldSidechainReplays(events));
+}
+
+// A /btw side question runs in a sidechain that replays parent messages
+// under a NEW requestId (ccusage rust/adapters/claude/src/lib.rs:238). A
+// sidechain event whose message id and session match a non-sidechain one
+// is that response, not another. Only when a sidechain is on one side: a
+// gateway that reuses one message id across real responses stays apart.
+export function foldSidechainReplays(events: ParsedUsageEvent[]): ParsedUsageEvent[] {
+  const parentId = new Map<string, string>();
+  for (const e of events) {
+    const m = e.metadata;
+    if (m.isSidechain === true || !m.messageId) continue;
+    const k = `${m.sessionId ?? ""}\u0000${m.messageId}`;
+    if (!parentId.has(k)) parentId.set(k, e.externalId);
+  }
+  for (const e of events) {
+    const m = e.metadata;
+    if (m.isSidechain !== true || !m.messageId) continue;
+    const id = parentId.get(`${m.sessionId ?? ""}\u0000${m.messageId}`);
+    if (id && !/:(iter|advisor):\d+$/.test(e.externalId)) e.externalId = id;
+  }
+  return events;
 }
 
 // Claude Code writes one transcript line per content block of a response
@@ -494,6 +522,7 @@ function parseAssistantEvent(raw: unknown, turn?: string): ParsedUsageEvent | nu
       isSidechain: boolOr(raw.isSidechain),
       turn,
       touched: lineEvidence(message),
+      messageId: stringOr(message.id),
     },
   };
 }

@@ -282,6 +282,14 @@ function parseTokenCount(
   if (total && previousTotals && sameUsage(total, previousTotals)) {
     return { event: null, total, bareLast: false };
   }
+  // Snapshots can arrive slightly out of order: the cumulative total steps
+  // back by about one increment, then resumes. That row is stale, not a
+  // reset — keep the higher baseline and count nothing (tokscale
+  // crates/tokscale-core/src/sessions/codex.rs:222). A total that falls far
+  // below is a real reset and counts from its own last usage.
+  if (total && previousTotals && last && looksStale(total, previousTotals, last)) {
+    return { event: null, total: previousTotals, bareLast: false };
+  }
   // Fall back to cumulative deltas only while the baseline is trustworthy;
   // otherwise the delta would re-emit usage already counted from per-call
   // lines, so the line is absorbed as the new baseline instead.
@@ -344,6 +352,17 @@ function readTokenUsage(raw: unknown): TokenUsage | null {
     cacheWriteInputTokens: numOr0(raw.cache_write_input_tokens),
     outputTokens: numOr0(raw.output_tokens),
   };
+}
+
+function usageSum(u: TokenUsage): number {
+  return u.inputTokens + u.outputTokens;
+}
+
+function looksStale(current: TokenUsage, previous: TokenUsage, last: TokenUsage): boolean {
+  const cur = usageSum(current);
+  const prev = usageSum(previous);
+  if (cur >= prev || cur <= 0 || usageSum(last) <= 0) return false;
+  return cur * 100 >= prev * 98 || cur + 2 * usageSum(last) >= prev;
 }
 
 function sameUsage(a: TokenUsage, b: TokenUsage): boolean {

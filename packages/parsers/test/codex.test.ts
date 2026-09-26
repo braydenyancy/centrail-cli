@@ -382,3 +382,26 @@ describe("Codex fork replays (ccusage #1337, #1349)", () => {
     expect(sumInput(await scanCodexLogs({ basePath: base }))).toBe(300);
   });
 });
+
+describe("Codex snapshots out of order (tokscale codex.rs:222)", () => {
+  const at = (s: number) => `2026-06-01T12:00:${String(s).padStart(2, "0")}.000Z`;
+  const inc = (s: number, total: number, last: number) => ({ timestamp: at(s), type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: total, output_tokens: 0 }, last_token_usage: { input_tokens: last, output_tokens: 0 } } } });
+  const head = [
+    { timestamp: at(0), type: "session_meta", payload: { id: "sess", cwd: "/ws" } },
+    { timestamp: at(0), type: "turn_context", payload: { turn_id: "t1", model: "gpt-5", cwd: "/ws" } },
+  ];
+  const sum = async (lines: unknown[]) => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-codex-ooo-"));
+    await writeFile(join(base, "r.jsonl"), `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+    return (await scanCodexLogs({ basePath: base })).reduce((n, e) => n + e.inputTokens + e.cacheReadTokens, 0);
+  };
+
+  it("a stale snapshot (total steps back by about one increment, then resumes) is not counted", async () => {
+    expect(await sum([...head, inc(1, 1000, 1000), inc(2, 1100, 100), inc(3, 1000, 100), inc(4, 1200, 100)])).toBe(1200);
+  });
+
+  it("a hard reset (total falls far below, a new baseline) is counted from its last usage", async () => {
+    expect(await sum([...head, inc(1, 10000, 10000), inc(2, 50, 50), inc(3, 150, 100)])).toBe(10150);
+  });
+});
+

@@ -183,3 +183,46 @@ describe("model fallback: one response, two iterations on two models", () => {
     expect((await scanClaudeCodeLogs({ basePath: base })).map((e) => e.externalId).sort()).toEqual(["r1", ...extra].sort());
   });
 });
+
+describe("found by the cross-tool comparison", () => {
+  const write = async (files: Record<string, string[]>) => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-xt-"));
+    for (const [rel, lines] of Object.entries(files)) {
+      const p = join(base, rel);
+      await mkdir(join(p, ".."), { recursive: true });
+      await writeFile(p, `${lines.join("\n")}\n`);
+    }
+    return base;
+  };
+  const a = (o: { rid: string; mid: string; sid?: string; side?: boolean; out: number; at: string }) =>
+    JSON.stringify({ type: "assistant", requestId: o.rid, timestamp: o.at, sessionId: o.sid ?? "s", isSidechain: o.side ?? false, message: { id: o.mid, model: "m", usage: { input_tokens: 1, output_tokens: o.out } } });
+
+  it.each([
+    ["parent first", false],
+    ["replay first", true],
+  ])("a /btw sidechain replaying a parent message under a NEW requestId is the same response (ccusage lib.rs:238) — %s", async (_, replayFirst) => {
+    const parent = a({ rid: "req_parent", mid: "msg_1", out: 50, at: T(1) });
+    const replay = a({ rid: "req_replay", mid: "msg_1", side: true, out: 50, at: T(5) });
+    const base = await write({ "p/s.jsonl": replayFirst ? [replay, parent] : [parent, replay] });
+    const events = await scanClaudeCodeLogs({ basePath: base });
+    expect(events.map((e) => [e.externalId, e.outputTokens])).toEqual([["req_parent", 50]]);
+  });
+
+  it.each([
+    ["two non-sidechain responses reusing a message id (a gateway) stay two", [a({ rid: "r1", mid: "msg_g", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_g", out: 2, at: T(2) })], 2],
+    ["a sidechain in ANOTHER session with the same message id stays separate", [a({ rid: "r1", mid: "msg_x", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_x", sid: "other", side: true, out: 2, at: T(2) })], 2],
+    ["a subagent's own responses (own message ids) stay", [a({ rid: "r1", mid: "msg_p", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_sub", side: true, out: 2, at: T(2) })], 2],
+  ])("%s", async (_, lines, n) => {
+    const base = await write({ "p/s.jsonl": lines });
+    expect(await scanClaudeCodeLogs({ basePath: base })).toHaveLength(n);
+  });
+
+  it("subagent transcripts nested under <session>/subagents/workflows/<wf>/ are scanned (ccusage paths.rs)", async () => {
+    const base = await write({
+      "p/s.jsonl": [a({ rid: "r_top", mid: "m1", out: 1, at: T(1) })],
+      "p/s/subagents/agent-1.jsonl": [a({ rid: "r_sub", mid: "m2", side: true, out: 1, at: T(2) })],
+      "p/s/subagents/workflows/wf_1/agent-a.jsonl": [a({ rid: "r_wf", mid: "m3", side: true, out: 1, at: T(3) })],
+    });
+    expect((await scanClaudeCodeLogs({ basePath: base })).map((e) => e.externalId).sort()).toEqual(["r_sub", "r_top", "r_wf"]);
+  });
+});

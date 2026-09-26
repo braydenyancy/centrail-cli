@@ -111,7 +111,12 @@ function claudeConfigDirs() {
   if (env && env.trim()) {
     return env.split(",").map((s) => s.trim()).filter(Boolean);
   }
-  return [join2(homedir(), ".claude"), join2(homedir(), ".config", "claude")];
+  return [
+    join2(homedir(), ".claude"),
+    join2(homedir(), ".config", "claude"),
+    // Xcode's Claude agent keeps its own config (phuryn/claude-usage scanner.py:21).
+    join2(homedir(), "Library", "Developer", "Xcode", "CodingAssistant", "ClaudeAgentConfig")
+  ];
 }
 function claudeProjectDirs() {
   return claudeConfigDirs().map((d) => basename(d.replace(/[\\/]+$/, "")) === "projects" ? d : join2(d, "projects"));
@@ -163,7 +168,27 @@ async function scanClaudeCodeLogs(opts) {
     for (const e of await scanProjectsDir(base, since, host, plat))
       events.push(e);
   }
-  return collapseUsageEvents(events);
+  return collapseUsageEvents(foldSidechainReplays(events));
+}
+function foldSidechainReplays(events) {
+  const parentId = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    const m = e.metadata;
+    if (m.sidechain || !m.messageId)
+      continue;
+    const k = `${m.sessionId ?? ""}\0${m.messageId}`;
+    if (!parentId.has(k))
+      parentId.set(k, e.externalId);
+  }
+  for (const e of events) {
+    const m = e.metadata;
+    if (!m.sidechain || !m.messageId)
+      continue;
+    const id = parentId.get(`${m.sessionId ?? ""}\0${m.messageId}`);
+    if (id && !/:(iter|advisor):\d+$/.test(e.externalId))
+      e.externalId = id;
+  }
+  return events;
 }
 function collapseUsageEvents(events) {
   const byId = /* @__PURE__ */ new Map();
@@ -171,6 +196,19 @@ function collapseUsageEvents(events) {
     const prev = byId.get(e.externalId);
     if (!prev) {
       byId.set(e.externalId, e);
+      continue;
+    }
+    if (e.metadata.fallback && !prev.metadata.fallback) {
+      const at = prev.occurredAt < e.occurredAt ? prev.occurredAt : e.occurredAt;
+      const touched = mergeEvidence(prev.metadata.touched, e.metadata.touched);
+      const turn = prev.metadata.turn ?? e.metadata.turn;
+      Object.assign(prev, { ...e, occurredAt: at, metadata: { ...e.metadata, touched, turn } });
+      continue;
+    }
+    if (prev.metadata.fallback && !e.metadata.fallback) {
+      prev.metadata.touched = mergeEvidence(prev.metadata.touched, e.metadata.touched);
+      if (e.occurredAt < prev.occurredAt)
+        prev.occurredAt = e.occurredAt;
       continue;
     }
     prev.inputTokens = Math.max(prev.inputTokens, e.inputTokens);
@@ -248,8 +286,9 @@ async function scanProjectsDir(basePath, since, host, plat) {
         turns.observe(raw);
         const parsed = parseAssistantEvent(raw, host, plat, turns.current);
         if (parsed && (!since || parsed.occurredAt > since)) {
+          applyFallback(raw, parsed);
           events.push(parsed);
-          for (const extra of fallbackIterations(raw, parsed))
+          for (const extra of extraIterations(raw, parsed))
             events.push(extra);
         }
       }
@@ -273,17 +312,8 @@ async function listSessionFiles(dir) {
     }
     if (!entry.isDirectory())
       continue;
-    const sub = join2(dir, entry.name, "subagents");
-    let subEntries;
-    try {
-      subEntries = await readdir(sub, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const s of subEntries) {
-      if (s.isFile() && s.name.endsWith(".jsonl"))
-        files.push(join2(sub, s.name));
-    }
+    for (const f of await jsonlUnder(join2(dir, entry.name, "subagents"), 4))
+      files.push(f);
   }
   return files;
 }
@@ -318,30 +348,70 @@ function lineEvidence(message) {
   }
   return out;
 }
-function fallbackIterations(raw, top) {
-  if (!isObject2(raw) || !isObject2(raw.message) || !isObject2(raw.message.usage))
+function extraIterations(raw, top) {
+  const iterations = iterationsOf(raw);
+  if (iterations.length < 2)
     return [];
-  const iterations = raw.message.usage.iterations;
-  if (!Array.isArray(iterations) || iterations.length < 2)
-    return [];
+  const firstFallback = iterations.findIndex((it) => it.type === "fallback_message");
   const out = [];
-  for (let i = 0; i < iterations.length - 1; i++) {
-    const it = iterations[i];
-    if (!isObject2(it) || typeof it.model !== "string" || !it.model || it.model === "<synthetic>")
-      continue;
-    const cc = isObject2(it.cache_creation) ? it.cache_creation : null;
+  iterations.forEach((it, i) => {
+    const firstAttempt = firstFallback > 0 && i < firstFallback && it.type === "message";
+    const advisor = it.type === "advisor_message";
+    if (!firstAttempt && !advisor)
+      return;
+    if (typeof it.model !== "string" || !it.model || it.model === "<synthetic>")
+      return;
     out.push({
       ...top,
-      externalId: `${top.externalId}:iter:${i}`,
+      ...usageFields(it),
+      externalId: `${top.externalId}:${advisor ? "advisor" : "iter"}:${i}`,
       model: it.model,
-      inputTokens: numOr0(it.input_tokens),
-      outputTokens: numOr0(it.output_tokens),
-      cacheReadTokens: numOr0(it.cache_read_input_tokens),
-      cacheCreationTokens: numOr0(it.cache_creation_input_tokens),
-      cacheCreation5mTokens: cc ? numOr0(cc.ephemeral_5m_input_tokens) : 0,
-      cacheCreation1hTokens: cc ? numOr0(cc.ephemeral_1h_input_tokens) : 0,
-      metadata: { ...top.metadata, touched: { writes: [], reads: [] } }
+      metadata: { ...top.metadata, touched: { writes: [], reads: [] }, fallback: void 0 }
     });
+  });
+  return out;
+}
+function iterationsOf(raw) {
+  if (!isObject2(raw) || !isObject2(raw.message) || !isObject2(raw.message.usage))
+    return [];
+  const it = raw.message.usage.iterations;
+  return Array.isArray(it) ? it.filter(isObject2) : [];
+}
+function usageFields(u) {
+  const cc = isObject2(u.cache_creation) ? u.cache_creation : null;
+  return {
+    inputTokens: numOr0(u.input_tokens),
+    outputTokens: numOr0(u.output_tokens),
+    cacheReadTokens: numOr0(u.cache_read_input_tokens),
+    cacheCreationTokens: numOr0(u.cache_creation_input_tokens),
+    cacheCreation5mTokens: cc ? numOr0(cc.ephemeral_5m_input_tokens) : 0,
+    cacheCreation1hTokens: cc ? numOr0(cc.ephemeral_1h_input_tokens) : 0
+  };
+}
+function applyFallback(raw, e) {
+  const iterations = iterationsOf(raw);
+  const fb = [...iterations].reverse().find((it) => it.type === "fallback_message");
+  if (!fb)
+    return;
+  Object.assign(e, usageFields(fb));
+  if (typeof fb.model === "string" && fb.model)
+    e.model = fb.model;
+  e.metadata.fallback = true;
+}
+async function jsonlUnder(dir, depth) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const e of entries) {
+    if (e.isFile() && e.name.endsWith(".jsonl"))
+      out.push(join2(dir, e.name));
+    else if (e.isDirectory() && depth > 0)
+      for (const f of await jsonlUnder(join2(dir, e.name), depth - 1))
+        out.push(f);
   }
   return out;
 }
@@ -395,6 +465,8 @@ function parseAssistantEvent(raw, host, plat, turn) {
       entrypoint,
       turn,
       touched: lineEvidence(message),
+      messageId: stringOr(message.id),
+      sidechain: raw.isSidechain === true,
       origin: {
         host,
         platform: plat,
@@ -773,6 +845,9 @@ function parseTokenCount(raw, context, previousTotals, baselineValid, host, plat
   if (total && previousTotals && sameUsage(total, previousTotals)) {
     return { event: null, total, bareLast: false };
   }
+  if (total && previousTotals && last && looksStale(total, previousTotals, last)) {
+    return { event: null, total: previousTotals, bareLast: false };
+  }
   const usage = last ?? (total && baselineValid ? subtractTokenUsage(total, previousTotals) : null);
   const bareLast = last !== null && total === null;
   const model = stringOr2(payload.model) ?? stringOr2(info.model) ?? context.model;
@@ -825,6 +900,16 @@ function readTokenUsage(raw) {
     cacheWriteInputTokens: numOr03(raw.cache_write_input_tokens),
     outputTokens: numOr03(raw.output_tokens)
   };
+}
+function usageSum(u) {
+  return u.inputTokens + u.outputTokens;
+}
+function looksStale(current, previous, last) {
+  const cur = usageSum(current);
+  const prev = usageSum(previous);
+  if (cur >= prev || cur <= 0 || usageSum(last) <= 0)
+    return false;
+  return cur * 100 >= prev * 98 || cur + 2 * usageSum(last) >= prev;
 }
 function sameUsage(a, b) {
   return a.inputTokens === b.inputTokens && a.cachedInputTokens === b.cachedInputTokens && a.cacheWriteInputTokens === b.cacheWriteInputTokens && a.outputTokens === b.outputTokens;

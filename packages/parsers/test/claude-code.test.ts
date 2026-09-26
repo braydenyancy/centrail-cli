@@ -383,6 +383,11 @@ describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
     expect(dirs.some((d) => d.endsWith(join(".config", "claude", "projects")))).toBe(true);
   });
 
+  it("with CLAUDE_CONFIG_DIR unset also reads Xcode's Claude agent config (phuryn/claude-usage scanner.py:21)", () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    expect(claudeProjectDirs().some((d) => d.endsWith(join("Library", "Developer", "Xcode", "CodingAssistant", "ClaudeAgentConfig", "projects")))).toBe(true);
+  });
+
   it("honors CLAUDE_CONFIG_DIR, comma-separated and trimmed", () => {
     process.env.CLAUDE_CONFIG_DIR = "/a/x ,  /b/y";
     expect(claudeConfigDirs()).toEqual(["/a/x", "/b/y"]);
