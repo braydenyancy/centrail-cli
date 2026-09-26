@@ -264,3 +264,34 @@ describe("§ 3.8 the server matches; the CLI ships commit facts", () => {
   });
 });
 
+
+describe("a dead worktree's repo still ships its commits when no session ever sat in the live checkout", () => {
+  it.each([
+    ["a server that matches", ["repo", "match"]],
+    ["a server that does not", ["repo"]],
+  ])("against %s", async (_, fields) => {
+    server.fields = fields;
+    const n = fields.length;
+    const ws = join(fx.root, `ws-orphan-${n}`);
+    await mkdir(ws);
+    const main = await fx.repo(`ws-orphan-${n}/m`, { remote: `https://github.com/acme/orphan-${n}.git` });
+    const wt = await fx.worktree(main, `ws-orphan-${n}/m-wt`, "wt");
+    const t = (i: number) => T0 + 30 * 60_000 + i * 1000;
+    const path = await writeTranscript(claudeDir, ws, `so${n}`, [
+      JSON.stringify({ type: "user", timestamp: new Date(t(0)).toISOString(), cwd: ws, sessionId: `so${n}`, message: { role: "user", content: "go" } }),
+      transcriptLine({ sessionId: `so${n}`, cwd: ws, requestId: `req_orphan_${n}`, out: 4, atMs: t(1), toolUse: { name: "Bash", input: { command: `cd ${wt} && make` } } }),
+    ]);
+    await runStopHook(JSON.stringify({ session_id: `so${n}`, cwd: ws, transcript_path: path }), "claude-code", { spawnSync: () => {}, connected: async () => false });
+    const sha = await fx.commit(wt, "wt.txt", undefined, new Date());
+    await fx.git(main, "worktree", "remove", "--force", wt);
+    server.attributeBodies.length = 0;
+    await runSync({ full: false });
+    expect(server.rows.get(`req_orphan_${n}`)?.metadata.repo).toMatchObject({ key: `github.com/acme/orphan-${n}`, label: "m-wt" });
+    // The live checkout `m` never hosted a session; the hook saw the worktree
+    // and recorded where its main checkout lives. The fate pass and (when the
+    // server does not match) the attribution both reach the commit through it.
+    expect(server.fates.some((f) => f.commitSha === sha && f.repoKey === `github.com/acme/orphan-${n}`)).toBe(true);
+    if (!fields.includes("match")) expect(server.attributions.find((a) => a.externalId === `req_orphan_${n}`)?.commitSha).toBe(sha);
+    server.fields = ["repo"];
+  });
+});

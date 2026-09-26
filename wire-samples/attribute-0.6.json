@@ -1,0 +1,35 @@
+{
+  "repos": [
+    {
+      "name": "a",
+      "key": "github.com/acme/a",
+      "totalLoc": 4,
+      "fileCount": 2
+    }
+  ],
+  "attributions": [],
+  "fates": [
+    {
+      "repoName": "a",
+      "repoKey": "github.com/acme/a",
+      "commitSha": "1f8b8d777a7ed7c5496bddd97139d736474f925d",
+      "branch": "main",
+      "fate": "shipped",
+      "committedAt": "2026-09-26T08:43:33.000Z",
+      "linesAdded": 1,
+      "linesDeleted": 0,
+      "filesChanged": 1
+    },
+    {
+      "repoName": "a",
+      "repoKey": "github.com/acme/a",
+      "commitSha": "468d270e9eac7e0024632c8de2262d569af07604",
+      "branch": "main",
+      "fate": "shipped",
+      "committedAt": "2026-09-26T08:43:33.000Z",
+      "linesAdded": 1,
+      "linesDeleted": 0,
+      "filesChanged": 1
+    }
+  ]
+}

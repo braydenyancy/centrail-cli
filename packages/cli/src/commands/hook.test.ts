@@ -175,12 +175,18 @@ describe("runStopHook", () => {
     expect((await readSidecar(sidecarPath)).get("s")?.roots).toEqual(l4.roots);
   });
 
-  it("without a transcript_path (another harness, an older Claude Code) the line has no offset and no roots", async () => {
+  it("without a transcript_path (another harness, an older Claude Code) there is no offset; the cwd root is still recorded, with its main checkout when it is a worktree", async () => {
     fx = await scratch();
     const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
-    const line = (await runStopHook(JSON.stringify({ session_id: "s", cwd: repo }), "claude-code", { sidecarPath: join(fx.root, "sc.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState() }))!;
-    expect(line.offset).toBeUndefined();
-    expect(line.roots).toBeUndefined();
-    expect(line.repo?.key).toBe("github.com/acme/r");
+    const wt = await fx.worktree(repo, "r-wt", "wt");
+    const sidecarPath = join(fx.root, "sc.jsonl");
+    const deps = { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() };
+    const inMain = (await runStopHook(JSON.stringify({ session_id: "s1", cwd: repo }), "claude-code", deps))!;
+    expect(inMain.offset).toBeUndefined();
+    expect(inMain.roots).toEqual({ [repo]: { key: "github.com/acme/r", label: "r", source: "remote" } });
+    expect(inMain.mains).toBeUndefined(); // a main checkout has no main
+    const inWt = (await runStopHook(JSON.stringify({ session_id: "s2", cwd: wt }), "claude-code", deps))!;
+    expect(inWt.roots).toEqual({ [wt]: { key: "github.com/acme/r", label: "r-wt", source: "remote" } });
+    expect(inWt.mains).toEqual({ [wt]: repo });
   });
 });

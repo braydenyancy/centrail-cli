@@ -264,8 +264,14 @@ async function pushAttributions(
   for (const b of buckets.values()) if (!rootByKey.has(b.key)) rootByKey.set(b.key, b.root);
   for (const e of orphans) {
     const repo = e.metadata.repo!;
-    const root = rootByKey.get(repo.key);
-    if (!root) continue; // no live checkout on this machine: usage ships, commits wait
+    let root = rootByKey.get(repo.key);
+    if (!root) {
+      // No event's cwd is a live checkout of this key; the hook may still
+      // know one (a root it recorded, or the main checkout of a dead worktree).
+      const found = await resolver.liveRootForKey(repo.key);
+      if (!found) continue; // no live checkout on this machine: usage ships, commits wait
+      rootByKey.set(repo.key, (root = found));
+    }
     const branch = resolver.sidecarBranchFor(e);
     bucket(root, branch ? `refs/heads/${branch}` : "--all", repo.label, repo.key).events.push(e);
   }

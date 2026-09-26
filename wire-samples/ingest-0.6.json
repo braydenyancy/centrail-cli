@@ -3,13 +3,112 @@
     "surface": "claude-code",
     "kind": "local_logs"
   },
-  "account": {
-    "accountUuid": "db2e85a1-8696-4a69-9e29-2920cac54146",
-    "emailAddress": "aus10lynes@gmail.com",
-    "organizationUuid": "21586603-adea-4e4b-b1b0-52329e793fd6",
-    "billingType": "stripe_subscription"
-  },
+  "account": null,
   "events": [
+    {
+      "externalId": "req_think",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "inputTokens": 10,
+      "outputTokens": 3,
+      "cacheReadTokens": 1000,
+      "cacheCreationTokens": 0,
+      "cacheCreation5mTokens": 0,
+      "cacheCreation1hTokens": 0,
+      "occurredAt": "2026-09-26T08:33:34.686Z",
+      "metadata": {
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD",
+        "repo": {
+          "key": "github.com/acme/a",
+          "label": "a",
+          "source": "remote"
+        },
+        "placement": "files",
+        "origin": {
+          "platform": "linux",
+          "machineId": "5d2d2710-a604-405a-a66e-0a6bc26d9f4d"
+        }
+      }
+    },
+    {
+      "externalId": "req_edit_a",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "inputTokens": 10,
+      "outputTokens": 40,
+      "cacheReadTokens": 1000,
+      "cacheCreationTokens": 0,
+      "cacheCreation5mTokens": 0,
+      "cacheCreation1hTokens": 0,
+      "occurredAt": "2026-09-26T08:33:35.686Z",
+      "metadata": {
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD",
+        "repo": {
+          "key": "github.com/acme/a",
+          "label": "a",
+          "source": "remote"
+        },
+        "placement": "files",
+        "origin": {
+          "platform": "linux",
+          "machineId": "5d2d2710-a604-405a-a66e-0a6bc26d9f4d"
+        }
+      }
+    },
+    {
+      "externalId": "req_bash_b",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "inputTokens": 10,
+      "outputTokens": 9,
+      "cacheReadTokens": 1000,
+      "cacheCreationTokens": 0,
+      "cacheCreation5mTokens": 0,
+      "cacheCreation1hTokens": 0,
+      "occurredAt": "2026-09-26T08:33:37.686Z",
+      "metadata": {
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD",
+        "repo": {
+          "key": "github.com/acme/b",
+          "label": "b-wt",
+          "source": "remote"
+        },
+        "placement": "files",
+        "origin": {
+          "platform": "linux",
+          "machineId": "5d2d2710-a604-405a-a66e-0a6bc26d9f4d"
+        }
+      }
+    },
+    {
+      "externalId": "req_sticky",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "inputTokens": 10,
+      "outputTokens": 2,
+      "cacheReadTokens": 1000,
+      "cacheCreationTokens": 0,
+      "cacheCreation5mTokens": 0,
+      "cacheCreation1hTokens": 0,
+      "occurredAt": "2026-09-26T08:33:39.686Z",
+      "metadata": {
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD",
+        "repo": {
+          "key": "github.com/acme/b",
+          "label": "b-wt",
+          "source": "remote"
+        },
+        "placement": "sticky",
+        "origin": {
+          "platform": "linux",
+          "machineId": "5d2d2710-a604-405a-a66e-0a6bc26d9f4d"
+        }
+      }
+    },
     {
       "externalId": "req_live",
       "provider": "anthropic",
@@ -20,43 +119,19 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T04:12:52.053Z",
+      "occurredAt": "2026-09-26T08:33:40.686Z",
       "metadata": {
         "sessionId": "s-live",
         "gitBranch": "HEAD",
         "repo": {
-          "key": "github.com/acme/probe",
-          "label": "repo",
+          "key": "github.com/acme/a",
+          "label": "a",
           "source": "remote"
         },
+        "placement": "cwd",
         "origin": {
           "platform": "linux",
-          "machineId": "3c4b6dad-29ff-41e5-b599-1419dc22ff62"
-        }
-      }
-    },
-    {
-      "externalId": "req_dead",
-      "provider": "anthropic",
-      "model": "claude-opus-4-8",
-      "inputTokens": 10,
-      "outputTokens": 140,
-      "cacheReadTokens": 1000,
-      "cacheCreationTokens": 0,
-      "cacheCreation5mTokens": 0,
-      "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T04:12:52.053Z",
-      "metadata": {
-        "sessionId": "s-dead",
-        "gitBranch": "HEAD",
-        "repo": {
-          "key": "github.com/acme/probe",
-          "label": "repo-wt",
-          "source": "remote"
-        },
-        "origin": {
-          "platform": "linux",
-          "machineId": "3c4b6dad-29ff-41e5-b599-1419dc22ff62"
+          "machineId": "5d2d2710-a604-405a-a66e-0a6bc26d9f4d"
         }
       }
     }

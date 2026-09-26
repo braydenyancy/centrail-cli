@@ -66,6 +66,33 @@ export class IdentityResolver {
     return cwd ? this.rootFor(cwd) : null;
   }
 
+  // A live checkout of this identity that no event's cwd pointed at: any
+  // root the hook recorded for the key that still exists, or the main
+  // checkout it recorded for a worktree that is gone. Null when this
+  // machine holds no live checkout — usage ships, commits wait.
+  async liveRootForKey(key: string): Promise<string | null> {
+    let known = this.liveRootByKey.get(key);
+    if (known !== undefined) return known;
+    known = null;
+    for (const line of this.sidecar.values()) {
+      for (const [path, id] of Object.entries(line.roots ?? {})) {
+        if (id.key !== key) continue;
+        for (const candidate of [path, line.mains?.[path]]) {
+          if (!candidate) continue;
+          const root = await this.rootFor(candidate);
+          if (root && (await this.identityForRoot(root))?.key === key) {
+            known = root;
+            break;
+          }
+        }
+        if (known) break;
+      }
+      if (known) break;
+    }
+    this.liveRootByKey.set(key, known);
+    return known;
+  }
+
   // The branch the Stop hook saw for this session, or null (detached / no
   // sidecar). A dead worktree's commits are read from this ref in a sibling.
   sidecarBranchFor(e: ParsedUsageEvent): string | null {
@@ -96,6 +123,7 @@ export class IdentityResolver {
   }
 
   private readonly liveRoots = new Set<string>();
+  private readonly liveRootByKey = new Map<string, string | null>();
 
   private async rootFor(cwd: string): Promise<string | null> {
     let root = this.rootByCwd.get(cwd);

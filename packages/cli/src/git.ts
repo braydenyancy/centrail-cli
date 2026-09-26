@@ -78,6 +78,22 @@ export async function nearestDirectory(path: string): Promise<string | null> {
   }
 }
 
+// The main checkout of a linked worktree — the folder whose `.git` holds the
+// common dir — or null for a main checkout or a bare repo. Branches and
+// commits outlive worktrees; this path is how a dead worktree's events
+// still find its history when no session ever ran in the main checkout.
+export async function readMainCheckout(repoRoot: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const common = stdout.trim();
+    if (!common || basename(common) !== ".git") return null;
+    const main = dirname(common);
+    return main === repoRoot ? null : main;
+  } catch {
+    return null;
+  }
+}
+
 export function repoName(repoRoot: string): string {
   return basename(repoRoot);
 }

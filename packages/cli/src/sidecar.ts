@@ -30,6 +30,9 @@ export type SidecarLine = {
   // while those folders existed. Cumulative across the session's lines.
   offset?: number;
   roots?: Record<string, RepoIdentity>;
+  // root → its main checkout, for roots that are linked worktrees: where a
+  // dead worktree's branches still live. Never on the wire.
+  mains?: Record<string, string>;
 };
 
 export async function appendSidecar(line: SidecarLine, path: string = SIDECAR_PATH): Promise<void> {
