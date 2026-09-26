@@ -118,50 +118,68 @@ describe("two responses are two events", () => {
 });
 
 describe("model fallback: one response, two iterations on two models", () => {
-  // Measured on the reference corpus: 6 requests fell back (fable → opus);
-  // top-level usage is the FALLBACK iteration only, so the first attempt —
-  // 1.32M cache-read and 5.3k output tokens on the pricier model — was lost.
-  const fallbackLine = (at: string, out2: number) =>
-    JSON.stringify({
-      type: "assistant",
-      requestId: "req_fb",
-      timestamp: at,
-      cwd: "/r",
-      sessionId: "s",
-      message: {
-        id: "msg_fb",
-        model: "claude-opus-4-8",
-        usage: {
-          input_tokens: 32, output_tokens: out2, cache_read_input_tokens: 214815, cache_creation_input_tokens: 0,
-          iterations: [
-            { type: "message", model: "claude-fable-5-1", input_tokens: 32, output_tokens: 443, cache_read_input_tokens: 255332, cache_creation_input_tokens: 1826, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1826 } },
-            { type: "fallback_message", model: "claude-opus-4-8", input_tokens: 32, output_tokens: out2, cache_read_input_tokens: 214815, cache_creation_input_tokens: 0 },
-          ],
-        },
-      },
-    });
+  // The real shape (req_011Ce2K7ywCcaxK5vttuZGeT on the reference corpus):
+  // streamed lines carry the FIRST attempt's input and cache counts (the
+  // model label flips early); the final line's top-level counts are the
+  // fallback's, but its top-level cache split is still the first attempt's;
+  // only the fallback_message iteration's own split is right. Checked
+  // against ccusage, codeburn, tokscale, splitrail, claude-monitor and
+  // phuryn/claude-usage: none counts the first attempt.
+  const u = (out: number, cr: number, cc: number, split5m: number, iterations?: unknown[]) => ({
+    input_tokens: 2, output_tokens: out, cache_read_input_tokens: cr, cache_creation_input_tokens: cc,
+    cache_creation: { ephemeral_5m_input_tokens: split5m, ephemeral_1h_input_tokens: 0 },
+    ...(iterations ? { iterations } : {}),
+  });
+  const ln = (at: string, model: string, usage: unknown) =>
+    JSON.stringify({ type: "assistant", requestId: "req_fb", timestamp: at, cwd: "/r", sessionId: "s", message: { id: "msg_fb", model, usage } });
+  const streamed = [
+    ln(T(1), "claude-fable-5", u(2, 64529, 747, 747)),
+    ln(T(2), "claude-opus-4-8", u(2, 64529, 747, 747)),
+    ln(T(3), "claude-opus-4-8", u(2, 64529, 747, 747)),
+  ];
+  const final = ln(T(4), "claude-opus-4-8", u(648, 63242, 0, 747, [
+    { type: "message", model: "claude-fable-5", input_tokens: 2, output_tokens: 142, cache_read_input_tokens: 64529, cache_creation_input_tokens: 747, cache_creation: { ephemeral_5m_input_tokens: 747, ephemeral_1h_input_tokens: 0 } },
+    { type: "fallback_message", model: "claude-opus-4-8", input_tokens: 2, output_tokens: 648, cache_read_input_tokens: 63242, cache_creation_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } },
+  ]));
+  const shape = (events: Awaited<ReturnType<typeof scanClaudeCodeLogs>>) =>
+    events
+      .sort((a, b) => a.externalId.localeCompare(b.externalId))
+      .map((e) => [e.externalId, e.model, e.outputTokens, e.cacheReadTokens, e.cacheCreationTokens, e.cacheCreation5mTokens]);
+  const expected = [
+    ["req_fb", "claude-opus-4-8", 648, 63242, 0, 0],
+    ["req_fb:iter:0", "claude-fable-5", 142, 64529, 747, 747],
+  ];
 
-  it("counts the first attempt as its own event under its own model, and the response once at its final count", async () => {
+  it.each([
+    ["in file order", [...streamed, final]],
+    ["final line first", [final, ...streamed]],
+    ["final line in the middle", [streamed[0], final, streamed[1], streamed[2]]],
+  ])("the response is the fallback, the first attempt is its own event, nothing counted twice (%s)", async (_, lines) => {
     const base = await mkdtemp(join(tmpdir(), "centrail-fb-"));
     await mkdir(join(base, "p"), { recursive: true });
-    await writeFile(join(base, "p", "s.jsonl"), `${[fallbackLine(T(1), 100), fallbackLine(T(2), 3543)].join("\n")}\n`);
-    const events = (await scanClaudeCodeLogs({ basePath: base })).sort((a, b) => a.externalId.localeCompare(b.externalId));
-    expect(events.map((e) => [e.externalId, e.model, e.outputTokens, e.cacheReadTokens, e.cacheCreationTokens, e.cacheCreation1hTokens])).toEqual([
-      ["req_fb", "claude-opus-4-8", 3543, 214815, 0, 0],
-      ["req_fb:iter:0", "claude-fable-5-1", 443, 255332, 1826, 1826],
-    ]);
+    await writeFile(join(base, "p", "s.jsonl"), `${lines.join("\n")}\n`);
+    expect(shape(await scanClaudeCodeLogs({ basePath: base }))).toEqual(expected);
+  });
+
+  it("a transcript cut before the fallback line is one ordinary request on the first attempt", async () => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-fb-"));
+    await mkdir(join(base, "p"), { recursive: true });
+    await writeFile(join(base, "p", "s.jsonl"), `${streamed.join("\n")}\n`);
+    expect(shape(await scanClaudeCodeLogs({ basePath: base })).map((r) => r[0])).toEqual(["req_fb"]);
   });
 
   it.each([
-    ["one iteration (the common case)", [{ type: "message", model: null, input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }]],
-    ["no iterations", undefined],
-    ["an iteration list that is not an array", "x"],
-    ["a non-final iteration with a null model", [{ type: "message", model: null, input_tokens: 1, output_tokens: 2 }, { type: "fallback_message", model: "m", input_tokens: 1, output_tokens: 2 }]],
-  ])("%s adds no event", async (_, iterations) => {
+    ["one iteration (the common case)", [{ type: "message", model: null, input_tokens: 1, output_tokens: 2 }], []],
+    ["executor iterations that carry a model, no fallback: they ARE the top-level usage", [{ type: "message", model: "m", input_tokens: 1, output_tokens: 1 }, { type: "message", model: "m", input_tokens: 0, output_tokens: 1 }], []],
+    ["no iterations", undefined, []],
+    ["an iteration list that is not an array", "x", []],
+    ["an advisor call last (ccusage advisor_message)", [{ type: "message", model: null, input_tokens: 1, output_tokens: 2 }, { type: "advisor_message", model: "adv", input_tokens: 5, output_tokens: 6 }], ["r1:advisor:1"]],
+    ["an advisor call in the middle", [{ type: "message", model: null, input_tokens: 1, output_tokens: 1 }, { type: "advisor_message", model: "adv", input_tokens: 5, output_tokens: 6 }, { type: "message", model: null, input_tokens: 0, output_tokens: 1 }], ["r1:advisor:1"]],
+  ])("%s", async (_, iterations, extra) => {
     const base = await mkdtemp(join(tmpdir(), "centrail-fb-"));
     await mkdir(join(base, "p"), { recursive: true });
     const raw = { type: "assistant", requestId: "r1", timestamp: T(1), sessionId: "s", message: { id: "m1", model: "m", usage: { input_tokens: 1, output_tokens: 2, ...(iterations === undefined ? {} : { iterations }) } } };
     await writeFile(join(base, "p", "s.jsonl"), `${JSON.stringify(raw)}\n`);
-    expect((await scanClaudeCodeLogs({ basePath: base })).map((e) => e.externalId)).toEqual(["r1"]);
+    expect((await scanClaudeCodeLogs({ basePath: base })).map((e) => e.externalId).sort()).toEqual(["r1", ...extra].sort());
   });
 });

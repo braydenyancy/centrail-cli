@@ -54,6 +54,7 @@ export type ParsedUsageEvent = {
     placement?: Placement; // how `repo` was chosen; set with it
     turn?: string; // local only: the transcript turn this request belongs to
     touched?: Evidence; // local only: files this request wrote and read
+    fallback?: boolean; // local only: this line carries the fallback iteration; see collapse
     origin?: {
       host: string;
       platform: string;
@@ -185,6 +186,21 @@ export function collapseUsageEvents(events: ParsedUsageEvent[]): ParsedUsageEven
       if (prevSide) byId.set(e.externalId, e);
       continue;
     }
+    // A response that fell back to another model: its streamed lines carry
+    // the FIRST attempt's counts (counted as `<id>:iter:<i>`), so the line
+    // with the fallback iteration replaces them rather than taking a max.
+    if (e.metadata.fallback && !prev.metadata.fallback) {
+      const at = prev.occurredAt < e.occurredAt ? prev.occurredAt : e.occurredAt;
+      const touched = mergeEvidence(prev.metadata.touched, e.metadata.touched);
+      const turn = prev.metadata.turn ?? e.metadata.turn;
+      Object.assign(prev, { ...e, occurredAt: at, metadata: { ...e.metadata, touched, turn } });
+      continue;
+    }
+    if (prev.metadata.fallback && !e.metadata.fallback) {
+      prev.metadata.touched = mergeEvidence(prev.metadata.touched, e.metadata.touched);
+      if (e.occurredAt < prev.occurredAt) prev.occurredAt = e.occurredAt;
+      continue;
+    }
     prev.inputTokens = Math.max(prev.inputTokens, e.inputTokens);
     prev.outputTokens = Math.max(prev.outputTokens, e.outputTokens);
     prev.cacheReadTokens = Math.max(prev.cacheReadTokens, e.cacheReadTokens);
@@ -280,8 +296,9 @@ async function scanProjectsDir(
         turns.observe(raw);
         const parsed = parseAssistantEvent(raw, turns.current);
         if (parsed && (!since || parsed.occurredAt > since)) {
+          applyFallback(raw, parsed);
           events.push(parsed);
-          for (const extra of fallbackIterations(raw, parsed)) events.push(extra);
+          for (const extra of extraIterations(raw, parsed)) events.push(extra);
         }
       }
     }
@@ -365,35 +382,65 @@ export function lineEvidence(message: Record<string, unknown>): Evidence {
   return out;
 }
 
-// A response that fell back to another model carries `usage.iterations`:
-// the first attempt(s) on the original model, then the `fallback_message`
-// the top-level usage describes. Every iteration but the last is billed and
-// otherwise invisible — measured: 6 requests, 1.32M cache-read tokens on the
-// pricier model. Each becomes its own event, `<id>:iter:<i>`, under its own
-// model; the collapse folds their lines per field like any request.
-function fallbackIterations(raw: unknown, top: ParsedUsageEvent): ParsedUsageEvent[] {
-  if (!isObject(raw) || !isObject(raw.message) || !isObject(raw.message.usage)) return [];
-  const iterations = raw.message.usage.iterations;
-  if (!Array.isArray(iterations) || iterations.length < 2) return [];
+// `usage.iterations` splits one response into billed calls. Two kinds are
+// NOT in the top-level usage and are counted as their own events:
+//   - `message` iterations before a `fallback_message`: the first attempt(s)
+//     on the original model, before the response fell back (measured: 6
+//     requests, 1.32M cache-read tokens on the pricier model; no other tool
+//     counts them). `<id>:iter:<i>`.
+//   - `advisor_message` iterations, in any position (ccusage's rule,
+//     rust/adapters/claude/src/lib.rs advisor_usages_from_line). `<id>:advisor:<i>`.
+// Executor `message` iterations without a fallback ARE the top-level usage,
+// model or not, and add nothing.
+function extraIterations(raw: unknown, top: ParsedUsageEvent): ParsedUsageEvent[] {
+  const iterations = iterationsOf(raw);
+  if (iterations.length < 2) return [];
+  const firstFallback = iterations.findIndex((it) => it.type === "fallback_message");
   const out: ParsedUsageEvent[] = [];
-  for (let i = 0; i < iterations.length - 1; i++) {
-    const it = iterations[i];
-    if (!isObject(it) || typeof it.model !== "string" || !it.model || it.model === "<synthetic>") continue;
-    const cc = isObject(it.cache_creation) ? it.cache_creation : null;
+  iterations.forEach((it, i) => {
+    const firstAttempt = firstFallback > 0 && i < firstFallback && it.type === "message";
+    const advisor = it.type === "advisor_message";
+    if (!firstAttempt && !advisor) return;
+    if (typeof it.model !== "string" || !it.model || it.model === "<synthetic>") return;
     out.push({
       ...top,
-      externalId: `${top.externalId}:iter:${i}`,
+      ...usageFields(it),
+      externalId: `${top.externalId}:${advisor ? "advisor" : "iter"}:${i}`,
       model: it.model,
-      inputTokens: numOr0(it.input_tokens),
-      outputTokens: numOr0(it.output_tokens),
-      cacheReadTokens: numOr0(it.cache_read_input_tokens),
-      cacheCreationTokens: numOr0(it.cache_creation_input_tokens),
-      cacheCreation5mTokens: cc ? numOr0(cc.ephemeral_5m_input_tokens) : 0,
-      cacheCreation1hTokens: cc ? numOr0(cc.ephemeral_1h_input_tokens) : 0,
-      metadata: { ...top.metadata, touched: { writes: [], reads: [] } },
+      metadata: { ...top.metadata, touched: { writes: [], reads: [] }, fallback: undefined },
     });
-  }
+  });
   return out;
+}
+
+function iterationsOf(raw: unknown): Record<string, unknown>[] {
+  if (!isObject(raw) || !isObject(raw.message) || !isObject(raw.message.usage)) return [];
+  const it = raw.message.usage.iterations;
+  return Array.isArray(it) ? it.filter(isObject) : [];
+}
+
+function usageFields(u: Record<string, unknown>) {
+  const cc = isObject(u.cache_creation) ? u.cache_creation : null;
+  return {
+    inputTokens: numOr0(u.input_tokens),
+    outputTokens: numOr0(u.output_tokens),
+    cacheReadTokens: numOr0(u.cache_read_input_tokens),
+    cacheCreationTokens: numOr0(u.cache_creation_input_tokens),
+    cacheCreation5mTokens: cc ? numOr0(cc.ephemeral_5m_input_tokens) : 0,
+    cacheCreation1hTokens: cc ? numOr0(cc.ephemeral_1h_input_tokens) : 0,
+  };
+}
+
+// On the line that carries a fallback, the response IS the fallback
+// iteration: its counts, its model, and its own cache split (the top-level
+// split on that line is still the first attempt's — measured).
+function applyFallback(raw: unknown, e: ParsedUsageEvent): void {
+  const iterations = iterationsOf(raw);
+  const fb = [...iterations].reverse().find((it) => it.type === "fallback_message");
+  if (!fb) return;
+  Object.assign(e, usageFields(fb));
+  if (typeof fb.model === "string" && fb.model) e.model = fb.model;
+  e.metadata.fallback = true;
 }
 
 function parseAssistantEvent(raw: unknown, turn?: string): ParsedUsageEvent | null {
