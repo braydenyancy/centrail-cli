@@ -3,7 +3,8 @@ import { runConnect } from "./commands/connect.js";
 import { runStopHook } from "./commands/hook.js";
 import { runInstallHooks } from "./commands/hooks-install.js";
 import { runSync } from "./commands/sync.js";
-import { addDenyRepo, readLastSync } from "./config.js";
+import { readLastSync } from "./config.js";
+import { runExclude, runInclude, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
 
 const [, , command, ...rest] = process.argv;
 
@@ -22,7 +23,11 @@ Usage:
   centrail install-hooks            Auto-sync: add the Stop hook to Claude Code's settings
   centrail uninstall-hooks          Remove that hook
   centrail inspect --last           Print the last payload exactly as it left this machine
-  centrail exclude <repo>           Stop attributing a repo (host/owner/repo or folder name)
+  centrail setup                    Review which repos and folders sync (asked once at connect)
+  centrail repos                    List them with status
+  centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)
+  centrail include <repo>           Undo an exclude; in allow mode, add it
+  centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli)
   centrail hook stop                (run by the agent's Stop hook; reads JSON on stdin)
 `;
 
@@ -51,14 +56,20 @@ try {
     } catch {
       // intentionally silent
     }
-  } else if (command === "exclude") {
+  } else if (command === "setup") {
+    await runSetup({ interactive: true });
+  } else if (command === "repos") {
+    await runRepos();
+  } else if (command === "exclude" || command === "include") {
     const name = rest[0];
     if (!name) {
-      console.error("Usage: centrail exclude <repo>");
+      console.error(`Usage: centrail ${command} <repo>`);
       process.exit(1);
     }
-    await addDenyRepo(name);
-    console.log(`Excluded "${name}" — its commits won't be attributed.`);
+    if (command === "exclude") await runExclude(name);
+    else await runInclude(name);
+  } else if (command === "surfaces") {
+    await runSurfaces(rest);
   } else {
     console.log(USAGE);
     process.exit(command ? 1 : 0);

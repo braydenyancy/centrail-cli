@@ -158,34 +158,63 @@ function processIsAlive(pid: number): boolean {
 
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
+// Scope (decision doc § 3.7): which repos and which surfaces leave this
+// machine. `all` with exclusions is the default; `allow` syncs only the
+// listed repos and holds any new one until included. Lists hold identity
+// keys ("github.com/o/r", "sha:…", "dir:…") or labels; `exclude` means
+// nothing about that repo leaves — events, commits, identity.
+export type ScopeMode = "all" | "allow";
+
 export type Config = {
-  denyRepos: string[]; // repo keys ("github.com/o/r") or labels to never attribute
   installId: string | null; // random per-install id; null until first ensureInstallId
+  mode: ScopeMode;
+  allowRepos: string[]; // used in `allow` mode
+  denyRepos: string[]; // used in both modes
+  surfaces: Record<string, boolean>; // scanner surface -> enabled; absent = enabled
+  scopeDecidedAt: string | null; // when the preview was shown and answered
   hideRepoNames: boolean; // ship repo identity as a keyed hash, no label
   hideBranchNames: boolean; // never ship gitBranch
 };
 
 const DEFAULT_CONFIG: Config = {
-  denyRepos: [],
   installId: null,
+  mode: "all",
+  allowRepos: [],
+  denyRepos: [],
+  surfaces: {},
+  scopeDecidedAt: null,
   hideRepoNames: false,
   hideBranchNames: false,
 };
 
+export function parseConfig(raw: unknown): Config {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_CONFIG };
+  const o = raw as Record<string, unknown>;
+  const surfaces: Record<string, boolean> = {};
+  if (o.surfaces && typeof o.surfaces === "object" && !Array.isArray(o.surfaces)) {
+    for (const [k, v] of Object.entries(o.surfaces as Record<string, unknown>)) {
+      if (typeof v === "boolean") surfaces[k] = v;
+    }
+  }
+  return {
+    installId: typeof o.installId === "string" && o.installId ? o.installId : null,
+    mode: o.mode === "allow" ? "allow" : "all",
+    allowRepos: stringList(o.allowRepos),
+    denyRepos: stringList(o.denyRepos),
+    surfaces,
+    scopeDecidedAt: typeof o.scopeDecidedAt === "string" ? o.scopeDecidedAt : null,
+    hideRepoNames: o.hideRepoNames === true,
+    hideBranchNames: o.hideBranchNames === true,
+  };
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((r): r is string => typeof r === "string") : [];
+}
+
 export async function readConfig(): Promise<Config> {
   try {
-    const raw = JSON.parse(await readFile(CONFIG_PATH, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    return {
-      denyRepos: Array.isArray(raw.denyRepos)
-        ? raw.denyRepos.filter((r): r is string => typeof r === "string")
-        : [],
-      installId: typeof raw.installId === "string" && raw.installId ? raw.installId : null,
-      hideRepoNames: raw.hideRepoNames === true,
-      hideBranchNames: raw.hideBranchNames === true,
-    };
+    return parseConfig(JSON.parse(await readFile(CONFIG_PATH, "utf-8")));
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -195,10 +224,11 @@ export async function writeConfig(cfg: Config): Promise<void> {
   await writeJsonAtomic(CONFIG_PATH, cfg);
 }
 
-export async function addDenyRepo(name: string): Promise<void> {
+export async function updateConfig(mutate: (cfg: Config) => void): Promise<Config> {
   const cfg = await readConfig();
-  if (!cfg.denyRepos.includes(name)) cfg.denyRepos.push(name);
+  mutate(cfg);
   await writeConfig(cfg);
+  return cfg;
 }
 
 // The install id replaces the hostname on the wire: a random uuid minted

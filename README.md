@@ -9,11 +9,15 @@ can see what your AI costs in **dollars, commits, and carbon**.
 No install needed:
 
 ```bash
-npx centrail connect          # pair this machine with your account
+npx centrail connect          # pair this machine; shows what it found and asks what to sync
 npx centrail sync             # push new usage (and git commit attribution)
 npx centrail install-hooks    # then let Claude Code sync by itself, every turn
+npx centrail repos            # every repo and folder seen here, with sync status
+npx centrail exclude <repo>   # nothing about this repo leaves (host/owner/repo or folder name)
+npx centrail include <repo>   # undo; in allow mode, add it
+npx centrail surfaces codex off   # switch a source off (claude-code, codex, copilot-cli)
+npx centrail setup            # ask the scope question again
 npx centrail inspect --last   # the last payload, exactly as it left this machine
-npx centrail exclude <repo>   # stop attributing a repo (host/owner/repo or folder name)
 ```
 
 Node.js 20+ required. For `install-hooks`, install once (`npm i -g centrail`)
@@ -43,6 +47,12 @@ only as opaque deduplication keys. `centrail inspect --last` prints the real
 payload. Two toggles in `~/.config/centrail/config.json`: `hideRepoNames`
 (identity ships as a hash, still counted) and `hideBranchNames`. See
 [SECURITY.md](./SECURITY.md).
+
+**Which repos.** `connect` lists every repo and folder your agents have touched
+on this machine, with the identity each will ship under, and asks once: sync all
+(the default, including repos you touch later), or pick. `exclude` means nothing
+about that repo leaves: no events, no commits, no identity. `allow` mode syncs
+only the repos you list and holds new ones until you `include` them.
 
 Repo identity is the same for every worktree, clone and machine, so one
 assignment in the dashboard covers all of them, and a session whose worktree

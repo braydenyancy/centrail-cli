@@ -2,6 +2,8 @@ import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { claudeConfigDirs } from "@centrail/parsers";
+import { readConfig } from "../config.js";
+import { runSetup } from "./scope.js";
 
 // `centrail install-hooks` / `uninstall-hooks`: one Stop entry in Claude
 // Code's user settings that runs `centrail hook stop`. Idempotent — an
@@ -48,6 +50,9 @@ export function uninstallStopHook(settings: Settings): Settings {
 }
 
 export async function runInstallHooks(opts: { remove: boolean }, path = claudeSettingsPath()): Promise<void> {
+  if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
+    await runSetup({ interactive: process.stdin.isTTY === true });
+  }
   const settings = await readSettings(path);
   const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, hookCommand());
   await writeSettings(path, next);

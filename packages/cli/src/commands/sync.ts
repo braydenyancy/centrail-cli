@@ -11,6 +11,7 @@ import {
   readAuth,
   readConfig,
   readState,
+  writeConfig,
   writeLastSync,
   writeState,
   type Config,
@@ -22,6 +23,7 @@ import { readRepoCommits, readRepoSize } from "../git.js";
 import { IdentityResolver } from "../resolver.js";
 import { compactSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
+import { eventInScope, surfaceEnabled } from "../scope.js";
 import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
@@ -64,6 +66,12 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
   const state = await readState();
   const config = await readConfig();
+  // Fresh installs answer the scope question in `connect`. An install that
+  // synced before 0.6 consented under the old model; record that once.
+  if (!config.scopeDecidedAt) {
+    config.scopeDecidedAt = new Date().toISOString();
+    await writeConfig(config);
+  }
   const installId = await ensureInstallId();
   const caps = await readCapabilities(auth);
   await compactSidecar(); // under the sync lock; hook appends are line-atomic
@@ -76,11 +84,13 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   let grandInbox = 0;
   let anyEvents = false;
   let anyWatermark = false;
+  let heldByScope = 0;
   // Claude and Codex expose reliable per-event cwd/timestamps. Copilot
   // attribution remains deferred until its session semantics are proven.
   const attributionEvents: ParsedUsageEvent[] = [];
 
   for (const scanner of SCANNERS) {
+    if (!surfaceEnabled(config, scanner.surface)) continue; // switched off; no watermark moves
     // Each surface keeps its own watermark so a scanner added in an upgrade
     // backfills its full history instead of inheriting another's cutoff.
     const mark = opts.full
@@ -90,20 +100,23 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
     const scanned = await scanner.scan({ since });
-    const events = scanned.filter(
+    const candidates = scanned.filter(
       (e) =>
         e.externalId.length > 0 &&
         e.occurredAt >= minOccurredAt &&
         e.occurredAt <= maxOccurredAt,
     );
+    // Repo identity is stamped here, while the folder may still exist; the
+    // sidecar covers the sessions whose folder is already gone. Then the
+    // scope decides what leaves: an excluded repo's events stop here.
+    for (const e of scanned) await resolver.stamp(e);
+    const events = candidates.filter((e) => eventInScope(e, config));
+    heldByScope += candidates.length - events.length;
     if (events.length === 0) {
       await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
     anyEvents = true;
-    // Repo identity is stamped here, while the folder may still exist; the
-    // sidecar covers the sessions whose folder is already gone.
-    for (const e of events) await resolver.stamp(e);
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
       attributionEvents.push(...events);
     }
@@ -145,11 +158,15 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
 
   if (!anyEvents) {
-    console.log(
-      anyWatermark
-        ? "No new events since the last sync."
-        : "No agent usage found (Claude Code, Copilot CLI, Codex).",
-    );
+    if (heldByScope > 0) {
+      console.log(`Nothing in scope to sync — ${heldByScope} event(s) held back by your scope (see \`centrail repos\`).`);
+    } else {
+      console.log(
+        anyWatermark
+          ? "No new events since the last sync."
+          : "No agent usage found (Claude Code, Copilot CLI, Codex).",
+      );
+    }
     return;
   }
 
@@ -159,7 +176,8 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
   console.log(
     `Inserted ${grandInserted} · Skipped ${grandSkipped}` +
-      (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : ""),
+      (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
+      (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
 }
 
@@ -202,7 +220,6 @@ async function pushAttributions(
   config: Config,
   caps: Capabilities,
 ): Promise<void> {
-  const deny = new Set(config.denyRepos);
   const identityAware = caps.fields.has("repo");
 
   // One bucket per (checkout root, ref). A live checkout reads its own HEAD
@@ -220,8 +237,7 @@ async function pushAttributions(
   const orphans: ParsedUsageEvent[] = []; // repo known, folder gone
   for (const e of events) {
     const repo = e.metadata.repo;
-    if (!repo || repo.source === "folder") continue;
-    if (deny.has(repo.key) || deny.has(repo.label)) continue;
+    if (!repo || repo.source === "folder") continue; // scope already applied in syncLocked
     const root = await resolver.liveRootFor(e);
     if (!root) {
       orphans.push(e);

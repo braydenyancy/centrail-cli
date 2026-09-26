@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { claudeProjectDirs } from "@centrail/parsers";
 import { writeAuth } from "../config.js";
+import { runSetup } from "./scope.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 
@@ -68,6 +69,8 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
       console.log(`  ✓ Paired (${PRIVATE_DEVICE_NAME})`);
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
+      await runSetup({ interactive: process.stdin.isTTY === true });
+      console.log("");
       console.log("  Run `npx centrail sync` to push usage, and `npx centrail install-hooks`");
       console.log("  so Claude Code syncs by itself after each turn.");
       return;

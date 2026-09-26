@@ -99,7 +99,16 @@ const base: ParsedUsageEvent = {
     origin: { host: "janes-mbp", platform: "darwin", client: "cli", clientVersion: "2.0.0" },
   },
 };
-const cfg: Config = { denyRepos: [], installId: "i", hideRepoNames: false, hideBranchNames: false };
+const cfg: Config = {
+  installId: "i",
+  mode: "all",
+  allowRepos: [],
+  denyRepos: [],
+  surfaces: {},
+  scopeDecidedAt: null,
+  hideRepoNames: false,
+  hideBranchNames: false,
+};
 const legacy = { fields: new Set<string>() };
 const aware = { fields: new Set(["repo"]) };
 
