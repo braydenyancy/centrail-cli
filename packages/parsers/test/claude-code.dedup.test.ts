@@ -226,3 +226,28 @@ describe("found by the cross-tool comparison", () => {
     expect((await scanClaudeCodeLogs({ basePath: base })).map((e) => e.externalId).sort()).toEqual(["r_sub", "r_top", "r_wf"]);
   });
 });
+
+describe("usage extras: fast mode and web-search requests (carried, priced by the server later)", () => {
+  const line = (o: { rid: string; at: string; speed?: unknown; web?: unknown; out?: number }) =>
+    JSON.stringify({
+      type: "assistant", requestId: o.rid, timestamp: o.at, sessionId: "s",
+      message: { id: `m_${o.rid}`, model: "m", usage: { input_tokens: 1, output_tokens: o.out ?? 1, ...(o.speed !== undefined ? { speed: o.speed } : {}), ...(o.web !== undefined ? { server_tool_use: { web_search_requests: o.web } } : {}) } },
+    });
+  const scan = async (lines: string[]) => {
+    const base = await mkdtemp(join(tmpdir(), "centrail-extras-"));
+    await mkdir(join(base, "p"), { recursive: true });
+    await writeFile(join(base, "p", "s.jsonl"), `${lines.join("\n")}\n`);
+    return (await scanClaudeCodeLogs({ basePath: base })).map((e) => [e.externalId, e.speed, e.webSearchRequests]);
+  };
+
+  it.each([
+    ["standard speed, no searches", [line({ rid: "r", at: T(1), speed: "standard" })], [["r", "standard", undefined]]],
+    ["fast on a later streamed line wins", [line({ rid: "r", at: T(1), speed: "standard" }), line({ rid: "r", at: T(2), speed: "fast" })], [["r", "fast", undefined]]],
+    ["web searches grow across lines: the max", [line({ rid: "r", at: T(1), web: 1 }), line({ rid: "r", at: T(2), web: 3 }), line({ rid: "r", at: T(3), web: 2 })], [["r", undefined, 3]]],
+    ["zero searches are absent, not 0", [line({ rid: "r", at: T(1), web: 0 })], [["r", undefined, undefined]]],
+    ["malformed values are absent", [line({ rid: "r", at: T(1), speed: 7, web: -2 })], [["r", undefined, undefined]]],
+    ["no usage extras at all (older Claude Code)", [line({ rid: "r", at: T(1) })], [["r", undefined, undefined]]],
+  ])("%s", async (_, lines, expected) => {
+    expect(await scan(lines)).toEqual(expected);
+  });
+});

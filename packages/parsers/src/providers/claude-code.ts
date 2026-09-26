@@ -43,6 +43,10 @@ export type ParsedUsageEvent = {
   cacheCreation5mTokens: number; // Anthropic ephemeral 5m
   cacheCreation1hTokens: number; // Anthropic 1h; 0 for providers without it
   occurredAt: Date;
+  // Usage extras, priced differently and carried for the server to price
+  // later: Claude's `usage.speed` ("fast" mode) and web-search requests.
+  speed?: string;
+  webSearchRequests?: number;
   metadata: {
     cwd?: string; // dropped from the wire once the server accepts `repo`
     gitBranch?: string;
@@ -235,6 +239,8 @@ export function collapseUsageEvents(events: ParsedUsageEvent[]): ParsedUsageEven
     prev.cacheCreationTokens = Math.max(prev.cacheCreationTokens, e.cacheCreationTokens);
     prev.cacheCreation5mTokens = Math.max(prev.cacheCreation5mTokens, e.cacheCreation5mTokens);
     prev.cacheCreation1hTokens = Math.max(prev.cacheCreation1hTokens, e.cacheCreation1hTokens);
+    if (e.speed && (!prev.speed || prev.speed === "standard")) prev.speed = e.speed; // any non-standard mode marks the request
+    if (e.webSearchRequests) prev.webSearchRequests = Math.max(prev.webSearchRequests ?? 0, e.webSearchRequests);
     if (e.cacheWriteTokens !== undefined) {
       prev.cacheWriteTokens = Math.max(prev.cacheWriteTokens ?? 0, e.cacheWriteTokens);
     }
@@ -513,6 +519,7 @@ function parseAssistantEvent(raw: unknown, turn?: string): ParsedUsageEvent | nu
     cacheCreation5mTokens: cache5m,
     cacheCreation1hTokens: cache1h,
     occurredAt,
+    ...usageExtras(usage),
     metadata: {
       cwd: stringOr(raw.cwd),
       gitBranch: stringOr(raw.gitBranch),
@@ -525,6 +532,14 @@ function parseAssistantEvent(raw: unknown, turn?: string): ParsedUsageEvent | nu
       messageId: stringOr(message.id),
     },
   };
+}
+
+function usageExtras(usage: Record<string, unknown>): { speed?: string; webSearchRequests?: number } {
+  const out: { speed?: string; webSearchRequests?: number } = {};
+  if (typeof usage.speed === "string" && /^[a-z_-]{1,32}$/.test(usage.speed)) out.speed = usage.speed;
+  const web = isObject(usage.server_tool_use) ? usage.server_tool_use.web_search_requests : undefined;
+  if (typeof web === "number" && Number.isInteger(web) && web > 0 && web <= 10000) out.webSearchRequests = web;
+  return out;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

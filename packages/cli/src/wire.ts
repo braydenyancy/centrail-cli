@@ -76,17 +76,22 @@ export type WireEventMetadata = {
   origin: { machineId: string }; // the random install id; never the hostname
 };
 
-export type WireEvent = WireUsageEvent & { metadata?: WireEventMetadata };
+// Fast mode (`usage.speed`) and web-search requests: billed differently,
+// carried for the server to price, only to a server that lists "usage-extras".
+export type WireUsageExtras = { speed?: string; webSearchRequests?: number };
+
+export type WireEvent = WireUsageEvent & WireUsageExtras & { metadata?: WireEventMetadata };
 
 // The field policy, applied in one place so `centrail inspect --last` shows
 // exactly what this function produced. Every field is named: nothing on the
 // parsed event reaches the wire by being spread.
 //   - every server: the 0.5.1 allowlist (toWireUsageEvent)
-//   - a server that lists "repo": repo identity, session id, branch, and a
-//     random per-install id
-//   - never: working-directory paths, hostnames, platform, account data
-//   - placement tag (§ 3.9): shipped with the identity, as its disclaimer
-//   - touched paths and turn ids: never; they exist to choose the repo
+//   - a server that lists "repo": repo identity with its placement tag
+//     (§ 3.9, the disclaimer next to it), session id, branch, and a random
+//     per-install id
+//   - a server that lists "usage-extras": speed and web-search requests
+//   - never: working-directory paths, hostnames, platform, account data,
+//     touched paths and turn ids (they exist to choose the repo)
 //   - hideRepoNames / hideBranchNames: user toggles, applied here
 export function toWireEvent(
   e: ParsedUsageEvent,
@@ -94,8 +99,17 @@ export function toWireEvent(
   cfg: Config,
   installId: string,
 ): WireEvent {
-  const usage = toWireUsageEvent(e);
-  if (!caps.fields.has("repo")) return usage;
+  const wire: WireEvent = toWireUsageEvent(e);
+  // Usage extras only to a server that stores them ("usage-extras").
+  if (caps.fields.has("usage-extras")) {
+    if (e.speed) wire.speed = e.speed;
+    if (e.webSearchRequests) wire.webSearchRequests = e.webSearchRequests;
+  }
+  if (caps.fields.has("repo")) wire.metadata = identityMetadata(e, cfg, installId);
+  return wire;
+}
+
+function identityMetadata(e: ParsedUsageEvent, cfg: Config, installId: string): WireEventMetadata {
   const metadata: WireEventMetadata = { origin: { machineId: installId } };
   if (e.metadata.repo) {
     metadata.repo = wireIdentity(redactIdentity(e.metadata.repo, cfg, installId));
@@ -103,7 +117,7 @@ export function toWireEvent(
   }
   if (e.metadata.sessionId) metadata.sessionId = e.metadata.sessionId;
   if (e.metadata.gitBranch && !cfg.hideBranchNames) metadata.gitBranch = e.metadata.gitBranch;
-  return { ...usage, metadata };
+  return metadata;
 }
 
 function wireIdentity(repo: RepoIdentity): WireRepoIdentity {

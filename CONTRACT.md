@@ -104,6 +104,13 @@ its attributions to `mergedAs`, and rolls it up under that commit. "Shipped"
 is judged against `origin/<default>` when the checkout tracks one, so a
 worktree parked detached at `origin/main` reads correctly.
 
+**Usage extras (0.6.0).** When `fields` contains `"usage-extras"`, an event may
+carry top-level `speed` (Claude's `usage.speed`, e.g. `"standard"` or `"fast"`)
+and `webSearchRequests` (a positive integer from
+`usage.server_tool_use.web_search_requests`); absent when the transcript has
+none. Both are priced differently from tokens; the server stores them and prices
+them when it chooses to. Never sent to a server that does not list the field.
+
 **Import (0.6.0, outside wire 1).** `centrail import <file>` POSTs
 `{ provider: "ccusage", rows: [{ day, model, inputTokens, outputTokens,
 contextTokens }] }` to `POST /api/import` with the device token; the server

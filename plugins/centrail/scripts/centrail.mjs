@@ -217,6 +217,10 @@ function collapseUsageEvents(events) {
     prev.cacheCreationTokens = Math.max(prev.cacheCreationTokens, e.cacheCreationTokens);
     prev.cacheCreation5mTokens = Math.max(prev.cacheCreation5mTokens, e.cacheCreation5mTokens);
     prev.cacheCreation1hTokens = Math.max(prev.cacheCreation1hTokens, e.cacheCreation1hTokens);
+    if (e.speed && (!prev.speed || prev.speed === "standard"))
+      prev.speed = e.speed;
+    if (e.webSearchRequests)
+      prev.webSearchRequests = Math.max(prev.webSearchRequests ?? 0, e.webSearchRequests);
     if (e.cacheWriteTokens !== void 0) {
       prev.cacheWriteTokens = Math.max(prev.cacheWriteTokens ?? 0, e.cacheWriteTokens);
     }
@@ -457,6 +461,7 @@ function parseAssistantEvent(raw, host, plat, turn) {
     cacheCreation5mTokens: cache5m,
     cacheCreation1hTokens: cache1h,
     occurredAt,
+    ...usageExtras(usage),
     metadata: {
       cwd: stringOr(raw.cwd),
       gitBranch: stringOr(raw.gitBranch),
@@ -475,6 +480,15 @@ function parseAssistantEvent(raw, host, plat, turn) {
       }
     }
   };
+}
+function usageExtras(usage) {
+  const out = {};
+  if (typeof usage.speed === "string" && /^[a-z_-]{1,32}$/.test(usage.speed))
+    out.speed = usage.speed;
+  const web = isObject2(usage.server_tool_use) ? usage.server_tool_use.web_search_requests : void 0;
+  if (typeof web === "number" && Number.isInteger(web) && web > 0 && web <= 1e4)
+    out.webSearchRequests = web;
+  return out;
 }
 function isObject2(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -2953,7 +2967,9 @@ function toWireEvent(e, caps, cfg, installId) {
     if (origin)
       metadata.origin = origin;
   }
-  return { ...e, occurredAt: e.occurredAt.toISOString(), metadata };
+  const { speed, webSearchRequests, ...rest2 } = e;
+  const extras = caps.fields.has("usage-extras") ? { ...speed ? { speed } : {}, ...webSearchRequests ? { webSearchRequests } : {} } : {};
+  return { ...rest2, ...extras, occurredAt: e.occurredAt.toISOString(), metadata };
 }
 function redactIdentity(repo, cfg, installId) {
   if (!cfg.hideRepoNames || repo.source === "folder")

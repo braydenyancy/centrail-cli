@@ -49,6 +49,12 @@ versioning.
   when it exists (a parked worktree's local `main` is stale by design). Two
   parallel sessions' racing hooks started four syncs; the throttle is now an
   atomic claim, one sync per interval whatever races.
+- **Usage extras carried, priced later.** Fast mode (`usage.speed`) and
+  web-search requests are billed differently from tokens; events now carry
+  `speed` and `webSearchRequests` to a server that lists `"usage-extras"`.
+- **Validated against six other counters** (ccusage, codeburn, tokscale,
+  splitrail, claude-monitor, phuryn/claude-usage): equal to splitrail to the
+  token on every field, plus the fallback first attempts no other tool counts.
 - **The wrappers (§ 4 step 6).** `plugins/centrail` is a Claude Code plugin —
   one `Stop` hook over a bundled copy of this CLI, pinned by the plugin version —
   and Codex reads the same `hooks.json` with a Claude-compatible Stop input, so

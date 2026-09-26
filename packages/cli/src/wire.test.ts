@@ -192,5 +192,15 @@ describe("toWireEvent", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it.each([
+    ["a server with usage-extras", ["repo", "usage-extras"], { speed: "fast", webSearchRequests: 2 }],
+    ["an identity-aware server without it", ["repo"], {}],
+    ["a 0.5-era server", [], {}],
+  ])("usage extras reach %s only when advertised", (_, fields, expected) => {
+    const e: ParsedUsageEvent = { ...base, speed: "fast", webSearchRequests: 2 };
+    const wire = toWireEvent(e, { fields: new Set(fields) }, cfg, "i");
+    expect({ speed: wire.speed, webSearchRequests: wire.webSearchRequests }).toEqual({ speed: undefined, webSearchRequests: undefined, ...expected });
+  });
 });
 
