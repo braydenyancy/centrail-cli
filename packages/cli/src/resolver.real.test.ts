@@ -102,4 +102,39 @@ describe("IdentityResolver", () => {
       else process.env.GIT_DIR = saved;
     }
   });
+
+  it("a plain folder deleted after its hook line keeps its folder id — the sidecar proves it existed", async () => {
+    fx = await scratch();
+    const folder = join(fx.root, "notes");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(folder);
+    const sidecar = join(fx.root, "sessions.jsonl");
+    await appendSidecar({ v: 1, ts: new Date().toISOString(), surface: "claude-code", sessionId: "s-notes", cwd: folder, repo: null, root: null, branch: null, head: null }, sidecar);
+    const live = await IdentityResolver.create("install-1", sidecar);
+    const before = event(folder, "s-notes");
+    await live.stamp(before);
+    await rm(folder, { recursive: true });
+    const dead = await IdentityResolver.create("install-1", sidecar);
+    const after = event(folder, "s-notes");
+    await dead.stamp(after);
+    // The same dir: key before and after the folder vanished — a rule set
+    // while it existed must keep matching.
+    expect(before.metadata.repo).toMatchObject({ source: "folder" });
+    expect(after.metadata.repo).toEqual(before.metadata.repo);
+  });
+
+  it("a session whose cwd is a subfolder of a live repo resolves to the repo, and the same key from any depth", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("repo", { remote: "https://github.com/acme/repo.git" });
+    const { mkdir } = await import("node:fs/promises");
+    const deep = join(repo, "packages", "cli", "src");
+    await mkdir(deep, { recursive: true });
+    const r = await IdentityResolver.create("install-1", join(fx.root, "none.jsonl"));
+    const top = event(repo, "a");
+    const nested = event(deep, "b");
+    await r.stamp(top);
+    await r.stamp(nested);
+    expect(nested.metadata.repo).toEqual(top.metadata.repo);
+    expect(await r.liveRootFor(nested)).toBe(repo);
+  });
 });

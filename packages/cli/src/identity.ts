@@ -1,7 +1,9 @@
 import { createHmac } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import type { RepoIdentity } from "@centrail/parsers";
-import { gitExec } from "./git.js";
+import { gitExec, resolveDefaultBranch } from "./git.js";
 
 // Repo identity: the one string that is the same for every checkout of a
 // repo — every worktree, every clone, every machine, every user on a team.
@@ -103,27 +105,51 @@ async function readRemoteKey(repoRoot: string): Promise<string | null> {
 }
 
 // The root commit is the same object in every worktree and clone, and the
-// only durable identity a remote-less repo has. `--all` so the answer does
-// not depend on which branch this checkout has out; the smallest sha of
-// several roots (orphan branches) keeps it deterministic.
+// only durable identity a remote-less repo has. Which root, when a repo has
+// several (orphan branches): the default branch's, because that is the one
+// every clone fetched — `--all` sees whatever roots THIS checkout happens
+// to hold, and a `--single-branch` clone holds fewer. `--all` only when no
+// default branch resolves; the smallest sha keeps either answer
+// deterministic.
 async function readRootSha(repoRoot: string): Promise<string | null> {
+  const branch = await resolveDefaultBranch(repoRoot);
+  const roots = await listRoots(repoRoot, branch ? `refs/heads/${branch}` : "--all");
+  return roots[0] ?? null;
+}
+
+async function listRoots(repoRoot: string, ref: string): Promise<string[]> {
   try {
-    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", "--all"]);
-    const roots = stdout
+    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ref]);
+    return stdout
       .split("\n")
       .map((s) => s.trim())
       .filter((s) => /^[0-9a-f]{40,64}$/.test(s))
       .sort();
-    return roots[0] ?? null;
   } catch {
-    return null;
+    return [];
   }
+}
+
+// What a human sees for a path: its basename — except the home directory
+// itself, whose basename IS the username. A session in `~` or a dotfiles
+// repo checked out at `~` would otherwise put the login on the wire, the
+// one thing the folder key exists to keep off it.
+export function displayLabel(path: string): string {
+  const p = path.replace(/[\/\\]+$/, "");
+  const home = homedir().replace(/[\/\\]+$/, "");
+  if (p === home) return "~";
+  try {
+    if (realpathSync(p) === realpathSync(home)) return "~";
+  } catch {
+    // a path that no longer exists cannot be the home directory
+  }
+  return basename(p);
 }
 
 // Identity for a resolved repo root. Null only for a repo with neither a
 // hosted remote nor a commit — callers treat that like a plain folder.
 export async function repoIdentity(repoRoot: string): Promise<RepoIdentity | null> {
-  const label = basename(repoRoot);
+  const label = displayLabel(repoRoot);
   const remote = await readRemoteKey(repoRoot);
   if (remote) return { key: remote, label, source: "remote" };
   const root = await readRootSha(repoRoot);
@@ -137,7 +163,7 @@ export async function repoIdentity(repoRoot: string): Promise<RepoIdentity | nul
 // is this install's random id; there is nothing to reverse.
 export function folderIdentity(cwd: string, installId: string): RepoIdentity {
   const digest = createHmac("sha256", installId).update(cwd).digest("hex").slice(0, 16);
-  return { key: `dir:${digest}`, label: basename(cwd), source: "folder" };
+  return { key: `dir:${digest}`, label: displayLabel(cwd), source: "folder" };
 }
 
 // Current branch (null when detached) and HEAD sha, for the sidecar.

@@ -42,6 +42,14 @@ export async function runStopHook(
   surface = "claude-code",
   deps: HookDeps = {},
 ): Promise<SidecarLine | null> {
+  try {
+    return await stopHook(raw, surface, deps);
+  } catch {
+    return null; // an unwritable sidecar, a git that is missing: the turn is lost, the agent is not
+  }
+}
+
+async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<SidecarLine | null> {
   let input: HookInput;
   try {
     input = JSON.parse(raw) as HookInput;
@@ -76,10 +84,12 @@ export async function runStopHook(
 // The throttle. The stamp is written BEFORE the spawn so two hooks racing
 // past the interval together start at most one sync between them (and the
 // sync lock covers the rest).
+// A stamp in the future is a clock that stepped back; treating it as a
+// fresh stamp would silence auto-sync until the wall clock caught up.
 export function shouldAutoSync(state: SyncState, now: Date): boolean {
   if (!state.autoSyncAt) return true;
   const last = new Date(state.autoSyncAt).getTime();
-  return Number.isNaN(last) || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
+  return Number.isNaN(last) || last > now.getTime() || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
 }
 
 async function maybeAutoSync(now: Date, deps: HookDeps): Promise<void> {

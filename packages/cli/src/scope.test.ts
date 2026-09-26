@@ -1,4 +1,4 @@
-import type { ParsedUsageEvent } from "@centrail/parsers";
+import type { ParsedUsageEvent, RepoIdentity } from "@centrail/parsers";
 import { describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "./config.js";
 import { eventInScope, parseSelection, renderRepoRows, repoStatus, summarizeRepos, surfaceEnabled } from "./scope.js";
@@ -7,7 +7,7 @@ const base: Config = parseConfig({});
 const acme = { key: "github.com/acme/api", label: "api", source: "remote" as const };
 const web = { key: "github.com/acme/web", label: "web", source: "remote" as const };
 
-function ev(repo: typeof acme | undefined, sessionId = "s", at = "2026-06-01T00:00:00Z"): ParsedUsageEvent {
+function ev(repo: RepoIdentity | undefined, sessionId = "s", at = "2026-06-01T00:00:00Z"): ParsedUsageEvent {
   return {
     externalId: `${sessionId}-${Math.random()}`,
     provider: "anthropic",
@@ -70,5 +70,31 @@ describe("scope", () => {
       denyRepos: ["api"],
       surfaces: { codex: false },
     });
+  });
+
+  // The full decision table. `wt` is a second worktree of acme (same key,
+  // different label): whatever is decided for acme must hold for it.
+  const wt = { ...acme, label: "api-feature" };
+  const shaRepo = { key: "sha:" + "a".repeat(40), label: "local", source: "root" as const };
+  const folder = { key: "dir:0123456789abcdef", label: "scratch", source: "folder" as const };
+  it.each([
+    ["all, nothing listed", "all", [], [], acme, "synced"],
+    ["all, excluded by key — worktree too", "all", [], ["github.com/acme/api"], wt, "excluded"],
+    ["all, excluded by label — only that basename", "all", [], ["api"], wt, "synced"],
+    ["all, excluded by label — that basename", "all", [], ["api"], acme, "excluded"],
+    ["all, excluded by a sha key", "all", [], [shaRepo.key], shaRepo, "excluded"],
+    ["all, excluded by a dir key", "all", [], [folder.key], folder, "excluded"],
+    ["all, an empty string in the list matches nothing", "all", [], [""], { ...acme, label: "" }, "synced"],
+    ["all, unidentified event", "all", [], ["api"], undefined, "synced"],
+    ["allow, listed by key — worktree too", "allow", ["github.com/acme/api"], [], wt, "synced"],
+    ["allow, listed by label — only that basename", "allow", ["api"], [], wt, "waiting"],
+    ["allow, not listed", "allow", ["github.com/acme/web"], [], acme, "waiting"],
+    ["allow, listed AND excluded → excluded wins", "allow", ["github.com/acme/api"], ["api"], acme, "excluded"],
+    ["allow, unidentified event waits", "allow", ["github.com/acme/api"], [], undefined, "waiting"],
+    ["allow, empty allow list holds everything", "allow", [], [], acme, "waiting"],
+  ] as const)("%s", (_, mode, allowRepos, denyRepos, repo, expected) => {
+    const cfg: Config = { ...base, mode, allowRepos: [...allowRepos], denyRepos: [...denyRepos] };
+    expect(repoStatus(repo, cfg)).toBe(expected);
+    expect(eventInScope(ev(repo), cfg)).toBe(expected === "synced");
   });
 });

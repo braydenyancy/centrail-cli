@@ -7,7 +7,8 @@ import { readSidecar, type SidecarLine } from "./sidecar.js";
 // Stamps every usage event with a repo identity, in this order:
 //   1. the event's cwd, if it is still a repo checkout on disk (live);
 //   2. the sidecar line the Stop hook wrote for that session (folder gone);
-//   3. a keyed folder id, if the cwd exists but is not a repo;
+//   3. a keyed folder id, if the cwd is not a repo — whether it still exists
+//      or the sidecar proves it did;
 //   4. nothing — the server keeps it in the Inbox for a human.
 // Every git call is cached per root and per cwd, so a sync over thousands
 // of sessions costs a handful of spawns per distinct checkout.
@@ -57,6 +58,9 @@ export class IdentityResolver {
       }
       if (fromSidecar?.repo) return fromSidecar.repo;
       if (await this.exists(cwd)) return folderIdentity(cwd, this.installId);
+      // Gone, and the hook saw it as a plain folder: the same keyed id it
+      // had while alive, so a rule set then still matches.
+      if (fromSidecar) return folderIdentity(fromSidecar.cwd, this.installId);
       return null;
     }
     if (fromSidecar?.repo) return fromSidecar.repo;

@@ -62,4 +62,50 @@ describe("repoIdentity", () => {
     const detached = await fx.worktree(repo, "h-detached");
     expect(await readHeadState(detached)).toEqual({ branch: null, head });
   });
+
+  it("a single-branch clone of a remote-less repo with an orphan branch shares the key", async () => {
+    // `rev-list --max-parents=0 --all` sees every root a checkout HAS; a
+    // clone that never fetched the orphan branch sees one fewer. The key
+    // must not depend on which roots a checkout happens to hold, so it is
+    // the default branch's root, and `--all` only when there is no default.
+    fx = await scratch();
+    const repo = await fx.repo("multi");
+    const mainRoot = await fx.git(repo, "rev-parse", "HEAD");
+    // Force the orphan root to sort BEFORE main's, so a min-over-all picks it.
+    let orphanRoot = "";
+    for (let i = 0; i < 64 && !(orphanRoot && orphanRoot < mainRoot); i++) {
+      if (orphanRoot) {
+        await fx.git(repo, "checkout", "-q", "main");
+        await fx.git(repo, "branch", "-D", "pages");
+      }
+      await fx.git(repo, "checkout", "-q", "--orphan", "pages");
+      await fx.git(repo, "rm", "-rfq", ".");
+      orphanRoot = await fx.commit(repo, "index.html", `<p>${i}</p>\n`);
+    }
+    expect(orphanRoot < mainRoot).toBe(true);
+    await fx.git(repo, "checkout", "-q", "main");
+    const clone = join(fx.root, "multi-clone");
+    await fx.git(fx.root, "clone", "-q", "--single-branch", "--branch", "main", repo, clone);
+    expect(await fx.git(clone, "rev-list", "--max-parents=0", "--all")).toBe(mainRoot);
+
+    expect((await repoIdentity(clone))!.key).toBe(`sha:${mainRoot}`);
+    expect((await repoIdentity(repo))!.key).toBe(`sha:${mainRoot}`);
+    // And a worktree of the full repo that has the orphan branch checked out.
+    const wt = await fx.worktree(repo, "multi-pages", "pages-wt");
+    await fx.git(wt, "checkout", "-q", "pages");
+    expect((await repoIdentity(wt))!.key).toBe(`sha:${mainRoot}`);
+  });
+
+  it("a repo checked out AT the home directory labels as ~, not the username", async () => {
+    fx = await scratch();
+    const fakeHome = join(fx.root, "jane");
+    await fx.repo("jane", { remote: "https://github.com/jane/dotfiles" });
+    const prev = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      expect(await repoIdentity(fakeHome)).toEqual({ key: "github.com/jane/dotfiles", label: "~", source: "remote" });
+    } finally {
+      process.env.HOME = prev;
+    }
+  });
 });

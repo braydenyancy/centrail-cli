@@ -4,12 +4,12 @@
 // Real bundle code (runSync, runStopHook), real git, real files, and an
 // in-process stand-in server that models the real one: one row per
 // (externalId), per-field max on re-send, `inserted` from what landed.
-import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
+import { StandIn, transcriptLine, writeTranscript as writeTranscriptIn } from "../testing/stand-in-server.js";
 
 // Every module that reads CENTRAIL_CONFIG_DIR / CLAUDE_CONFIG_DIR at load or
 // at call time must be imported AFTER the env is set, hence dynamic imports.
@@ -22,83 +22,12 @@ const { runStopHook } = await import("./hook.js");
 const { runExclude, runInclude } = await import("./scope.js");
 const { writeAuth, writeConfig, parseConfig, readState } = await import("../config.js");
 
-type Row = { externalId: string; outputTokens: number; metadata: Record<string, unknown> };
-
-class StandIn {
-  rows = new Map<string, Row>();
-  attributions: Array<{ externalId: string; repoKey?: string; commitSha: string }> = [];
-  ingestCalls = 0;
-  failNextIngests = 0;
-  fields: string[] = ["repo"];
-  server!: Server;
-  url = "";
-
-  async start(): Promise<void> {
-    this.server = createServer((req, res) => {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", () => {
-        res.setHeader("content-type", "application/json");
-        if (req.url === "/api/cli/capabilities") {
-          res.end(JSON.stringify({ wireVersions: ["1"], surfaces: ["claude-code", "codex", "copilot-cli"], fields: this.fields }));
-          return;
-        }
-        const payload = JSON.parse(body) as Record<string, unknown>;
-        if (req.url === "/api/cli/ingest") {
-          this.ingestCalls++;
-          if (this.failNextIngests > 0) {
-            this.failNextIngests--;
-            res.statusCode = 500;
-            res.end(JSON.stringify({ error: "injected" }));
-            return;
-          }
-          let inserted = 0;
-          let skipped = 0;
-          for (const e of payload.events as Row[]) {
-            const prev = this.rows.get(e.externalId);
-            if (!prev) {
-              this.rows.set(e.externalId, e);
-              inserted++;
-            } else {
-              prev.outputTokens = Math.max(prev.outputTokens, e.outputTokens); // the server's growth upsert
-              skipped++;
-            }
-          }
-          res.end(JSON.stringify({ inserted, skipped, inboxCount: 0 }));
-          return;
-        }
-        const attributions = (payload.attributions as StandIn["attributions"] | undefined) ?? [];
-        this.attributions.push(...attributions);
-        res.end(JSON.stringify({ linked: attributions.length }));
-      });
-    });
-    await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
-    const addr = this.server.address() as { port: number };
-    this.url = `http://127.0.0.1:${addr.port}`;
-  }
-}
-
 // Near the wall clock: incremental syncs only look 24 h behind their watermark.
 const T0 = Date.now() - 60 * 60 * 1000;
-function line(sessionId: string, cwd: string, requestId: string, out: number, atMs = T0): string {
-  return JSON.stringify({
-    type: "assistant",
-    requestId,
-    timestamp: new Date(atMs).toISOString(),
-    cwd,
-    sessionId,
-    gitBranch: "HEAD",
-    message: { id: `m_${requestId}`, model: "claude-opus-4-8", usage: { input_tokens: 10, output_tokens: out, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } },
-  });
-}
-function transcriptPath(cwd: string, sessionId: string): string {
-  return join(home, "claude", "projects", cwd.replace(/[/.]/g, "-"), `${sessionId}.jsonl`);
-}
-async function writeTranscript(cwd: string, sessionId: string, lines: string[]): Promise<void> {
-  const p = transcriptPath(cwd, sessionId);
-  await mkdir(join(p, ".."), { recursive: true });
-  await writeFile(p, `${lines.join("\n")}\n`);
-}
+const line = (sessionId: string, cwd: string, requestId: string, out: number, atMs = T0) =>
+  transcriptLine({ sessionId, cwd, requestId, out, atMs });
+const writeTranscript = (cwd: string, sessionId: string, lines: string[]) =>
+  writeTranscriptIn(join(home, "claude"), cwd, sessionId, lines);
 
 let fx: Scratch;
 const server = new StandIn();
@@ -113,12 +42,12 @@ beforeAll(async () => {
   await writeConfig(parseConfig({ surfaces: { "copilot-cli": false }, scopeDecidedAt: "2026-06-01T00:00:00Z" }));
 });
 afterAll(async () => {
-  server.server.close();
+  server.close();
   await fx.cleanup();
   await rm(home, { recursive: true, force: true });
 });
 
-const out = (id: string) => server.rows.get(id)?.outputTokens;
+const out = (id: string) => server.out(id);
 
 describe("sync invariants across triggers", () => {
   it("hook mid-stream, then manual, then --full: one row per request at its final count", async () => {

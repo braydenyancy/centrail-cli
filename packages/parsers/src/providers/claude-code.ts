@@ -188,21 +188,21 @@ export function collapseUsageEvents(events: ParsedUsageEvent[]): ParsedUsageEven
 }
 
 // One id per API response. Anthropic's `requestId` is it when present. Some
-// gateways (Bedrock, Vertex, proxies) omit it and may reuse one message id
-// across responses, so the fallback scopes the message id to the session
-// and timestamp — the same rule ccusage settled on (lib.rs, usage_dedupe_hash).
-// Both shapes are stable across rescans of the same transcript, which is
-// what the server's unique index needs.
-function usageExternalId(
-  raw: Record<string, unknown>,
-  message: Record<string, unknown>,
-  timestamp: string,
-): string | null {
+// gateways (Bedrock, Vertex, proxies) omit it; then the message id, scoped
+// to the session, is the key. NOT the timestamp: every content block of one
+// response is written as its own line with its own timestamp (99.3% of
+// multi-line requests on a 79,014-request corpus), so a key that included
+// it would count one response once per block, at the streamed-so-far
+// value. A gateway that reused one message id for two responses in one
+// session would fold them; no corpus has shown one, and the split is the
+// measured loss. Both shapes are stable across rescans of the same
+// transcript, which is what the server's unique index needs.
+function usageExternalId(raw: Record<string, unknown>, message: Record<string, unknown>): string | null {
   if (typeof raw.requestId === "string" && raw.requestId.length > 0) return raw.requestId;
   const messageId = message.id;
   if (typeof messageId !== "string" || messageId.length === 0) return null;
   const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : "";
-  return `msg:${messageId}:${sessionId}:${timestamp}`;
+  return `msg:${messageId}:${sessionId}`;
 }
 
 // Scans one <config-dir>/projects directory. Missing dir → no events.
@@ -328,7 +328,7 @@ function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
   const timestamp = raw.timestamp;
   if (typeof model !== "string") return null;
   if (typeof timestamp !== "string") return null;
-  const externalId = usageExternalId(raw, message, timestamp);
+  const externalId = usageExternalId(raw, message);
   if (!externalId) return null;
   // Skip synthetic events — internal Claude Code prompts that don't bill.
   if (model === "<synthetic>") return null;

@@ -135,23 +135,26 @@ describe("scanClaudeCodeLogs", () => {
     expect(events[0].outputTokens).toBe(140);
   });
 
-  it("falls back to message id + session + timestamp when requestId is absent", async () => {
-    // Gateways omit requestId and can reuse a message id across responses;
-    // the fallback key is stable across rescans, which the server's unique
-    // index needs, and distinct per response.
+  it("falls back to message id + session when requestId is absent — never the timestamp", async () => {
+    // Every content block of one response is its own line with its own
+    // timestamp; the key must fold them. Sessions scope the id so a
+    // gateway that reuses message ids across sessions still separates.
     const base = await makeBase();
     const a = JSON.parse(ASSISTANT_LINE);
     delete a.requestId;
     a.message.id = "msg_01";
     const b = JSON.parse(JSON.stringify(a));
-    b.timestamp = "2026-06-01T12:05:00.000Z";
-    await writeSession(base, "p", "a.jsonl", [JSON.stringify(a), JSON.stringify(b)]);
+    b.timestamp = "2026-06-01T12:00:03.000Z";
+    b.message.usage.output_tokens = 120;
+    const c = JSON.parse(JSON.stringify(a));
+    c.sessionId = "sess-2";
+    await writeSession(base, "p", "a.jsonl", [JSON.stringify(a), JSON.stringify(b), JSON.stringify(c)]);
 
     const events = await scanClaudeCodeLogs({ basePath: base });
 
-    expect(events.map((e) => e.externalId).sort()).toEqual([
-      "msg:msg_01:sess-1:2026-06-01T12:00:00.000Z",
-      "msg:msg_01:sess-1:2026-06-01T12:05:00.000Z",
+    expect(events.map((e) => [e.externalId, e.outputTokens]).sort()).toEqual([
+      ["msg:msg_01:sess-1", 120],
+      ["msg:msg_01:sess-2", 50],
     ]);
   });
 

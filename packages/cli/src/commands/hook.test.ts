@@ -96,4 +96,44 @@ describe("runStopHook", () => {
     expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: "2026-06-01T09:55:00Z" }, now)).toBe(false);
     expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: "2026-06-01T09:50:00Z" }, now)).toBe(true);
   });
+
+  it.each([
+    ["no stamp", undefined, true],
+    ["9 min ago", -9 * 60 * 1000, false],
+    ["exactly the interval ago", -AUTO_SYNC_INTERVAL_MS, true],
+    ["an hour ago", -60 * 60 * 1000, true],
+    ["1 min in the FUTURE (clock stepped back)", 60 * 1000, true],
+    ["a day in the future", 24 * 60 * 60 * 1000, true],
+    ["garbage", "not-a-date", true],
+  ])("shouldAutoSync with stamp %s → %s", (_, offset, expected) => {
+    const now = new Date("2026-06-01T12:00:00Z");
+    const autoSyncAt =
+      offset === undefined ? undefined : typeof offset === "string" ? offset : new Date(now.getTime() + offset).toISOString();
+    expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, ...(autoSyncAt ? { autoSyncAt } : {}) }, now)).toBe(expected);
+  });
+
+  it.each([
+    ["cwd does not exist", async () => "/nonexistent/path/xyz"],
+    ["cwd is a file, not a directory", async () => join(fx.root, "a-file.txt")],
+  ])("still records the turn when %s (repo null, never throws)", async (_, cwdOf) => {
+    fx = await scratch();
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(fx.root, "a-file.txt"), "x");
+    const cwd = await cwdOf();
+    const sidecarPath = join(fx.root, "sessions.jsonl");
+    const line = await runStopHook(JSON.stringify({ session_id: "s-odd", cwd }), "claude-code", { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() });
+    expect(line).toMatchObject({ sessionId: "s-odd", cwd, repo: null, root: null });
+    expect((await readSidecar(sidecarPath)).get("s-odd")?.cwd).toBe(cwd);
+  });
+
+  it("never throws, even when the sidecar cannot be written", async () => {
+    fx = await scratch();
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(fx.root, "blocker"), "x");
+    const sidecarPath = join(fx.root, "blocker", "sessions.jsonl"); // ENOTDIR on every platform, root or not
+    let spawns = 0;
+    const result = await runStopHook(JSON.stringify({ session_id: "s", cwd: fx.root }), "claude-code", { sidecarPath, spawnSync: () => spawns++, connected: async () => true, ...memState() });
+    expect(result).toBeNull();
+    expect(spawns).toBe(0); // nothing to sync that this turn recorded
+  });
 });
