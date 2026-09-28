@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -66,8 +67,15 @@ export async function writeState(state: SyncState): Promise<void> {
 }
 
 const LOCK_PATH = join(CONFIG_DIR, "sync.lock");
-// A lock older than this belongs to a sync that died without releasing it.
+// Compatibility window for ownerless lock directories written by 0.5.0-era
+// clients. New locks carry a PID and are never reclaimed while it is alive.
 export const LOCK_STALE_MS = 15 * 60 * 1000;
+const LOCK_OWNER_FILE = "owner.json";
+
+type LockOwner = {
+  pid: number;
+  nonce: string;
+};
 
 // One sync at a time per machine, so two syncs never race the watermark file
 // or push the same events twice. `mkdir` is the lock: it is atomic on every
@@ -78,22 +86,71 @@ export async function acquireSyncLock(lockPath: string = LOCK_PATH): Promise<(()
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await mkdir(lockPath);
-      return async () => {
+      const owner: LockOwner = { pid: process.pid, nonce: randomUUID() };
+      try {
+        await writeFile(join(lockPath, LOCK_OWNER_FILE), JSON.stringify(owner), {
+          mode: 0o600,
+        });
+      } catch (err) {
         await rm(lockPath, { recursive: true, force: true });
+        throw err;
+      }
+      return async () => {
+        const current = await readLockOwner(lockPath);
+        if (current?.nonce === owner.nonce) {
+          await rm(lockPath, { recursive: true, force: true });
+        }
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+      // A live owning process wins regardless of elapsed time. Full backfills
+      // can legitimately take longer than the legacy 15-minute stale window.
+      const owner = await readLockOwner(lockPath);
+      if (owner && processIsAlive(owner.pid)) return null;
+
       let ageMs: number;
       try {
         ageMs = Date.now() - (await stat(lockPath)).mtimeMs;
       } catch {
         continue; // released between our mkdir and stat — try once more
       }
-      if (ageMs < LOCK_STALE_MS) return null;
+      // New locks from older clients have no owner file. Give them the legacy
+      // stale window; owned locks can be reclaimed as soon as their PID dies.
+      if (!owner && ageMs < LOCK_STALE_MS) return null;
       await rm(lockPath, { recursive: true, force: true }); // stale: reclaim
     }
   }
   return null;
+}
+
+async function readLockOwner(lockPath: string): Promise<LockOwner | null> {
+  try {
+    const raw = JSON.parse(
+      await readFile(join(lockPath, LOCK_OWNER_FILE), "utf-8"),
+    ) as Record<string, unknown>;
+    if (
+      typeof raw.pid !== "number" ||
+      !Number.isInteger(raw.pid) ||
+      raw.pid <= 0 ||
+      typeof raw.nonce !== "string" ||
+      raw.nonce.length === 0
+    ) {
+      return null;
+    }
+    return { pid: raw.pid, nonce: raw.nonce };
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }
 
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");

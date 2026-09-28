@@ -28,7 +28,14 @@ Centrail is the system of record for AI work. The CLI reads the usage logs your 
 
 ## Privacy first
 
-The CLI reads logs locally and sends usage metadata only: token counts, models, timestamps, commit hashes. **Your prompts and your code never leave your machine.** The full guarantee is documented at [Local token capture](https://centrail.org/docs/local-capture) and the [privacy policy](https://centrail.org/docs/privacy).
+The CLI reads logs locally. Usage uploads contain an opaque event ID, model,
+token counts, and timestamp. Optional git attribution contains the repo
+basename, branch, commit SHA, and aggregate line/file counts. Absolute paths,
+hostnames, provider-account details, prompts, completions, and source code are
+not uploaded. Tool-provided identifiers are used only as opaque deduplication
+keys. The full guarantee is documented at [Local token
+capture](https://centrail.org/docs/local-capture) and the [privacy
+policy](https://centrail.org/docs/privacy).
 
 ## Pricing
 

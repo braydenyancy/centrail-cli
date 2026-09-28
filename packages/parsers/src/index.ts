@@ -45,22 +45,26 @@ export {
 // surface = one entry here + its scanner module.
 export type Scanner = {
   surface: string;
+  // Increment when a scanner starts discovering previously missed historical
+  // events. The CLI uses this to perform one safe full backfill on upgrade.
+  revision: number;
   scan: (opts: { since?: Date }) => Promise<ParsedUsageEvent[]>;
-  readAccount?: () => Promise<ClaudeCodeAccount | null>;
 };
 
 export const SCANNERS: Scanner[] = [
   {
     surface: "claude-code",
+    revision: 2,
     scan: (opts) => scanClaudeCodeLogs(opts),
-    readAccount: () => readClaudeCodeAccount(),
   },
   {
     surface: "copilot-cli",
+    revision: 1,
     scan: (opts) => scanCopilotLogs(opts),
   },
   {
     surface: "codex",
+    revision: 1,
     scan: (opts) => scanCodexLogs(opts),
   },
 ];

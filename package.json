@@ -9,7 +9,9 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "pretest": "npm run build --workspace @centrail/parsers",
     "test": "npm run test --workspaces --if-present",
+    "pretypecheck": "npm run build --workspace @centrail/parsers",
     "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }

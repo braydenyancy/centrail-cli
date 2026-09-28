@@ -71,6 +71,20 @@ describe("scanCopilotLogs", () => {
     expect(claude.cacheCreationTokens).toBe(3);
   });
 
+  it("passes through unfamiliar model names without an allowlist", async () => {
+    const base = await makeSession([
+      shutdown({
+        "vendor-model-next-2099": {
+          usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        },
+      }),
+    ]);
+
+    const events = await scanCopilotLogs({ basePath: base });
+
+    expect(events.map((event) => event.model)).toEqual(["vendor-model-next-2099"]);
+  });
+
   it("emits one event per SEGMENT — every shutdown counts, not just the last (per-segment usage)", async () => {
     // A resumed session: two shutdowns for the same model with per-segment
     // (non-cumulative) usage. The old "last shutdown only" logic captured 250

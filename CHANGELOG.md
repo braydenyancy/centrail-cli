@@ -5,19 +5,26 @@ versioning.
 
 ## [Unreleased]
 
-### 0.5.1 — collection hygiene (nothing new is sent; the CLI stops losing what it already reads)
-- **Subagent transcripts are now scanned.** Claude Code writes subagent usage under
-  `<project>/<session-id>/subagents/*.jsonl`; the scanner only read one level deep, so
-  every subagent token was missed (29% of all tokens on one agent-heavy machine).
-  Run `centrail sync --full` once after upgrading to backfill them.
+### 0.5.1 — collection and privacy hotfix
+- **Usage upload now has an explicit privacy allowlist.** Absolute paths,
+  hostnames, session IDs, provider-account details, and parser metadata remain
+  local. Pairing uses a generic device label instead of the OS hostname.
+- **Direct and nested subagent transcripts are now scanned.** Claude Code writes
+  usage under both `<session>/subagents/*.jsonl` and nested workflow directories.
+  A versioned scanner watermark performs the historical backfill automatically
+  once after upgrade; no manual `sync --full` is required.
+- **Model discovery is forward-compatible.** Claude Code, Copilot CLI, and Codex
+  model names pass through from their logs without a model allowlist.
+- **Claude streaming snapshots are deduplicated correctly.** For repeated
+  request IDs, the CLI keeps the original response and its most complete usage
+  snapshot instead of relying on the server to keep whichever record arrives first.
 - **An exported `GIT_DIR` / `GIT_WORK_TREE` no longer mis-attributes sessions.** Git
   honours those over `-C <dir>`, so a non-repo directory resolved as a repo; every git
   spawn now runs with the repo-redirecting variables removed.
 - **A transcript deleted or rotated mid-scan no longer aborts the whole sync** (the
   Claude scanner had two unguarded reads; Codex and Copilot were already guarded).
-- **One sync at a time per machine**, via an atomic `mkdir` lock in the config dir; a
-  second `centrail sync` exits cleanly with "already running". Stale locks from a
-  crashed sync are reclaimed after 15 minutes.
+- **One sync at a time per machine**, via an owner-aware atomic lock. A live
+  long-running backfill keeps its lock; crashed and legacy stale locks recover.
 - **Config and watermark files are written atomically** (temp file + rename), so a
   crash mid-write can no longer leave a torn `state.json`.
 - **Incremental syncs re-read the trailing 24 hours.** A line can carry a timestamp

@@ -79,10 +79,10 @@ async function makeSession(lines: string[], nested = true): Promise<string> {
 
 describe("scanCodexLogs", () => {
   it("is registered as a first-class CLI scanner", () => {
-    expect(SCANNERS.map((scanner) => scanner.surface)).toEqual([
-      "claude-code",
-      "copilot-cli",
-      "codex",
+    expect(SCANNERS.map(({ surface, revision }) => ({ surface, revision }))).toEqual([
+      { surface: "claude-code", revision: 2 },
+      { surface: "copilot-cli", revision: 1 },
+      { surface: "codex", revision: 1 },
     ]);
   });
 
@@ -105,8 +105,8 @@ describe("scanCodexLogs", () => {
       sessionId: "sess-codex",
       version: "0.145.0",
       entrypoint: "codex_vscode",
-      origin: { client: "codex_vscode", clientVersion: "0.145.0" },
     });
+    expect(event.metadata.origin).toBeUndefined();
   });
 
   it("emits every incremental token record and uses the active turn model", async () => {
@@ -128,6 +128,18 @@ describe("scanCodexLogs", () => {
     expect(events.map((e) => e.model)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra"]);
     expect(events[1].metadata.cwd).toBe("/Users/dev/other-repo");
     expect(new Set(events.map((e) => e.externalId)).size).toBe(2);
+  });
+
+  it("passes through bare and unfamiliar Codex model names", async () => {
+    const reviewTurn = line("turn_context", "2026-07-18T12:00:01.000Z", {
+      turn_id: "review",
+      model: "codex-auto-review",
+    });
+    const base = await makeSession([META, reviewTurn, tokenCount()]);
+
+    const events = await scanCodexLogs({ basePath: base });
+
+    expect(events.map((event) => event.model)).toEqual(["codex-auto-review"]);
   });
 
   it("ignores content records, malformed lines, and token counts without usage or model context", async () => {

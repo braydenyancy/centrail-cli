@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir, hostname, platform } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 // Scans Claude Code's local JSONL logs and returns parsed usage events.
@@ -33,6 +33,7 @@ export type ParsedUsageEvent = {
     sessionId?: string;
     version?: string;
     entrypoint?: string;
+    isSidechain?: boolean;
     origin?: {
       host: string;
       platform: string;
@@ -116,30 +117,26 @@ export async function readClaudeCodeAccount(
 }
 
 // Scans Claude Code logs across all resolved config dirs (or a single
-// `basePath` when provided, for tests). Aggregates events; downstream
-// dedup-by-externalId absorbs any overlap between dirs.
+// `basePath` when provided for tests), then collapses streaming snapshots and
+// copied transcripts before returning events to the caller.
 export async function scanClaudeCodeLogs(opts: {
   basePath?: string;
   since?: Date;
 }): Promise<ParsedUsageEvent[]> {
   const since = opts.since;
-  const host = hostname();
-  const plat = platform();
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
 
   const events: ParsedUsageEvent[] = [];
   for (const base of bases) {
-    events.push(...(await scanProjectsDir(base, since, host, plat)));
+    events.push(...(await scanProjectsDir(base, since)));
   }
-  return events;
+  return dedupeClaudeSnapshots(events);
 }
 
 // Scans one <config-dir>/projects directory. Missing dir → no events.
 async function scanProjectsDir(
   basePath: string,
   since: Date | undefined,
-  host: string,
-  plat: string,
 ): Promise<ParsedUsageEvent[]> {
   let entries: string[];
   try {
@@ -190,7 +187,7 @@ async function scanProjectsDir(
         } catch {
           continue;
         }
-        const parsed = parseAssistantEvent(raw, host, plat);
+        const parsed = parseAssistantEvent(raw);
         if (parsed && (!since || parsed.occurredAt > since)) {
           events.push(parsed);
         }
@@ -201,11 +198,11 @@ async function scanProjectsDir(
   return events;
 }
 
-// Transcripts for one project dir: the top-level <session>.jsonl files plus
-// each session's subagent transcripts, which Claude Code writes under
-// <project>/<session-id>/subagents/<agent>.jsonl. Subagents carry their own
-// requestIds and usage — on an agent-heavy machine they are a large share of
-// all tokens — and nothing else in the tree is a transcript.
+// Transcripts for one project dir: top-level <session>.jsonl files plus JSONL
+// anywhere below each session's known subagents/ root. Claude Code currently
+// writes both subagents/<agent>.jsonl and
+// subagents/workflows/<workflow>/<agent>.jsonl. Traversal is bounded and does
+// not follow symlinks, so unrelated project files remain out of scope.
 async function listSessionFiles(dir: string): Promise<string[]> {
   let entries: Dirent[];
   try {
@@ -221,24 +218,32 @@ async function listSessionFiles(dir: string): Promise<string[]> {
     }
     if (!entry.isDirectory()) continue;
     const sub = join(dir, entry.name, "subagents");
-    let subEntries: Dirent[];
-    try {
-      subEntries = await readdir(sub, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const s of subEntries) {
-      if (s.isFile() && s.name.endsWith(".jsonl")) files.push(join(sub, s.name));
+    files.push(...(await listJsonlBelow(sub, 8)));
+  }
+  return files;
+}
+
+async function listJsonlBelow(dir: string, remainingDepth: number): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      files.push(path);
+    } else if (entry.isDirectory() && remainingDepth > 0) {
+      files.push(...(await listJsonlBelow(path, remainingDepth - 1)));
     }
   }
   return files;
 }
 
-function parseAssistantEvent(
-  raw: unknown,
-  host: string,
-  plat: string,
-): ParsedUsageEvent | null {
+function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
   if (!isObject(raw)) return null;
   if (raw.type !== "assistant") return null;
 
@@ -286,14 +291,48 @@ function parseAssistantEvent(
       sessionId: stringOr(raw.sessionId),
       version,
       entrypoint,
-      origin: {
-        host,
-        platform: plat,
-        client: entrypoint,
-        clientVersion: version,
-      },
+      isSidechain: boolOr(raw.isSidechain),
     },
   };
+}
+
+// Claude can append several snapshots for one response while it streams. They
+// share a requestId but later snapshots usually contain more complete usage.
+// Sending all of them would make the server keep an arbitrary first record;
+// summing them would overcount. Match ccusage's current posture: prefer the
+// non-sidechain original over a replay, then keep the largest usage snapshot.
+function dedupeClaudeSnapshots(events: ParsedUsageEvent[]): ParsedUsageEvent[] {
+  const deduped = new Map<string, ParsedUsageEvent>();
+  for (const candidate of events) {
+    const existing = deduped.get(candidate.externalId);
+    if (!existing || shouldReplaceSnapshot(candidate, existing)) {
+      deduped.set(candidate.externalId, candidate);
+    }
+  }
+  return [...deduped.values()];
+}
+
+function shouldReplaceSnapshot(
+  candidate: ParsedUsageEvent,
+  existing: ParsedUsageEvent,
+): boolean {
+  const candidateSidechain = candidate.metadata.isSidechain === true;
+  const existingSidechain = existing.metadata.isSidechain === true;
+  if (candidateSidechain !== existingSidechain) return existingSidechain;
+
+  const candidateTotal = totalTokens(candidate);
+  const existingTotal = totalTokens(existing);
+  if (candidateTotal !== existingTotal) return candidateTotal > existingTotal;
+  return candidate.occurredAt > existing.occurredAt;
+}
+
+function totalTokens(event: ParsedUsageEvent): number {
+  return (
+    event.inputTokens +
+    event.outputTokens +
+    event.cacheReadTokens +
+    event.cacheCreationTokens
+  );
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -304,4 +343,7 @@ function numOr0(v: unknown): number {
 }
 function stringOr(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
+}
+function boolOr(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
 }

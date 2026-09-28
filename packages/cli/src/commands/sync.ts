@@ -16,6 +16,7 @@ import {
   resolveRepoRoot,
 } from "../git.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
+import { toWireUsageEvent } from "../wire.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
@@ -71,7 +72,9 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   for (const scanner of SCANNERS) {
     // Each surface keeps its own watermark so a scanner added in an upgrade
     // backfills its full history instead of inheriting another's cutoff.
-    const mark = opts.full ? undefined : sinceForSurface(state, scanner.surface);
+    const mark = opts.full
+      ? undefined
+      : sinceForSurface(state, scanner.surface, scanner.revision);
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
@@ -83,15 +86,13 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         e.occurredAt <= maxOccurredAt,
     );
     if (events.length === 0) {
-      await stampSurface(state, scanner.surface, scanStartedAt);
+      await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
     anyEvents = true;
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
       attributionEvents.push(...events);
     }
-
-    const account = scanner.readAccount ? await scanner.readAccount() : null;
 
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
@@ -104,8 +105,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         },
         body: JSON.stringify({
           source: { surface: scanner.surface, kind: "local_logs" },
-          account,
-          events: batch.map(serializeEvent),
+          events: batch.map(toWireUsageEvent),
         }),
       });
       if (res.status === 401) {
@@ -125,7 +125,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
-    await stampSurface(state, scanner.surface, scanStartedAt);
+    await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
 
   if (!anyEvents) {
@@ -147,16 +147,14 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   );
 }
 
-function serializeEvent(e: ParsedUsageEvent): Record<string, unknown> {
-  return { ...e, occurredAt: e.occurredAt.toISOString() };
-}
-
 async function stampSurface(
   state: SyncState,
   surface: string,
+  revision: number,
   scanStartedAt: Date,
 ): Promise<void> {
   state.surfaces[surface] = scanStartedAt.toISOString();
+  state.scannerRevisions[surface] = revision;
   await writeState(state);
 }
 

@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir, hostname, platform } from "node:os";
+import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import type { ParsedUsageEvent } from "./claude-code.js";
 import { suffixDuplicateExternalIds } from "./external-id.js";
@@ -38,8 +38,6 @@ export async function scanCodexLogs(opts: {
   const files = opts.basePath
     ? await findJsonlFiles(opts.basePath)
     : await findCodexUsageFiles();
-  const host = hostname();
-  const plat = platform();
   const events: ParsedUsageEvent[] = [];
 
   for (const path of files) {
@@ -50,7 +48,7 @@ export async function scanCodexLogs(opts: {
         continue;
       }
     }
-    events.push(...(await parseSession(path, opts.since, host, plat)));
+    events.push(...(await parseSession(path, opts.since)));
   }
 
   return suffixDuplicateExternalIds(events);
@@ -122,8 +120,6 @@ type SessionContext = {
 async function parseSession(
   path: string,
   since: Date | undefined,
-  host: string,
-  plat: string,
 ): Promise<ParsedUsageEvent[]> {
   let content: string;
   try {
@@ -160,7 +156,7 @@ async function parseSession(
     }
     if (raw.type !== "event_msg" || raw.payload.type !== "token_count") continue;
 
-    const parsed = parseTokenCount(raw, context, previousTotals, baselineValid, host, plat);
+    const parsed = parseTokenCount(raw, context, previousTotals, baselineValid);
     if (parsed.total) {
       previousTotals = parsed.total;
       baselineValid = true; // session totals cover all usage emitted so far
@@ -193,8 +189,6 @@ function parseTokenCount(
   context: SessionContext,
   previousTotals: TokenUsage | null,
   baselineValid: boolean,
-  host: string,
-  plat: string,
 ): { event: ParsedUsageEvent | null; total: TokenUsage | null; bareLast: boolean } {
   const timestamp = stringOr(raw.timestamp);
   if (!timestamp || !context.sessionId) return { event: null, total: null, bareLast: false };
@@ -246,12 +240,6 @@ function parseTokenCount(
         sessionId: context.sessionId,
         version: context.clientVersion,
         entrypoint: context.client,
-        origin: {
-          host,
-          platform: plat,
-          client: context.client ?? "codex",
-          clientVersion: context.clientVersion,
-        },
       },
     },
     total,
