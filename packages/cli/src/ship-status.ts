@@ -4,12 +4,12 @@ import {
   type ShipStatusFacts,
 } from "@centrail/parsers";
 import {
-  branchTipDate,
-  branchesContaining,
   cherryEquivalentShas,
-  isAncestor,
+  listBranchTips,
+  listReachableShas,
   listRecentShas,
   resolveDefaultBranch,
+  type BranchTip,
 } from "./git.js";
 import { versionHeaders } from "./version.js";
 
@@ -26,10 +26,17 @@ export type FateTally = { shipped: number; inFlight: number; unshipped: number }
 // Mirrors the server's batch cap for fate rows.
 const FATE_CHUNK = 2000;
 
+const WINDOW_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 // Gather the git facts for one repo. Null when the default branch cannot be
 // resolved — the caller skips the repo entirely (never guess a default).
-// Performance: `git cherry` runs once per branch TIP (not per commit);
-// ancestor checks are one cheap merge-base per sha (capped at 2000).
+// Performance: spawns scale with LIVE BRANCHES, not commits. One
+// `for-each-ref` lists every tip with its date; one `rev-list --since` per
+// branch whose tip is inside the window gives containment, and one more on
+// the default branch gives ancestry. A branch whose tip is older than the
+// window cannot contain a commit inside it, so stale branches cost nothing.
+// (Was `branch --contains` + `merge-base` per sha: ~4,000 spawns per repo.)
 export async function gatherShipStatusFacts(
   repoRoot: string,
   now: Date = new Date(),
@@ -37,34 +44,41 @@ export async function gatherShipStatusFacts(
   const defaultBranch = await resolveDefaultBranch(repoRoot);
   if (!defaultBranch) return null;
 
-  const shas = await listRecentShas(repoRoot, 90);
+  const shas = await listRecentShas(repoRoot, WINDOW_DAYS);
+  const recent = new Set(shas.map((s) => s.sha));
+  const cutoffMs = now.getTime() - WINDOW_DAYS * DAY_MS;
 
-  const branchesBySha: Record<string, string[]> = {};
-  const allBranches = new Set<string>();
-  for (const { sha } of shas) {
-    const branches = await branchesContaining(repoRoot, sha);
-    branchesBySha[sha] = branches;
-    for (const b of branches) allBranches.add(b);
-  }
-
-  const branchTipDates: Record<string, string | null> = {};
-  for (const branch of allBranches) {
-    branchTipDates[branch] = await branchTipDate(repoRoot, branch);
-  }
+  const ancestorShas = (
+    await listReachableShas(repoRoot, `refs/heads/${defaultBranch}`, WINDOW_DAYS)
+  ).filter((sha) => recent.has(sha));
+  const ancestors = new Set(ancestorShas);
 
   const isDefaultRef = (b: string) =>
     b === defaultBranch || b === `origin/${defaultBranch}`;
-  const cherrySet = new Set<string>();
-  for (const branch of allBranches) {
-    if (isDefaultRef(branch)) continue;
-    for (const sha of await cherryEquivalentShas(repoRoot, defaultBranch, branch)) {
-      cherrySet.add(sha);
+  const branchesBySha: Record<string, string[]> = {};
+  const branchTipDates: Record<string, string | null> = {};
+  const cherryCandidates: BranchTip[] = [];
+  for (const tip of await listBranchTips(repoRoot)) {
+    const tipMs = tip.tipDate ? Date.parse(tip.tipDate) : Number.NaN;
+    if (Number.isFinite(tipMs) && tipMs < cutoffMs) continue; // unparsable date: keep, be safe
+    branchTipDates[tip.name] = tip.tipDate;
+    let unmerged = false;
+    for (const sha of await listReachableShas(repoRoot, tip.ref, WINDOW_DAYS)) {
+      if (!recent.has(sha)) continue;
+      (branchesBySha[sha] ??= []).push(tip.name);
+      if (!ancestors.has(sha)) unmerged = true;
     }
+    // `git cherry` only matters for a branch that still holds a recent commit
+    // NOT on default — that is the squash-merge case. A fully merged branch,
+    // or the default itself, cannot add a cherry-equivalent sha we report.
+    if (unmerged && !isDefaultRef(tip.name)) cherryCandidates.push(tip);
   }
 
-  const ancestorShas: string[] = [];
-  for (const { sha } of shas) {
-    if (await isAncestor(repoRoot, sha, defaultBranch)) ancestorShas.push(sha);
+  const cherrySet = new Set<string>();
+  for (const tip of cherryCandidates) {
+    for (const sha of await cherryEquivalentShas(repoRoot, defaultBranch, tip.name)) {
+      cherrySet.add(sha);
+    }
   }
 
   return {

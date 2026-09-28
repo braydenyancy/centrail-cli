@@ -12,10 +12,10 @@ vi.mock("node:child_process", async () => {
 });
 
 import {
-  branchTipDate,
-  branchesContaining,
   cherryEquivalentShas,
-  isAncestor,
+  gitEnv,
+  listBranchTips,
+  listReachableShas,
   listRecentShas,
   RECENT_SHA_CAP,
   resolveDefaultBranch,
@@ -115,15 +115,6 @@ describe("listRecentShas", () => {
   });
 });
 
-describe("isAncestor", () => {
-  it("maps exit 0 to true and any failure to false", async () => {
-    routeGit({ "merge-base": "" });
-    expect(await isAncestor(ROOT, "aaa", "main")).toBe(true);
-    routeGit({ "merge-base": new Error("exit 1") });
-    expect(await isAncestor(ROOT, "aaa", "main")).toBe(false);
-  });
-});
-
 describe("cherryEquivalentShas", () => {
   it("returns only the '-' (already-on-default) shas", async () => {
     routeGit({ cherry: "- aaa111\n+ bbb222\n- ccc333\n" });
@@ -139,34 +130,48 @@ describe("cherryEquivalentShas", () => {
   });
 });
 
-describe("branchesContaining", () => {
-  it("returns short names, dropping detached-HEAD and origin/HEAD noise", async () => {
+describe("listBranchTips", () => {
+  it("parses one for-each-ref line per branch, dropping symrefs and origin noise", async () => {
     routeGit({
-      branch: "(HEAD detached at abc123)\nmain\norigin\norigin/HEAD\norigin/main\nfeature/x\n\n",
+      "for-each-ref": [
+        "refs/heads/main\x1fmain\x1faaa\x1f2026-07-20T10:00:00+00:00\x1f",
+        "refs/heads/feature/x\x1ffeature/x\x1fbbb\x1f2026-07-19T09:00:00+00:00\x1f",
+        "refs/remotes/origin/HEAD\x1forigin/HEAD\x1faaa\x1f2026-07-20T10:00:00+00:00\x1frefs/remotes/origin/main",
+        "refs/remotes/origin/main\x1forigin/main\x1faaa\x1f2026-07-20T10:00:00+00:00\x1f",
+        "",
+      ].join("\n"),
     });
-    expect(await branchesContaining(ROOT, "aaa")).toEqual([
-      "main",
-      "origin/main",
-      "feature/x",
+    expect(await listBranchTips(ROOT)).toEqual([
+      { ref: "refs/heads/main", name: "main", sha: "aaa", tipDate: "2026-07-20T10:00:00+00:00" },
+      { ref: "refs/heads/feature/x", name: "feature/x", sha: "bbb", tipDate: "2026-07-19T09:00:00+00:00" },
+      { ref: "refs/remotes/origin/main", name: "origin/main", sha: "aaa", tipDate: "2026-07-20T10:00:00+00:00" },
     ]);
   });
 
   it("returns [] when git fails", async () => {
     routeGit({});
-    expect(await branchesContaining(ROOT, "aaa")).toEqual([]);
+    expect(await listBranchTips(ROOT)).toEqual([]);
   });
 });
 
-describe("branchTipDate", () => {
-  it("returns the tip committer date", async () => {
-    routeGit({ log: "2026-07-20T10:00:00+00:00\n" });
-    expect(await branchTipDate(ROOT, "feature/x")).toBe("2026-07-20T10:00:00+00:00");
+describe("listReachableShas", () => {
+  it("lists shas from rev-list with the window and the full ref, ending in --", async () => {
+    routeGit({ "rev-list": "aaa\nbbb\n\n" });
+    expect(await listReachableShas(ROOT, "refs/heads/main")).toEqual(["aaa", "bbb"]);
+    const args = execMock.mock.calls[0][1] as string[];
+    expect(args).toContain("--since=90 days ago");
+    expect(args.slice(-2)).toEqual(["refs/heads/main", "--"]);
   });
 
-  it("returns null for unknown refs or empty output", async () => {
-    routeGit({ log: "" });
-    expect(await branchTipDate(ROOT, "gone")).toBeNull();
+  it("returns [] when git fails", async () => {
     routeGit({});
-    expect(await branchTipDate(ROOT, "gone")).toBeNull();
+    expect(await listReachableShas(ROOT, "refs/heads/gone")).toEqual([]);
+  });
+});
+
+describe("gitEnv", () => {
+  it("drops every repo-redirecting variable and disables optional locks", () => {
+    const env = gitEnv({ PATH: "/bin", GIT_DIR: "/elsewhere/.git", GIT_WORK_TREE: "/x", HOME: "/h" });
+    expect(env).toEqual({ PATH: "/bin", HOME: "/h", GIT_OPTIONAL_LOCKS: "0" });
   });
 });

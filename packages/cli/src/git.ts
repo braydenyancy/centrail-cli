@@ -4,7 +4,37 @@ import { basename } from "node:path";
 import { promisify } from "node:util";
 import { parseGitLogNumstat, type RepoCommit } from "@centrail/parsers";
 
-const exec = promisify(execFile);
+const execFileAsync = promisify(execFile);
+
+// Git honours GIT_DIR, GIT_WORK_TREE and friends OVER `-C <dir>`: with GIT_DIR
+// exported, `git -C /not-a-repo rev-parse --show-toplevel` answers
+// "/not-a-repo" instead of failing, and every session on that machine is
+// attributed to whichever directory it happened to run in. Every git spawn
+// therefore gets the environment with the repo-redirecting variables removed.
+const GIT_REDIRECT_VARS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_NAMESPACE",
+];
+
+export function gitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  for (const key of GIT_REDIRECT_VARS) delete env[key];
+  env.GIT_OPTIONAL_LOCKS = "0"; // read-only queries never take the index lock
+  return env;
+}
+
+function exec(
+  cmd: string,
+  args: string[],
+  opts: { maxBuffer?: number } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync(cmd, args, { ...opts, env: gitEnv() });
+}
 
 // Resolve the git toplevel for a working dir. Returns null if not a repo.
 export async function resolveRepoRoot(cwd: string): Promise<string | null> {
@@ -103,14 +133,67 @@ export async function listRecentShas(
   }
 }
 
-// True iff `sha` is an ancestor of `ref` (exit code 0). Any failure — not an
-// ancestor (exit 1), unknown ref, missing repo — is false.
-export async function isAncestor(repoRoot: string, sha: string, ref: string): Promise<boolean> {
+export type BranchTip = {
+  ref: string; // full refname, unambiguous for rev-list
+  name: string; // short name exactly as `git branch -a` prints it
+  sha: string;
+  tipDate: string | null; // committer date of the tip (ISO), null if unknown
+};
+
+// Every local and remote-tracking branch with its tip sha and date, in ONE
+// spawn. Symrefs (origin/HEAD) are skipped, as is anything git would print as
+// bare "origin". Replaces one `log -1` per branch. NOTE: for-each-ref spells a
+// hex byte as `%1f`, unlike `git log --pretty`, which spells it `%x1f`.
+export async function listBranchTips(repoRoot: string): Promise<BranchTip[]> {
   try {
-    await exec("git", ["-C", repoRoot, "merge-base", "--is-ancestor", sha, ref]);
-    return true;
+    const { stdout } = await exec(
+      "git",
+      [
+        "-C", repoRoot, "for-each-ref",
+        "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(committerdate:iso-strict)%1f%(symref)",
+        "refs/heads", "refs/remotes",
+      ],
+      { maxBuffer: FACT_BUFFER },
+    );
+    const out: BranchTip[] = [];
+    for (const line of stdout.split("\n")) {
+      const [ref, name, sha, date, symref] = line.split("\x1f");
+      if (!ref?.trim() || !name?.trim() || !sha?.trim()) continue;
+      if (symref?.trim()) continue;
+      if (name === "origin" || name === "origin/HEAD") continue;
+      out.push({ ref: ref.trim(), name: name.trim(), sha: sha.trim(), tipDate: date?.trim() || null });
+    }
+    return out;
   } catch {
-    return false;
+    return [];
+  }
+}
+
+export const REACHABLE_CAP = 50000;
+
+// Shas reachable from `ref` and committed inside the window: one spawn per
+// ref instead of one `branch --contains` / `merge-base` per sha. Same cutoff
+// as listRecentShas so the two sets line up.
+export async function listReachableShas(
+  repoRoot: string,
+  ref: string,
+  sinceDays = 90,
+): Promise<string[]> {
+  try {
+    const { stdout } = await exec(
+      "git",
+      [
+        "-C", repoRoot, "rev-list", `--since=${sinceDays} days ago`,
+        `--max-count=${REACHABLE_CAP}`, ref, "--",
+      ],
+      { maxBuffer: FACT_BUFFER },
+    );
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((sha) => sha.length > 0);
+  } catch {
+    return [];
   }
 }
 
@@ -132,37 +215,6 @@ export async function cherryEquivalentShas(
       .filter((sha) => sha.length > 0);
   } catch {
     return [];
-  }
-}
-
-// Local + remote branch short names containing `sha`. Filters git's noise
-// lines: detached-HEAD "(...)" and the origin/HEAD symref (which
-// %(refname:short) renders as bare "origin").
-export async function branchesContaining(repoRoot: string, sha: string): Promise<string[]> {
-  try {
-    const { stdout } = await exec(
-      "git",
-      ["-C", repoRoot, "branch", "-a", "--format=%(refname:short)", "--contains", sha],
-      { maxBuffer: FACT_BUFFER },
-    );
-    return stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(
-        (b) => b.length > 0 && !b.startsWith("(") && b !== "origin" && b !== "origin/HEAD",
-      );
-  } catch {
-    return [];
-  }
-}
-
-// Committer date (ISO) of a branch tip, or null when the ref is unknown.
-export async function branchTipDate(repoRoot: string, ref: string): Promise<string | null> {
-  try {
-    const { stdout } = await exec("git", ["-C", repoRoot, "log", "-1", "--pretty=%cI", ref]);
-    return stdout.trim() || null;
-  } catch {
-    return null;
   }
 }
 

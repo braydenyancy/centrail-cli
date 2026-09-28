@@ -1,5 +1,6 @@
+import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir, hostname, platform } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 // Scans Claude Code's local JSONL logs and returns parsed usage events.
@@ -32,6 +33,7 @@ export type ParsedUsageEvent = {
     sessionId?: string;
     version?: string;
     entrypoint?: string;
+    isSidechain?: boolean;
     origin?: {
       host: string;
       platform: string;
@@ -115,30 +117,26 @@ export async function readClaudeCodeAccount(
 }
 
 // Scans Claude Code logs across all resolved config dirs (or a single
-// `basePath` when provided, for tests). Aggregates events; downstream
-// dedup-by-externalId absorbs any overlap between dirs.
+// `basePath` when provided for tests), then collapses streaming snapshots and
+// copied transcripts before returning events to the caller.
 export async function scanClaudeCodeLogs(opts: {
   basePath?: string;
   since?: Date;
 }): Promise<ParsedUsageEvent[]> {
   const since = opts.since;
-  const host = hostname();
-  const plat = platform();
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
 
   const events: ParsedUsageEvent[] = [];
   for (const base of bases) {
-    events.push(...(await scanProjectsDir(base, since, host, plat)));
+    events.push(...(await scanProjectsDir(base, since)));
   }
-  return events;
+  return dedupeClaudeSnapshots(events);
 }
 
 // Scans one <config-dir>/projects directory. Missing dir → no events.
 async function scanProjectsDir(
   basePath: string,
   since: Date | undefined,
-  host: string,
-  plat: string,
 ): Promise<ParsedUsageEvent[]> {
   let entries: string[];
   try {
@@ -160,23 +158,27 @@ async function scanProjectsDir(
     }
     if (!dirStat.isDirectory()) continue;
 
-    let files: string[];
-    try {
-      files = await readdir(dir);
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) continue;
-      const path = join(dir, file);
-      const fileStat = await stat(path);
+    for (const path of await listSessionFiles(dir)) {
+      // A transcript can be rotated or swept between listing and reading —
+      // Claude Code's retention sweep does exactly that. Skip it; one vanished
+      // file must never abort the whole scan.
+      let fileStat;
+      try {
+        fileStat = await stat(path);
+      } catch {
+        continue;
+      }
       // Skip files unchanged since last sync. Conservative cut: we use mtime,
       // so a long-running session keeps reprocessing until it closes —
       // dedup-by-externalId catches the duplicates downstream.
       if (since && fileStat.mtime < since) continue;
 
-      const content = await readFile(path, "utf-8");
+      let content: string;
+      try {
+        content = await readFile(path, "utf-8");
+      } catch {
+        continue;
+      }
       for (const line of content.split("\n")) {
         if (!line.trim()) continue;
         let raw: unknown;
@@ -185,7 +187,7 @@ async function scanProjectsDir(
         } catch {
           continue;
         }
-        const parsed = parseAssistantEvent(raw, host, plat);
+        const parsed = parseAssistantEvent(raw);
         if (parsed && (!since || parsed.occurredAt > since)) {
           events.push(parsed);
         }
@@ -196,11 +198,52 @@ async function scanProjectsDir(
   return events;
 }
 
-function parseAssistantEvent(
-  raw: unknown,
-  host: string,
-  plat: string,
-): ParsedUsageEvent | null {
+// Transcripts for one project dir: top-level <session>.jsonl files plus JSONL
+// anywhere below each session's known subagents/ root. Claude Code currently
+// writes both subagents/<agent>.jsonl and
+// subagents/workflows/<workflow>/<agent>.jsonl. Traversal is bounded and does
+// not follow symlinks, so unrelated project files remain out of scope.
+async function listSessionFiles(dir: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".jsonl")) files.push(join(dir, entry.name));
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    const sub = join(dir, entry.name, "subagents");
+    files.push(...(await listJsonlBelow(sub, 8)));
+  }
+  return files;
+}
+
+async function listJsonlBelow(dir: string, remainingDepth: number): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      files.push(path);
+    } else if (entry.isDirectory() && remainingDepth > 0) {
+      files.push(...(await listJsonlBelow(path, remainingDepth - 1)));
+    }
+  }
+  return files;
+}
+
+function parseAssistantEvent(raw: unknown): ParsedUsageEvent | null {
   if (!isObject(raw)) return null;
   if (raw.type !== "assistant") return null;
 
@@ -248,14 +291,48 @@ function parseAssistantEvent(
       sessionId: stringOr(raw.sessionId),
       version,
       entrypoint,
-      origin: {
-        host,
-        platform: plat,
-        client: entrypoint,
-        clientVersion: version,
-      },
+      isSidechain: boolOr(raw.isSidechain),
     },
   };
+}
+
+// Claude can append several snapshots for one response while it streams. They
+// share a requestId but later snapshots usually contain more complete usage.
+// Sending all of them would make the server keep an arbitrary first record;
+// summing them would overcount. Match ccusage's current posture: prefer the
+// non-sidechain original over a replay, then keep the largest usage snapshot.
+function dedupeClaudeSnapshots(events: ParsedUsageEvent[]): ParsedUsageEvent[] {
+  const deduped = new Map<string, ParsedUsageEvent>();
+  for (const candidate of events) {
+    const existing = deduped.get(candidate.externalId);
+    if (!existing || shouldReplaceSnapshot(candidate, existing)) {
+      deduped.set(candidate.externalId, candidate);
+    }
+  }
+  return [...deduped.values()];
+}
+
+function shouldReplaceSnapshot(
+  candidate: ParsedUsageEvent,
+  existing: ParsedUsageEvent,
+): boolean {
+  const candidateSidechain = candidate.metadata.isSidechain === true;
+  const existingSidechain = existing.metadata.isSidechain === true;
+  if (candidateSidechain !== existingSidechain) return existingSidechain;
+
+  const candidateTotal = totalTokens(candidate);
+  const existingTotal = totalTokens(existing);
+  if (candidateTotal !== existingTotal) return candidateTotal > existingTotal;
+  return candidate.occurredAt > existing.occurredAt;
+}
+
+function totalTokens(event: ParsedUsageEvent): number {
+  return (
+    event.inputTokens +
+    event.outputTokens +
+    event.cacheReadTokens +
+    event.cacheCreationTokens
+  );
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -266,4 +343,7 @@ function numOr0(v: unknown): number {
 }
 function stringOr(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
+}
+function boolOr(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
 }

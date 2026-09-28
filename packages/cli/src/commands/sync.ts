@@ -5,7 +5,7 @@ import {
   type EventAttribution,
   type ParsedUsageEvent,
 } from "@centrail/parsers";
-import { readAuth, readConfig, readState, writeState } from "../config.js";
+import { acquireSyncLock, readAuth, readConfig, readState, writeState } from "../config.js";
 import { sinceForSurface, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
@@ -16,10 +16,19 @@ import {
   resolveRepoRoot,
 } from "../git.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
+import { toWireUsageEvent } from "../wire.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
 const BATCH_SIZE = 250;
+
+// Every incremental sync re-reads this much of the trailing window. A
+// transcript line can carry a timestamp earlier than the moment it reaches
+// disk — a long streaming turn, a log synced from another machine, clock
+// skew — so a watermark taken at scan start can sit past events that were
+// not written yet. The server dedupes on externalId, so the overlap costs a
+// re-send that is counted as "skipped", never a duplicate and never a loss.
+const WATERMARK_OVERLAP_MS = 24 * 60 * 60 * 1000;
 
 type IngestResponse = {
   inserted: number;
@@ -28,6 +37,19 @@ type IngestResponse = {
 };
 
 export async function runSync(opts: { full: boolean }): Promise<void> {
+  const release = await acquireSyncLock();
+  if (!release) {
+    console.log("Another sync is already running on this machine — skipped.");
+    return;
+  }
+  try {
+    await syncLocked(opts);
+  } finally {
+    await release();
+  }
+}
+
+async function syncLocked(opts: { full: boolean }): Promise<void> {
   const auth = await readAuth();
   if (!auth) {
     throw new Error("Not connected — run `centrail connect` first");
@@ -50,8 +72,11 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   for (const scanner of SCANNERS) {
     // Each surface keeps its own watermark so a scanner added in an upgrade
     // backfills its full history instead of inheriting another's cutoff.
-    const since = opts.full ? undefined : sinceForSurface(state, scanner.surface);
-    if (since) anyWatermark = true;
+    const mark = opts.full
+      ? undefined
+      : sinceForSurface(state, scanner.surface, scanner.revision);
+    if (mark) anyWatermark = true;
+    const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
     const scanned = await scanner.scan({ since });
     const events = scanned.filter(
@@ -61,15 +86,13 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
         e.occurredAt <= maxOccurredAt,
     );
     if (events.length === 0) {
-      await stampSurface(state, scanner.surface, scanStartedAt);
+      await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
     anyEvents = true;
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
       attributionEvents.push(...events);
     }
-
-    const account = scanner.readAccount ? await scanner.readAccount() : null;
 
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
@@ -82,8 +105,7 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
         },
         body: JSON.stringify({
           source: { surface: scanner.surface, kind: "local_logs" },
-          account,
-          events: batch.map(serializeEvent),
+          events: batch.map(toWireUsageEvent),
         }),
       });
       if (res.status === 401) {
@@ -103,7 +125,7 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
 
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
-    await stampSurface(state, scanner.surface, scanStartedAt);
+    await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
 
   if (!anyEvents) {
@@ -125,16 +147,14 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   );
 }
 
-function serializeEvent(e: ParsedUsageEvent): Record<string, unknown> {
-  return { ...e, occurredAt: e.occurredAt.toISOString() };
-}
-
 async function stampSurface(
   state: SyncState,
   surface: string,
+  revision: number,
   scanStartedAt: Date,
 ): Promise<void> {
   state.surfaces[surface] = scanStartedAt.toISOString();
+  state.scannerRevisions[surface] = revision;
   await writeState(state);
 }
 

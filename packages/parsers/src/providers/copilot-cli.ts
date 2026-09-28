@@ -84,7 +84,6 @@ export async function scanCopilotLogs(opts: {
             cwd: ws.cwd,
             gitBranch: ws.branch,
             sessionId,
-            origin: { host: "", platform: "", client: "copilot-cli" },
           },
         });
       }

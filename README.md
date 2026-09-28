@@ -19,9 +19,12 @@ Node.js 20+ required.
 ## What leaves your machine
 
 The CLI is **local-first**. It reads your agent's usage logs and computes git
-commit attribution **on your machine**, and sends only **derived counts** (tokens
-per model, timestamps, repo names, commit metadata). It never sends your source
-code, your prompts, your completions, or any secrets. See [SECURITY.md](./SECURITY.md).
+commit attribution **on your machine**. Usage uploads contain an opaque event
+ID, model, token counts, and timestamp. Optional git attribution contains the
+repo basename, branch, commit SHA, and aggregate line/file counts. It never
+sends absolute paths, hostnames, provider-account details, source code, prompts,
+completions, or secrets. Tool-provided identifiers are used only as opaque
+deduplication keys. See [SECURITY.md](./SECURITY.md).
 
 ## Where it reads logs
 
@@ -37,14 +40,15 @@ home directory, so it isn't tied to Unix-style paths.
   reads only session/turn metadata and per-call token counts; message,
   reasoning, and tool records are ignored.
 
-Only token counts and metadata are read — never your code, prompts, or
-completions.
+The parsers retain limited local context long enough to compute attribution,
+but that context is removed by an explicit network allowlist before upload.
+They never extract your code, prompts, or completions.
 
 ## Packages
 
 - **centrail** — the CLI (this package's `bin`).
-- **@centrail/parsers** — the local log parsers + the wire payload types shared
-  with the Centrail server. See [CONTRACT.md](./CONTRACT.md).
+- **@centrail/parsers** — the local log parsers and attribution logic. See
+  [CONTRACT.md](./CONTRACT.md).
 
 ## License
 

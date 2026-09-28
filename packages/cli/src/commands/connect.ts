@@ -1,11 +1,11 @@
 import { readdir } from "node:fs/promises";
-import { hostname, platform } from "node:os";
 import { claudeProjectDirs } from "@centrail/parsers";
 import { writeAuth } from "../config.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 
 const DEFAULT_BASE_URL = "https://centrail.org";
+export const PRIVATE_DEVICE_NAME = "Centrail CLI";
 
 type PairResponse = {
   code: string;
@@ -24,7 +24,10 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
   const res = await fetch(`${baseUrl}/api/cli/pair`, {
     method: "POST",
     headers: { "content-type": "application/json", ...versionHeaders() },
-    body: JSON.stringify({ hostname: hostname(), platform: platform() }),
+    // The current server calls this field hostname, but it is only a display
+    // label. Never send the operating-system hostname or other fingerprinting
+    // data during pairing.
+    body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME }),
   });
   if (!res.ok) {
     throw new Error(
@@ -60,9 +63,9 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
       await writeAuth({
         baseUrl,
         token: body.token,
-        deviceName: hostname(),
+        deviceName: PRIVATE_DEVICE_NAME,
       });
-      console.log(`  ✓ Paired (this machine: ${hostname()})`);
+      console.log(`  ✓ Paired (${PRIVATE_DEVICE_NAME})`);
       await reportDetectedLogs();
       console.log("  Run `npx centrail sync` to push usage.");
       return;

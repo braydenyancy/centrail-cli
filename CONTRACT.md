@@ -11,10 +11,19 @@ is the source of truth for that contract.
 
 ## Payload types
 
-The request shapes originate in **@centrail/parsers** (`ParsedUsageEvent`,
-`ClaudeCodeAccount`, attribution event/result types). The server validates its
-own copy of the untrusted wire shape, and release CI verifies every exported
-scanner surface against that validator before a CLI package can publish.
+The CLI converts parser output into a separate, explicit `WireUsageEvent`
+allowlist before upload. Local parser metadata and provider-account data are
+not part of the wire shape. The server validates its own copy of the untrusted
+wire shape, and release CI verifies every exported scanner surface against
+that validator before a CLI package can publish.
+
+Usage events contain only `externalId` (opaque deduplication), `model`, token
+counts, and `occurredAt`. Optional git attribution is sent separately and may
+contain repo basename, branch, commit SHA, and aggregate line/file counts. The
+CLI never uploads absolute paths, hostnames, or provider-account identifiers.
+It does not upload a separate session metadata field; `externalId` is an opaque
+deduplication key and may be derived from identifiers already present in an
+agent's usage log.
 
 `ParsedUsageEvent.cacheWriteTokens` is the provider-neutral cache-write bucket.
 The older `cacheCreation5mTokens` and `cacheCreation1hTokens` fields remain for
