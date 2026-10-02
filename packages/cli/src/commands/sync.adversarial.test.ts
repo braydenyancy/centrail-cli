@@ -416,6 +416,55 @@ describe("a squash merge on the remote, branch deleted, stale origin/<branch> le
     await runSync({ full: true });
     expect(server.fates.map((f) => f.commitSha).filter((s) => [b1, b2, squash].includes(s))).toEqual([squash]);
     expect(fate(squash)?.fate).toBe("shipped");
+    // A server that does not list "patch-id" never sees a patch id.
+    expect(JSON.stringify(server.attributeBodies)).not.toMatch(/patchId|branchPatchId/);
+    server.fields = ["repo"];
+  });
+
+  it("a server that lists \"patch-id\" gets the proof instead: the squash's patchId is the branch tip's branchPatchId, and it outlives the branch", async () => {
+    server.fields = ["repo", "match", "patch-id"];
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { fixtureEnv } = await import("../testing/git-fixture.js");
+    const { writeFile } = await import("node:fs/promises");
+    const dated = (cwd: string, ...args: string[]) => {
+      const iso = new Date().toISOString();
+      return promisify(execFile)("git", ["-C", cwd, ...args], { env: { ...fixtureEnv(fx.root), GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } });
+    };
+    const commitOn = async (repo: string, file: string) => {
+      await writeFile(join(repo, file), `${file}\n`);
+      await fx.git(repo, "add", file);
+      await dated(repo, "commit", "-q", "-m", file);
+      return fx.git(repo, "rev-parse", "HEAD");
+    };
+    const repo = await fx.repo("pid", { remote: "https://github.com/acme/pid.git" });
+    await fx.git(repo, "config", "user.email", "t@example.com");
+    await writeTranscript(claudeDir, repo, "pid", [line("pid", repo, "req_pid", 1, T0 + 55 * 60_000, "feat")]);
+    await hook("pid", repo);
+    await fx.git(repo, "checkout", "-q", "-b", "feat");
+    const b1 = await commitOn(repo, "p1");
+    const b2 = await commitOn(repo, "p2");
+    await fx.git(repo, "checkout", "-q", "main");
+    const unrelated = await commitOn(repo, "unrelated");
+    await fx.git(repo, "merge", "--squash", "-q", "feat");
+    await dated(repo, "commit", "-q", "-m", "feat (#1)");
+    const squash = await fx.git(repo, "rev-parse", "HEAD");
+    type Row = { fate: string; patchId?: string; branchPatchId?: string; mergedAs?: string };
+    const fate = (sha: string) => server.fates.find((f) => f.commitSha === sha) as Row | undefined;
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    expect(fate(squash)?.patchId).toMatch(/^[0-9a-f]{40}$/);
+    expect(fate(squash)?.patchId).toBe(fate(b2)?.branchPatchId);
+    expect(fate(b1)).toMatchObject({ fate: "shipped", mergedAs: squash, patchId: fate(b1)?.branchPatchId });
+    expect(fate(b2)?.branchPatchId).not.toBe(fate(b2)?.patchId);
+    expect(fate(unrelated)?.branchPatchId).toBeUndefined(); // on the default branch
+    const proof = fate(squash)?.patchId;
+    // The branch is deleted: its commits vanish, the squash's proof stays.
+    await fx.git(repo, "branch", "-D", "feat");
+    server.attributeBodies.length = 0;
+    await runSync({ full: true });
+    expect(fate(b1)).toBeUndefined();
+    expect(fate(squash)?.patchId).toBe(proof);
     server.fields = ["repo"];
   });
 });

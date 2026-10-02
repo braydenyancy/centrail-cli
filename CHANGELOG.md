@@ -34,6 +34,25 @@ versioning.
   allowed keys back. Paths, hostnames, platform, client and account data
   never leave, whatever the server lists; `hideRepoNames` also withholds the
   root sha.
+- **Abandoned work stays abandoned: patch ids prove what a vanished commit
+  became.** To a server that lists `"patch-id"`, each fate row carries
+  `patchId` (`git patch-id --stable` of the commit's own diff; none for a
+  merge or root commit) and `branchPatchId` (of the cumulative diff from its
+  merge base with the default branch: what a squash of the branch up to that
+  commit carries, so a squash of any prefix matches; none on the default
+  branch). The server moves a vanished sha's events only on that proof, never
+  by time. Content hashes, computed with pinned diff options so machines
+  agree; they reveal no code. Old servers get exactly today's rows.
+- **Squash detection reads the same ids, batched.** Every commit's patch id
+  comes from one `git diff-tree --stdin` piped into one `git patch-id`, so
+  the fate pass no longer spawns per squash candidate or per branch prefix:
+  on the centrail repo (602 recent commits, 32 refs) 444 git spawns and
+  2.7 s became 88 and 1.1 s (1.4 s with every patch id), with the same
+  squash matches. Two misses fixed on the way: a branch that renamed a file
+  never matched its squash (the prefix diff detected the rename, the
+  candidate's did not), and a branch that merged the default branch in took
+  its pre-merge prefixes from the wrong merge base. A local branch and its
+  `origin/` twin at one tip are asked once.
 - **One full re-send on upgrade, so the server can enrich what it holds.**
   Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
   the first sync after upgrading re-sends each surface's history once, and to

@@ -5,8 +5,10 @@ const git = vi.hoisted(() => ({
   listRecentShas: vi.fn(),
   readUserEmail: vi.fn(),
   resolveAncestryRef: vi.fn(),
-  squashedShas: vi.fn(),
+  branchPrefixes: vi.fn(),
+  patchIds: vi.fn(),
   RECENT_SHA_CAP: 2000,
+  SQUASH_CANDIDATE_CAP: 200,
   listBranchTips: vi.fn(),
   listReachableShas: vi.fn(),
   cherryEquivalentShas: vi.fn(),
@@ -37,7 +39,8 @@ function stubHappyRepo(): void {
   git.resolveDefaultBranch.mockResolvedValue("main");
   git.readUserEmail.mockResolvedValue("me@example.com");
   git.resolveAncestryRef.mockResolvedValue("refs/heads/main");
-  git.squashedShas.mockResolvedValue({});
+  git.branchPrefixes.mockResolvedValue([]);
+  git.patchIds.mockResolvedValue({});
   git.listRecentShas.mockResolvedValue([
     { sha: "aaa", committedAt: daysAgo(1), linesAdded: 10, linesDeleted: 2, filesChanged: 3, authorEmail: "me@example.com" },
     { sha: "bbb", committedAt: daysAgo(2), linesAdded: 0, linesDeleted: 0, filesChanged: 0, authorEmail: "teammate@example.com" },
@@ -99,6 +102,43 @@ describe("gatherShipStatusFacts", () => {
     });
     expect(facts?.branchTipDates).not.toHaveProperty("feature/ancient");
   });
+
+  it("patch ids never spawn per commit: one batch of own ids and one of branch prefixes per repo, whatever the branch count", async () => {
+    stubHappyRepo();
+    git.branchPrefixes.mockImplementation(async (_root: string, _def: string, tip: string) =>
+      tip === "refs/heads/feature/x" ? [{ sha: "bbb", at: daysAgo(2), base: "aaa" }] : [{ sha: "ccc", at: daysAgo(40), base: "base0" }],
+    );
+    git.patchIds.mockImplementation(async (_root: string, commits: { sha: string; base?: string }[]) =>
+      Object.fromEntries(commits.map((c) => [c.sha, `${c.base ? "branch" : "own"}-${c.sha}`])),
+    );
+    const facts = (await gatherShipStatusFacts("/repo", NOW, true))!;
+    expect(git.patchIds).toHaveBeenCalledTimes(2);
+    expect(git.branchPrefixes).toHaveBeenCalledTimes(2); // per live unmerged branch, as cherry
+    expect(git.patchIds.mock.calls.map((c) => c[1])).toEqual([
+      [{ sha: "aaa" }, { sha: "bbb" }, { sha: "ccc" }],
+      [{ sha: "bbb", base: "aaa" }, { sha: "ccc", base: "base0" }],
+    ]);
+    expect(facts.patchIds).toEqual({ aaa: "own-aaa", bbb: "own-bbb", ccc: "own-ccc" });
+    expect(facts.branchPatchIds).toEqual({ bbb: "branch-bbb", ccc: "branch-ccc" });
+    // Without "patch-id" only squash candidates get an own id, and none is returned.
+    git.patchIds.mockClear();
+    const bare = (await gatherShipStatusFacts("/repo", NOW))!;
+    expect(git.patchIds.mock.calls.map((c) => c[1])[0]).toEqual([{ sha: "aaa" }]); // main, since feature/x began
+    expect(bare.patchIds).toEqual({});
+  });
+
+  it("one pushed branch is one branch: a local tip and its origin twin at the same sha are asked once", async () => {
+    stubHappyRepo();
+    git.listBranchTips.mockResolvedValue([
+      tip("main", daysAgo(0)),
+      { ...tip("feature/x", daysAgo(1)), sha: "same" },
+      { ref: "refs/remotes/origin/feature/x", name: "origin/feature/x", sha: "same", tipDate: daysAgo(1) },
+    ]);
+    git.listReachableShas.mockImplementation(async (_root: string, ref: string) => (ref === "refs/heads/main" ? ["aaa"] : ["bbb"]));
+    await gatherShipStatusFacts("/repo", NOW);
+    expect(git.cherryEquivalentShas).toHaveBeenCalledTimes(1);
+    expect(git.branchPrefixes).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("gatherShipStatusFacts squash detection", () => {
@@ -113,14 +153,28 @@ describe("gatherShipStatusFacts squash detection", () => {
       if (ref === "refs/heads/feature/merged") return ["aaa"];
       throw new Error(`rev-list must not run on a stale branch: ${ref}`);
     });
-    git.squashedShas.mockImplementation(async (_root: string, _def: string, tip: string) => (tip === "refs/heads/feature/x" ? { bbb: "sss" } : {}));
+    // The squash commit "sss" is on origin/main: its own patch equals
+    // feature/x's prefix ending at "bbb".
+    git.listRecentShas.mockResolvedValue([
+      ...(await git.listRecentShas()),
+      { sha: "sss", committedAt: daysAgo(1), linesAdded: 0, linesDeleted: 0, filesChanged: 0 },
+    ]);
+    git.branchPrefixes.mockImplementation(async (_root: string, _def: string, tip: string) =>
+      tip === "refs/heads/feature/x" ? [{ sha: "bbb", at: daysAgo(2), base: "aaa" }] : [],
+    );
+    git.patchIds.mockImplementation(async (_root: string, commits: { sha: string; base?: string }[]) =>
+      Object.fromEntries(commits.map((c) => [c.sha, c.sha === "bbb" || c.sha === "sss" ? "P-squash" : `P-${c.sha}`])),
+    );
     const facts = (await gatherShipStatusFacts("/repo", NOW))!;
-    expect(facts.ancestorShas).toEqual(["aaa"]);
+    expect(facts.ancestorShas).toEqual(["aaa", "sss"]);
     expect(facts.squashedInto).toEqual({ bbb: "sss" });
     const { computeCommitFates } = await import("@centrail/parsers");
     const rows = computeCommitFates(facts);
     expect(rows.find((r) => r.sha === "bbb")).toEqual({ sha: "bbb", branch: "feature/x", fate: "shipped", mergedAs: "sss" });
-    expect(git.squashedShas.mock.calls.map((c) => c[2]).sort()).toEqual(["refs/heads/feature/dead", "refs/heads/feature/x"]); // only branches with unmerged recent commits, never main or a merged one
+    expect(git.branchPrefixes.mock.calls.map((c) => [c[1], c[2]]).sort()).toEqual([
+      ["refs/remotes/origin/main", "refs/heads/feature/dead"],
+      ["refs/remotes/origin/main", "refs/heads/feature/x"],
+    ]); // only branches with unmerged recent commits, never main or a merged one; judged against the ancestry ref
   });
 });
 
@@ -193,8 +247,9 @@ describe("runFatePass", () => {
   it("a repo at the sha cap is sent in two calls and both say the set is incomplete, so the server vanishes nothing", async () => {
     git.resolveDefaultBranch.mockResolvedValue("main");
     git.readUserEmail.mockResolvedValue("me@example.com");
-  git.resolveAncestryRef.mockResolvedValue("refs/heads/main");
-  git.squashedShas.mockResolvedValue({});
+    git.resolveAncestryRef.mockResolvedValue("refs/heads/main");
+    git.branchPrefixes.mockResolvedValue([]);
+    git.patchIds.mockResolvedValue({});
     git.listRecentShas.mockResolvedValue(Array.from({ length: 2000 }, (_, i) => ({ sha: `s${i}`, committedAt: daysAgo(1), linesAdded: 1, linesDeleted: 0, filesChanged: 1 })));
     git.listBranchTips.mockResolvedValue([tip("main", daysAgo(0))]);
     git.listReachableShas.mockResolvedValue(Array.from({ length: 2000 }, (_, i) => `s${i}`));
