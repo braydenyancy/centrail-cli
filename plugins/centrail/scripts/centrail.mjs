@@ -206,8 +206,7 @@ function usageExternalId(raw, message) {
   const messageId = message.id;
   if (typeof messageId !== "string" || messageId.length === 0)
     return null;
-  const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : "";
-  return `msg:${messageId}:${sessionId}`;
+  return `msg:${messageId}`;
 }
 async function scanProjectsDir(basePath, since) {
   let entries;

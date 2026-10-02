@@ -257,21 +257,23 @@ export function collapseUsageEvents(events: ParsedUsageEvent[]): ParsedUsageEven
 }
 
 // One id per API response. Anthropic's `requestId` is it when present. Some
-// gateways (Bedrock, Vertex, proxies) omit it; then the message id, scoped
-// to the session, is the key. NOT the timestamp: every content block of one
-// response is written as its own line with its own timestamp (99.3% of
-// multi-line requests on a 79,014-request corpus), so a key that included
-// it would count one response once per block, at the streamed-so-far
-// value. A gateway that reused one message id for two responses in one
-// session would fold them; no corpus has shown one, and the split is the
-// measured loss. Both shapes are stable across rescans of the same
-// transcript, which is what the server's unique index needs.
+// gateways (Bedrock, Vertex, proxies) omit it; then the message id alone is
+// the key. NOT the timestamp: every content block of one response is
+// written as its own line with its own timestamp (99.3% of multi-line
+// requests on a 79,014-request corpus), so a key that included it would
+// count one response once per block, at the streamed-so-far value. NOT the
+// session either: a resumed session copies earlier responses into its own
+// file under its own sessionId (1,174 copies on a 198,889-line corpus), and
+// requestId folds them, so the fallback must too. A gateway that reused one
+// message id for two different responses would fold them; no corpus has
+// shown one, while the copies are measured. Both shapes are stable across
+// rescans, which is what the server's unique index needs. No CLI before 0.6
+// sent this shape, so changing it needs no migration.
 function usageExternalId(raw: Record<string, unknown>, message: Record<string, unknown>): string | null {
   if (typeof raw.requestId === "string" && raw.requestId.length > 0) return raw.requestId;
   const messageId = message.id;
   if (typeof messageId !== "string" || messageId.length === 0) return null;
-  const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : "";
-  return `msg:${messageId}:${sessionId}`;
+  return `msg:${messageId}`;
 }
 
 // Scans one <config-dir>/projects directory. Missing dir → no events.

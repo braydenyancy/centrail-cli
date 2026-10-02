@@ -100,7 +100,6 @@ describe("two responses are two events", () => {
   it.each([
     ["different requestIds, same message id", [{ requestId: "req_1", msgId: "msg_X" }, { requestId: "req_2", msgId: "msg_X" }]],
     ["no requestId, different message ids", [{ requestId: null, msgId: "msg_1" }, { requestId: null, msgId: "msg_2" }]],
-    ["no requestId, same message id, different sessions", [{ requestId: null, msgId: "msg_1", sessionId: "s1" }, { requestId: null, msgId: "msg_1", sessionId: "s2" }]],
   ])("%s", async (_, [a, b]) => {
     const events = await scan([line({ ...a, at: T(1), usage: { out: 7 } }), line({ ...b, at: T(2), usage: { out: 9 } })]);
     expect(events.map((e) => e.outputTokens).sort((x, y) => x - y)).toEqual([7, 9]);

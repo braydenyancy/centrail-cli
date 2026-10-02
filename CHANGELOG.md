@@ -6,6 +6,21 @@ versioning.
 ## [Unreleased]
 
 ### 0.6.0 — sessions outside a repo find their home (decision § 3.9), and an adversarial pass over 0.6
+- **Upgrading re-sends your history once, and heavy users will see their
+  totals jump.** Every scanner revision is bumped, so each install re-sends
+  what is still on disk and the server fills the identity its stored rows
+  lack. Measured on a real 198,889-line corpus against every earlier CLI
+  (0.2.0–0.5.1): zero duplicate rows. What arrives new is genuinely new:
+  subagent transcripts, which 0.5.0 and earlier never read and 0.5.1 crashed
+  on past ~125k lines (`push(...)` overflow) — 54,189 requests and 6.28B
+  cache-read tokens on that corpus, about 2.5x its rows. Tell users before
+  they upgrade that the jump is history, not new usage.
+- **A response without a `requestId` is keyed by its message id alone.**
+  Gateways (Bedrock, Vertex, proxies) strip `requestId`; the fallback was
+  `msg:<message id>:<session>`, so a resumed session's copied responses
+  (1,174 on that corpus) would count twice. It is now `msg:<message id>`,
+  as `requestId` already folds them. No earlier CLI sent this shape, so
+  nothing stored changes.
 - **The field policy (decision § 3.10) extends 0.5.1's allowlist, by
   capability.** Every server still gets 0.5.1's usage numbers and nothing
   else. A server that lists `"repo"` also gets, per event, the plaintext repo

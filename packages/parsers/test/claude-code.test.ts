@@ -135,10 +135,31 @@ describe("scanClaudeCodeLogs", () => {
     expect(events[0].outputTokens).toBe(140);
   });
 
-  it("falls back to message id + session when requestId is absent — never the timestamp", async () => {
+  it("collapses a resumed session's copy when requestId is absent too — gateways strip it", async () => {
+    // A resumed session copies earlier responses into its own file under its
+    // own sessionId (1,174 such copies on one real corpus). requestId folds
+    // them; the message-id fallback must too, or every gateway user (Bedrock,
+    // Vertex, proxies) counts a resumed session's history twice.
+    const base = await makeBase();
+    const original = JSON.parse(ASSISTANT_LINE);
+    delete original.requestId;
+    original.message.id = "msg_01";
+    original.message.usage.output_tokens = 5;
+    const copy = JSON.parse(JSON.stringify(original));
+    copy.sessionId = "sess-resumed";
+    copy.message.usage.output_tokens = 140;
+    await writeSession(base, "p", "original.jsonl", [JSON.stringify(original)]);
+    await writeSession(base, "p", "resumed.jsonl", [JSON.stringify(copy)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events.map((e) => [e.externalId, e.outputTokens])).toEqual([["msg:msg_01", 140]]);
+  });
+
+  it("falls back to the message id when requestId is absent — never the timestamp, never the session", async () => {
     // Every content block of one response is its own line with its own
-    // timestamp; the key must fold them. Sessions scope the id so a
-    // gateway that reuses message ids across sessions still separates.
+    // timestamp; the key must fold them. A copy under another session (a
+    // resume) is the same response, so it folds too.
     const base = await makeBase();
     const a = JSON.parse(ASSISTANT_LINE);
     delete a.requestId;
@@ -152,10 +173,7 @@ describe("scanClaudeCodeLogs", () => {
 
     const events = await scanClaudeCodeLogs({ basePath: base });
 
-    expect(events.map((e) => [e.externalId, e.outputTokens]).sort()).toEqual([
-      ["msg:msg_01:sess-1", 120],
-      ["msg:msg_01:sess-2", 50],
-    ]);
+    expect(events.map((e) => [e.externalId, e.outputTokens])).toEqual([["msg:msg_01", 120]]);
   });
 
   it("excludes events at or before `since` by occurredAt", async () => {
