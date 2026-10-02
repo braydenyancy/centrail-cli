@@ -19,6 +19,14 @@ versioning.
   allowed keys back. Paths, hostnames, platform, client and account data
   never leave, whatever the server lists; `hideRepoNames` also withholds the
   root sha.
+- **One full re-send on upgrade, so the server can enrich what it holds.**
+  Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
+  the first sync after upgrading re-sends each surface's history once, and to
+  a server that lists `"repo"` those events carry the repo, placement,
+  session, branch and install id that 0.5.1 never sent. The server fills
+  missing identity into rows it already holds and never lowers a count. A
+  server that starts listing `"repo"` or `"usage-extras"` later gets the
+  history once more; a failed pass retries.
 - **Placement by touched files, one repo per turn.** A session started in a
   workstream root or the home directory is placed by the files its turns
   touch: the session's cwd if it is a repo, else the turn's edits, else its
@@ -79,7 +87,7 @@ versioning.
   history (provider `ccusage`), never as certified events.
 - **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
   hit the call-stack limit at 177k lines on the reference machine.
-- Shared stand-in server for harness tests; 220 CLI and 115 parsers tests.
+- Shared stand-in server for harness tests; 284 CLI and 157 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,

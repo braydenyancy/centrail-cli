@@ -1011,17 +1011,17 @@ function computeCommitFates(facts) {
 var SCANNERS = [
   {
     surface: "claude-code",
-    revision: 2,
+    revision: 3,
     scan: (opts) => scanClaudeCodeLogs(opts)
   },
   {
     surface: "copilot-cli",
-    revision: 1,
+    revision: 2,
     scan: (opts) => scanCopilotLogs(opts)
   },
   {
     surface: "codex",
-    revision: 1,
+    revision: 2,
     scan: (opts) => scanCodexLogs(opts)
   }
 ];
@@ -3005,6 +3005,7 @@ function redactIdentity(repo, cfg, installId) {
 
 // src/commands/sync.ts
 var BATCH_SIZE = 250;
+var RESEND_ON_GAIN = ["repo", "usage-extras"];
 var WATERMARK_OVERLAP_MS = 24 * 60 * 60 * 1e3;
 async function runSync(opts) {
   const release = await acquireSyncLock();
@@ -3031,9 +3032,14 @@ async function syncLocked(opts) {
     await writeConfig(config);
   }
   const installId = await ensureInstallId();
-  const caps = await readCapabilities(auth, state.capabilities ? { fields: new Set(state.capabilities) } : void 0);
+  const known = state.capabilities;
+  const caps = await readCapabilities(auth, known ? { fields: new Set(known) } : void 0);
   const capsNow = [...caps.fields].sort();
-  if (JSON.stringify(capsNow) !== JSON.stringify(state.capabilities ?? [])) {
+  if (known && RESEND_ON_GAIN.some((f) => caps.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
+    config.pendingBackfill = true;
+    await writeConfig(config);
+  }
+  if (!known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
     state.capabilities = capsNow;
     await writeState(state);
   }

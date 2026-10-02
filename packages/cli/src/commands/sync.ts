@@ -32,6 +32,9 @@ import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
 // events stays far below the 2MB body limit.
 const BATCH_SIZE = 250;
 
+// Capability fields that change what an event carries (wire.ts).
+const RESEND_ON_GAIN = ["repo", "usage-extras"];
+
 // Every incremental sync re-reads this much of the trailing window. A
 // transcript line can carry a timestamp earlier than the moment it reaches
 // disk — a long streaming turn, a log synced from another machine, clock
@@ -75,9 +78,20 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     await writeConfig(config);
   }
   const installId = await ensureInstallId();
-  const caps = await readCapabilities(auth, state.capabilities ? { fields: new Set(state.capabilities) } : undefined);
+  const known = state.capabilities;
+  const caps = await readCapabilities(auth, known ? { fields: new Set(known) } : undefined);
   const capsNow = [...caps.fields].sort();
-  if (JSON.stringify(capsNow) !== JSON.stringify(state.capabilities ?? [])) {
+  // A server that starts listing a field events carry gets the history
+  // re-sent once with it — the widened-scope rule: what it can now store
+  // was held back from events already behind the watermark. Marked before
+  // the new list is saved, and cleared only after a complete pass, so a
+  // failed pass retries. (Upgrading from 0.5.1, which saved no list, is the
+  // scanner revision bump's job.)
+  if (known && RESEND_ON_GAIN.some((f) => caps.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
+    config.pendingBackfill = true;
+    await writeConfig(config);
+  }
+  if (!known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
     state.capabilities = capsNow;
     await writeState(state);
   }

@@ -119,6 +119,19 @@ Events without an Anthropic `requestId` (gateways) arrive with
 `externalId = "msg:<message id>:<session id>"` — never the timestamp, which
 differs per content block of one response.
 
+**One full re-send on upgrade (0.6.0).** Every scanner's revision is bumped
+(`SCANNERS[].revision`), so the first sync after upgrading re-sends each
+surface's whole history once. Against a `"repo"` server those events carry
+the identity metadata above, so the server can enrich rows it already holds:
+fill identity fields a row lacks (`repo`, `placement`, `sessionId`,
+`gitBranch`, `origin.machineId`) and keep token counts at
+`GREATEST(existing, incoming)` — a re-send never lowers a count, never adds a
+row, and never overwrites identity the row already has. Older servers dedupe
+the re-send on `externalId`, as they do the 24 h overlap. A server that
+starts listing `"repo"` or `"usage-extras"` after an install has synced gets
+the history re-sent once more, the way a widened scope does, so an install
+that upgraded before the server deployed is enriched when it does.
+
 **Squash merges (0.6.0).** A fate row may carry `mergedAs: <sha>`: the
 default-branch commit whose patch equals this sha's branch prefix from its
 merge base — a multi-commit squash merge, which `git cherry` cannot see.

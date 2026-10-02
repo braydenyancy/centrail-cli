@@ -86,9 +86,9 @@ async function makeSession(lines: string[], nested = true): Promise<string> {
 describe("scanCodexLogs", () => {
   it("is registered as a first-class CLI scanner", () => {
     expect(SCANNERS.map(({ surface, revision }) => ({ surface, revision }))).toEqual([
-      { surface: "claude-code", revision: 2 },
-      { surface: "copilot-cli", revision: 1 },
-      { surface: "codex", revision: 1 },
+      { surface: "claude-code", revision: 3 },
+      { surface: "copilot-cli", revision: 2 },
+      { surface: "codex", revision: 2 },
     ]);
   });
 
