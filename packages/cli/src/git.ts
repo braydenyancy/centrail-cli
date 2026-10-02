@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
 import { parseGitLogNumstat, type RepoCommit } from "@centrail/parsers";
 
@@ -36,6 +36,15 @@ function exec(
   return execFileAsync(cmd, args, { ...opts, env: gitEnv() });
 }
 
+// Every git spawn in the CLI goes through here, so the GIT_DIR scrub above
+// cannot be bypassed by a new caller.
+export function gitExec(
+  args: string[],
+  opts: { maxBuffer?: number } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  return exec("git", args, opts);
+}
+
 // Resolve the git toplevel for a working dir. Returns null if not a repo.
 export async function resolveRepoRoot(cwd: string): Promise<string | null> {
   try {
@@ -46,16 +55,58 @@ export async function resolveRepoRoot(cwd: string): Promise<string | null> {
   }
 }
 
+// The repo root for a path that may not exist (a file the turn created in
+// a new directory, a Bash argument, a worktree since deleted): climb to
+// the nearest existing ancestor and ask git there. Null past the top.
+export async function resolveRepoRootNear(path: string): Promise<string | null> {
+  const dir = await nearestDirectory(path);
+  return dir ? resolveRepoRoot(dir) : null;
+}
+
+// The closest existing directory at or above a path; null past the top.
+export async function nearestDirectory(path: string): Promise<string | null> {
+  let dir = path;
+  for (;;) {
+    try {
+      if ((await stat(dir)).isDirectory()) return dir;
+    } catch {
+      // missing: climb
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+// The main checkout of a linked worktree — the folder whose `.git` holds the
+// common dir — or null for a main checkout or a bare repo. Branches and
+// commits outlive worktrees; this path is how a dead worktree's events
+// still find its history when no session ever ran in the main checkout.
+export async function readMainCheckout(repoRoot: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const common = stdout.trim();
+    if (!common || basename(common) !== ".git") return null;
+    const main = dirname(common);
+    return main === repoRoot ? null : main;
+  } catch {
+    return null;
+  }
+}
+
 export function repoName(repoRoot: string): string {
   return basename(repoRoot);
 }
 
-// All commits in the repo with numstat. Empty array for an empty repo.
-export async function readRepoCommits(repoRoot: string): Promise<RepoCommit[]> {
+// Commits reachable from `ref` with numstat — HEAD for a live checkout, a
+// branch ref for a session whose own worktree is gone (branches outlive
+// worktrees), or "--all" when nothing better is known. Empty for an empty
+// repo or an unknown ref.
+export async function readRepoCommits(repoRoot: string, ref = "HEAD"): Promise<RepoCommit[]> {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--numstat", "--pretty=format:%x1e%H%x1f%cI"],
+      ["-C", repoRoot, "log", ref, "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout);
@@ -108,28 +159,127 @@ export async function resolveDefaultBranch(repoRoot: string): Promise<string | n
   return null;
 }
 
-// Recent commits across ALL refs — shas + committer dates only, newest first,
-// capped so a monorepo can't flood the fate pass.
-export async function listRecentShas(
-  repoRoot: string,
-  sinceDays = 90,
-): Promise<{ sha: string; committedAt: string }[]> {
+// The ref "shipped" is judged against: the remote's default branch when
+// the checkout tracks one, else the local head. A worktree parked detached
+// at origin/main never fast-forwards its local main (the canonical clone
+// holds it), so the local head is stale by design there.
+export async function resolveAncestryRef(repoRoot: string, defaultBranch: string): Promise<string> {
+  const remote = `refs/remotes/origin/${defaultBranch}`;
+  try {
+    await exec("git", ["-C", repoRoot, "rev-parse", "--verify", "--quiet", remote]);
+    return remote;
+  } catch {
+    return `refs/heads/${defaultBranch}`;
+  }
+}
+
+const SQUASH_CANDIDATE_CAP = 200;
+const SQUASH_PREFIX_CAP = 50;
+
+// A squash merge leaves the branch's commits off the default branch with
+// no ancestor there, and `git cherry` compares one commit at a time, so a
+// multi-commit branch never matches. The branch's patch since its merge
+// base does: compare the patch-id of each PREFIX of the branch (work may
+// have continued on it after the merge) with each default-branch commit
+// committed since the branch began. The commits of the matching prefix map
+// to that squash commit. Empty when nothing matches, the branch is already
+// merged, or git fails. Bounded: 50 prefixes, 200 candidates.
+export async function squashedShas(repoRoot: string, defaultRef: string, tipRef: string): Promise<Record<string, string>> {
+  try {
+    const { stdout: baseOut } = await exec("git", ["-C", repoRoot, "merge-base", defaultRef, tipRef]);
+    const base = baseOut.trim();
+    if (!base) return {};
+    const { stdout: branchOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--max-count=${SQUASH_PREFIX_CAP}`, "--pretty=format:%H%x1f%cI", `${base}..${tipRef}`]);
+    const branch = branchOut
+      .split("\n")
+      .filter((l) => !l.startsWith("commit ") && l.includes("\x1f"))
+      .map((l) => l.split("\x1f"))
+      .map(([sha, iso]) => ({ sha: sha.trim(), at: iso.trim() }));
+    if (branch.length === 0) return {};
+    // A squash commit postdates the work it squashes.
+    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", `--max-count=${SQUASH_CANDIDATE_CAP}`, `--since=${branch[0].at}`, `${base}..${defaultRef}`]);
+    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (candidates.length === 0) return {};
+    const byPatchId = new Map<string, string>();
+    for (const sha of candidates) {
+      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff-tree", "-p", "--root", sha], { maxBuffer: FACT_BUFFER });
+      const id = await patchId(repoRoot, diff);
+      if (id && !byPatchId.has(id)) byPatchId.set(id, sha);
+    }
+    // Longest prefix first: a branch squashed twice maps to its latest squash.
+    for (let k = branch.length; k >= 1; k--) {
+      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff", base, branch[k - 1].sha], { maxBuffer: FACT_BUFFER });
+      if (!diff.trim()) continue;
+      const id = await patchId(repoRoot, diff);
+      const into = id ? byPatchId.get(id) : undefined;
+      if (!into) continue;
+      const out: Record<string, string> = {};
+      for (const b of branch.slice(0, k)) out[b.sha] = into;
+      return out;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+// `git patch-id --stable` over a diff on stdin: the content hash of a
+// change, independent of sha, date, message and whitespace context.
+function patchId(repoRoot: string, diff: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], { env: gitEnv() });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.on("error", () => resolve(null));
+    child.on("close", () => resolve(out.trim().split(/\s+/)[0] || null));
+    child.stdin.end(diff);
+  });
+}
+
+// Recent commits across ALL refs with their facts — sha, committer date,
+// line counts — newest first, in ONE spawn, capped so a monorepo can't
+// flood the fate pass. The facts ride every fate row (§ 3.8) so the server
+// can match events to commits without a window, on any machine.
+export type RecentCommit = {
+  sha: string;
+  committedAt: string; // ISO
+  linesAdded: number;
+  linesDeleted: number;
+  filesChanged: number;
+  authorEmail?: string; // compared to user.email locally; never on the wire
+};
+
+export async function listRecentShas(repoRoot: string, sinceDays = 90): Promise<RecentCommit[]> {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--pretty=format:%H%x1f%cI"],
-      { maxBuffer: FACT_BUFFER },
+      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
+      { maxBuffer: 64 * 1024 * 1024 },
     );
-    const out: { sha: string; committedAt: string }[] = [];
-    for (const line of stdout.split("\n")) {
-      if (out.length >= RECENT_SHA_CAP) break;
-      const [sha, iso] = line.split("\x1f");
-      if (!sha?.trim() || !iso?.trim()) continue;
-      out.push({ sha: sha.trim(), committedAt: iso.trim() });
-    }
-    return out;
+    return parseGitLogNumstat(stdout)
+      .slice(0, RECENT_SHA_CAP)
+      .map((c) => ({
+        sha: c.sha,
+        committedAt: c.committedAt.toISOString(),
+        linesAdded: c.linesAdded,
+        linesDeleted: c.linesDeleted,
+        filesChanged: c.filesChanged,
+        ...(c.authorEmail ? { authorEmail: c.authorEmail } : {}),
+      }));
   } catch {
     return [];
+  }
+}
+
+// This checkout's git identity, lowercased, for the `mine` flag on fate
+// rows. Null when unset; the address itself never leaves the machine.
+export async function readUserEmail(repoRoot: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec("git", ["-C", repoRoot, "config", "user.email"]);
+    const email = stdout.trim().toLowerCase();
+    return email || null;
+  } catch {
+    return null;
   }
 }
 

@@ -1,0 +1,84 @@
+[
+  {
+    "repos": [
+      {
+        "name": "a",
+        "key": "github.com/acme/a",
+        "totalLoc": 4,
+        "fileCount": 2
+      }
+    ],
+    "attributions": [],
+    "fates": [
+      {
+        "repoName": "a",
+        "repoKey": "github.com/acme/a",
+        "commitSha": "a78387984ef5bad83d98d76da0e69245acbb958e",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-10-02T05:07:20.000Z",
+        "linesAdded": 1,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      },
+      {
+        "repoName": "a",
+        "repoKey": "github.com/acme/a",
+        "commitSha": "9db3d2af4e51835c7aeccd71866882a0fc5040e9",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-10-02T05:07:19.000Z",
+        "linesAdded": 1,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      }
+    ],
+    "facts": {
+      "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a",
+      "complete": true
+    }
+  },
+  {
+    "repos": [
+      {
+        "name": "b-wt",
+        "key": "github.com/acme/b",
+        "totalLoc": 2,
+        "fileCount": 1
+      }
+    ],
+    "attributions": [],
+    "fates": [
+      {
+        "repoName": "b-wt",
+        "repoKey": "github.com/acme/b",
+        "commitSha": "25b3c34418a5ad754838bb6646f5e82468a16cbe",
+        "branch": "wt",
+        "fate": "in_flight",
+        "committedAt": "2026-10-02T05:07:20.000Z",
+        "linesAdded": 2,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      },
+      {
+        "repoName": "b-wt",
+        "repoKey": "github.com/acme/b",
+        "commitSha": "9db3d2af4e51835c7aeccd71866882a0fc5040e9",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-10-02T05:07:19.000Z",
+        "linesAdded": 1,
+        "linesDeleted": 0,
+        "filesChanged": 1,
+        "mine": true
+      }
+    ],
+    "facts": {
+      "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a",
+      "complete": true
+    }
+  }
+]

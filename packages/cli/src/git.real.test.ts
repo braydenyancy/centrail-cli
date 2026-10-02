@@ -1,66 +1,27 @@
 // Real-git tests. git.test.ts mocks child_process to test parsing; the bugs
 // that matter here are in what git itself does with the environment and the
-// tree, which no mock can show. Every repo is built in a temp dir OUTSIDE
-// this checkout, so "not a repo" cannot resolve to centrail-cli by accident.
-import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+// tree, which no mock can show. Fixtures: ./testing/git-fixture.ts.
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { gitEnv, readRepoCommits, resolveRepoRoot } from "./git.js";
+import { readRepoCommits, resolveRepoRoot } from "./git.js";
+import { scratch, type Scratch } from "./testing/git-fixture.js";
 
-const run = promisify(execFile);
-
-// A hermetic env for the fixture's own git calls: no user or system config,
-// fixed identity and dates, and no ambient GIT_DIR — the thing under test.
-const FIXTURE_ENV: NodeJS.ProcessEnv = {
-  ...gitEnv(),
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_AUTHOR_NAME: "t",
-  GIT_AUTHOR_EMAIL: "t@example.com",
-  GIT_COMMITTER_NAME: "t",
-  GIT_COMMITTER_EMAIL: "t@example.com",
-  GIT_AUTHOR_DATE: "2026-06-01T00:00:00Z",
-  GIT_COMMITTER_DATE: "2026-06-01T00:00:00Z",
-  TZ: "UTC",
-  LC_ALL: "C",
-};
-
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await run("git", ["-C", cwd, ...args], { env: FIXTURE_ENV });
-  return stdout.trim();
-}
-
-// realpath: macOS hands out /var/folders/… while git answers /private/var/….
-async function scratch(): Promise<string> {
-  return mkdtemp(join(realpathSync(tmpdir()), "centrail-git-"));
-}
-
-async function repoWithOneCommit(dir: string): Promise<void> {
-  await mkdir(dir, { recursive: true });
-  await git(dir, "init", "-q", "--template=", "-b", "main");
-  await writeFile(join(dir, "a.txt"), "a\n");
-  await git(dir, "add", "a.txt");
-  await git(dir, "commit", "-q", "-m", "one");
-}
-
+let fx: Scratch;
 const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
-afterEach(() => {
+afterEach(async () => {
   for (const k of ["GIT_DIR", "GIT_WORK_TREE"] as const) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
+  await fx?.cleanup();
 });
 
 describe("resolveRepoRoot against real repos", () => {
   it("resolves the toplevel of a repo and null for a plain directory", async () => {
-    const base = await scratch();
-    const repo = join(base, "repo");
-    const plain = join(base, "plain");
-    await repoWithOneCommit(repo);
+    fx = await scratch();
+    const repo = await fx.repo("repo");
+    const plain = join(fx.root, "plain");
     await mkdir(plain);
 
     expect(await resolveRepoRoot(repo)).toBe(repo);
@@ -69,10 +30,9 @@ describe("resolveRepoRoot against real repos", () => {
   });
 
   it("ignores an inherited GIT_DIR — the verified mis-attribution", async () => {
-    const base = await scratch();
-    const repo = join(base, "repo");
-    const plain = join(base, "plain");
-    await repoWithOneCommit(repo);
+    fx = await scratch();
+    const repo = await fx.repo("repo");
+    const plain = join(fx.root, "plain");
     await mkdir(plain);
 
     // With GIT_DIR exported, plain `git -C plain rev-parse --show-toplevel`
@@ -86,13 +46,52 @@ describe("resolveRepoRoot against real repos", () => {
   });
 
   it("resolves a sibling worktree to its own toplevel (the .git FILE case)", async () => {
-    const base = await scratch();
-    const repo = join(base, "repo");
-    const wt = join(base, "repo-feature");
-    await repoWithOneCommit(repo);
-    await git(repo, "worktree", "add", "-q", "-b", "feature", wt);
+    fx = await scratch();
+    const repo = await fx.repo("repo");
+    const wt = await fx.worktree(repo, "repo-feature", "feature");
 
     expect(await resolveRepoRoot(wt)).toBe(wt);
     expect(await readRepoCommits(wt)).toHaveLength(1);
   });
+
+  it("resolves a worktree nested inside the checkout to the worktree, not the parent", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("repo");
+    const nested = await fx.worktree(repo, join(repo, ".worktrees", "wt"), "wt");
+
+    expect(await resolveRepoRoot(nested)).toBe(nested);
+    expect(await resolveRepoRoot(join(nested, "sub"))).toBeNull(); // does not exist
+  });
+
 });
+
+describe("squashedShas against real repos", () => {
+  it("maps every commit of a squash-merged branch to the squash commit; an unmerged branch maps nothing; commits after the squash stay unmapped", async () => {
+    const { squashedShas } = await import("./git.js");
+    const { writeFile } = await import("node:fs/promises");
+    fx = await scratch();
+    const repo = await fx.repo("sq");
+    const commit = async (file: string) => {
+      await writeFile(join(repo, file), `${file}\n`);
+      await fx.git(repo, "add", file);
+      await fx.git(repo, "commit", "-q", "-m", file);
+      return fx.git(repo, "rev-parse", "HEAD");
+    };
+    await fx.git(repo, "checkout", "-q", "-b", "feat");
+    const b1 = await commit("f1");
+    const b2 = await commit("f2");
+    await fx.git(repo, "checkout", "-q", "main");
+    await fx.git(repo, "merge", "--squash", "-q", "feat");
+    await fx.git(repo, "commit", "-q", "-m", "feat squashed");
+    const squash = await fx.git(repo, "rev-parse", "HEAD");
+    await commit("unrelated"); // main moves on
+    await fx.git(repo, "checkout", "-q", "feat");
+    const b3 = await commit("f3"); // work after the squash, not merged
+    await fx.git(repo, "checkout", "-q", "-b", "other", "main");
+    await commit("o1");
+    expect(await squashedShas(repo, "refs/heads/main", "refs/heads/feat")).toEqual({ [b1]: squash, [b2]: squash });
+    expect(await squashedShas(repo, "refs/heads/main", "refs/heads/other")).toEqual({});
+    expect(b3).not.toBe(squash);
+  });
+});
+

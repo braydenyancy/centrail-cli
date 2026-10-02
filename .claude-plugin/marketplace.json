@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "centrail",
+  "metadata": { "description": "Centrail — local AI coding-agent usage, attributed to repos and commits.", "version": "0.6.0", "pluginRoot": "plugins" },
+  "owner": { "name": "Centrail", "url": "https://centrail.org" },
+  "plugins": [
+    {
+      "name": "centrail",
+      "source": "./plugins/centrail",
+      "description": "Stop hook for Claude Code and Codex: records repo identity per turn and syncs usage to centrail.org in the background.",
+      "category": "productivity"
+    }
+  ]
+}

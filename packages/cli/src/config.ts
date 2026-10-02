@@ -6,7 +6,10 @@ import { parseSyncState, type SyncState } from "./watermarks.js";
 
 export type { SyncState } from "./watermarks.js";
 
-const CONFIG_DIR = join(homedir(), ".config", "centrail");
+// Overridable so tests and probes can run the real binary against a scratch
+// dir; never documented as a user knob.
+export const CONFIG_DIR =
+  process.env.CENTRAIL_CONFIG_DIR?.trim() || join(homedir(), ".config", "centrail");
 const AUTH_PATH = join(CONFIG_DIR, "auth.json");
 const STATE_PATH = join(CONFIG_DIR, "state.json");
 
@@ -155,27 +158,106 @@ function processIsAlive(pid: number): boolean {
 
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
+// Scope (decision doc § 3.7): which repos and which surfaces leave this
+// machine. `all` with exclusions is the default; `allow` syncs only the
+// listed repos and holds any new one until included. Lists hold identity
+// keys ("github.com/o/r", "sha:…", "dir:…") or labels; `exclude` means
+// nothing about that repo leaves — events, commits, identity.
+export type ScopeMode = "all" | "allow";
+
 export type Config = {
-  denyRepos: string[]; // repo names (basenames) to never attribute
+  installId: string | null; // random per-install id; null until first ensureInstallId
+  mode: ScopeMode;
+  allowRepos: string[]; // used in `allow` mode
+  denyRepos: string[]; // used in both modes
+  surfaces: Record<string, boolean>; // scanner surface -> enabled; absent = enabled
+  scopeDecidedAt: string | null; // when the preview was shown and answered
+  pendingBackfill: boolean; // scope widened: next sync rescans everything once
+  hideRepoNames: boolean; // ship repo identity as a keyed hash, no label
+  hideBranchNames: boolean; // never ship gitBranch
 };
+
+const DEFAULT_CONFIG: Config = {
+  installId: null,
+  mode: "all",
+  allowRepos: [],
+  denyRepos: [],
+  surfaces: {},
+  scopeDecidedAt: null,
+  pendingBackfill: false,
+  hideRepoNames: false,
+  hideBranchNames: false,
+};
+
+export function parseConfig(raw: unknown): Config {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_CONFIG };
+  const o = raw as Record<string, unknown>;
+  const surfaces: Record<string, boolean> = {};
+  if (o.surfaces && typeof o.surfaces === "object" && !Array.isArray(o.surfaces)) {
+    for (const [k, v] of Object.entries(o.surfaces as Record<string, unknown>)) {
+      if (typeof v === "boolean") surfaces[k] = v;
+    }
+  }
+  return {
+    installId: typeof o.installId === "string" && o.installId ? o.installId : null,
+    mode: o.mode === "allow" ? "allow" : "all",
+    allowRepos: stringList(o.allowRepos),
+    denyRepos: stringList(o.denyRepos),
+    surfaces,
+    scopeDecidedAt: typeof o.scopeDecidedAt === "string" ? o.scopeDecidedAt : null,
+    pendingBackfill: o.pendingBackfill === true,
+    hideRepoNames: o.hideRepoNames === true,
+    hideBranchNames: o.hideBranchNames === true,
+  };
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((r): r is string => typeof r === "string") : [];
+}
 
 export async function readConfig(): Promise<Config> {
   try {
-    const raw = JSON.parse(await readFile(CONFIG_PATH, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    const denyRepos = Array.isArray(raw.denyRepos)
-      ? raw.denyRepos.filter((r): r is string => typeof r === "string")
-      : [];
-    return { denyRepos };
+    return parseConfig(JSON.parse(await readFile(CONFIG_PATH, "utf-8")));
   } catch {
-    return { denyRepos: [] };
+    return { ...DEFAULT_CONFIG };
   }
 }
 
-export async function addDenyRepo(name: string): Promise<void> {
-  const cfg = await readConfig();
-  if (!cfg.denyRepos.includes(name)) cfg.denyRepos.push(name);
+export async function writeConfig(cfg: Config): Promise<void> {
   await writeJsonAtomic(CONFIG_PATH, cfg);
+}
+
+export async function updateConfig(mutate: (cfg: Config) => void): Promise<Config> {
+  const cfg = await readConfig();
+  mutate(cfg);
+  await writeConfig(cfg);
+  return cfg;
+}
+
+// The install id replaces the hostname on the wire: a random uuid minted
+// once per machine, meaningless off it, and the HMAC key for folder ids.
+// Created lazily so a config written by an older CLI upgrades in place.
+export async function ensureInstallId(): Promise<string> {
+  const cfg = await readConfig();
+  if (cfg.installId) return cfg.installId;
+  cfg.installId = randomUUID();
+  await writeConfig(cfg);
+  return cfg.installId;
+}
+
+// The last ingest body exactly as sent, for `centrail inspect --last`. One
+// file, overwritten per batch, mode 0600: it is the answer to "what leaves
+// my machine", and it must be the real payload, not a description of it.
+const LAST_SYNC_PATH = join(CONFIG_DIR, "last-sync.json");
+
+export async function writeLastSync(body: unknown): Promise<void> {
+  await writeJsonAtomic(LAST_SYNC_PATH, body, 0o600);
+}
+
+export async function readLastSync(): Promise<string | null> {
+  try {
+    return await readFile(LAST_SYNC_PATH, "utf-8");
+  } catch {
+    return null;
+  }
 }

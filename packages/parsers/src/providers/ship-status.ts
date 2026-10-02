@@ -25,6 +25,10 @@ export type ShipStatusFacts = {
   // Shas whose patch is squash-equivalent to one on default
   // (`git cherry <default> <tip>` reported "-").
   cherryEquivalentShas: string[];
+  // sha -> the default-branch commit whose patch equals the WHOLE branch's
+  // patch from its merge base (a multi-commit squash merge, which `git
+  // cherry` cannot see). Shipped, and the server rolls the sha up into it.
+  squashedInto?: Record<string, string>;
   // sha -> containing branch short names exactly as git prints them
   // ("feature/x", "origin/feature/x"; includes the default when it contains
   // the sha). Missing/empty = no branch contains the sha anymore.
@@ -50,6 +54,7 @@ export type CommitFateRow = {
   //   contains it; null when no branch contains the sha at all.
   branch: string | null;
   fate: CommitFate;
+  mergedAs?: string; // the default-branch commit this sha was squashed into
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -86,8 +91,9 @@ export function computeCommitFates(facts: ShipStatusFacts): CommitFateRow[] {
             : null);
     }
 
+    const mergedAs = facts.squashedInto?.[sha];
     let fate: CommitFate;
-    if (shippedViaAncestry || cherryEquivalent.has(sha)) {
+    if (shippedViaAncestry || cherryEquivalent.has(sha) || mergedAs) {
       fate = "shipped";
     } else {
       const hasFreshBranch = containing.some((b) => {
@@ -101,7 +107,7 @@ export function computeCommitFates(facts: ShipStatusFacts): CommitFateRow[] {
       fate = hasFreshBranch ? "in_flight" : "unshipped";
     }
 
-    out.push({ sha, branch, fate });
+    out.push({ sha, branch, fate, ...(mergedAs ? { mergedAs } : {}) });
   }
   return out;
 }

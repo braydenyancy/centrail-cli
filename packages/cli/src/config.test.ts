@@ -51,4 +51,19 @@ describe("acquireSyncLock", () => {
     expect(release).not.toBeNull();
     await release?.();
   });
+
+  // A hook-spawned sync racing a manual one: the second gets null, and the
+  // released lock can be taken again. (A lock left by a sync that died is
+  // covered above: owned locks free when their PID exits, ownerless legacy
+  // ones after the stale window.)
+  it("one holder at a time; released lock can be re-taken", async () => {
+    const lock = await lockPath();
+    const first = await acquireSyncLock(lock);
+    expect(first).not.toBeNull();
+    expect(await acquireSyncLock(lock)).toBeNull();
+    await first!();
+    const again = await acquireSyncLock(lock);
+    expect(again).not.toBeNull();
+    await again!();
+  });
 });

@@ -1,26 +1,39 @@
 import {
+  claudeConfigDirs,
   matchEventsToCommits,
   SCANNERS,
   type AttributionEvent,
   type EventAttribution,
   type ParsedUsageEvent,
 } from "@centrail/parsers";
-import { acquireSyncLock, readAuth, readConfig, readState, writeState } from "../config.js";
+import {
+  acquireSyncLock,
+  ensureInstallId,
+  readAuth,
+  readConfig,
+  readState,
+  writeConfig,
+  writeLastSync,
+  writeState,
+  type Config,
+} from "../config.js";
 import { sinceForSurface, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
-import {
-  readRepoCommits,
-  readRepoSize,
-  repoName,
-  resolveRepoRoot,
-} from "../git.js";
+import { readRepoCommits, readRepoSize } from "../git.js";
+import { Placer } from "../placer.js";
+import { IdentityResolver } from "../resolver.js";
+import { compactSidecar, readSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
-import { toWireUsageEvent } from "../wire.js";
+import { eventInScope, surfaceEnabled } from "../scope.js";
+import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
 const BATCH_SIZE = 250;
+
+// Capability fields that change what an event carries (wire.ts).
+const RESEND_ON_GAIN = ["repo", "usage-extras"];
 
 // Every incremental sync re-reads this much of the trailing window. A
 // transcript line can carry a timestamp earlier than the moment it reaches
@@ -57,6 +70,35 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   assertSecureBaseUrl(auth.baseUrl);
 
   const state = await readState();
+  const config = await readConfig();
+  // Fresh installs answer the scope question in `connect`. An install that
+  // synced before 0.6 consented under the old model; record that once.
+  if (!config.scopeDecidedAt) {
+    config.scopeDecidedAt = new Date().toISOString();
+    await writeConfig(config);
+  }
+  const installId = await ensureInstallId();
+  const known = state.capabilities;
+  const caps = await readCapabilities(auth, known ? { fields: new Set(known) } : undefined);
+  const capsNow = [...caps.fields].sort();
+  // A server that starts listing a field events carry gets the history
+  // re-sent once with it — the widened-scope rule: what it can now store
+  // was held back from events already behind the watermark. Marked before
+  // the new list is saved, and cleared only after a complete pass, so a
+  // failed pass retries. (Upgrading from 0.5.1, which saved no list, is the
+  // scanner revision bump's job.)
+  if (known && RESEND_ON_GAIN.some((f) => caps.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
+    config.pendingBackfill = true;
+    await writeConfig(config);
+  }
+  if (!known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
+    state.capabilities = capsNow;
+    await writeState(state);
+  }
+  await compactSidecar(); // under the sync lock; hook appends are line-atomic
+  await learnConfigDirs();
+  const resolver = await IdentityResolver.create(installId);
+  const placer = new Placer(resolver);
   const minOccurredAt = new Date("2020-01-01T00:00:00.000Z");
   const maxOccurredAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -65,37 +107,53 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   let grandInbox = 0;
   let anyEvents = false;
   let anyWatermark = false;
+  let heldByScope = 0;
   // Claude and Codex expose reliable per-event cwd/timestamps. Copilot
   // attribution remains deferred until its session semantics are proven.
   const attributionEvents: ParsedUsageEvent[] = [];
 
+  // A widened scope (include, allow-list edit) rescans everything once: the
+  // events it held back were already behind the watermark.
+  const full = opts.full || config.pendingBackfill;
+
   for (const scanner of SCANNERS) {
+    if (!surfaceEnabled(config, scanner.surface)) continue; // switched off; no watermark moves
     // Each surface keeps its own watermark so a scanner added in an upgrade
     // backfills its full history instead of inheriting another's cutoff.
-    const mark = opts.full
-      ? undefined
-      : sinceForSurface(state, scanner.surface, scanner.revision);
+    const mark = full ? undefined : sinceForSurface(state, scanner.surface, scanner.revision);
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
     const scanned = await scanner.scan({ since });
-    const events = scanned.filter(
+    const candidates = scanned.filter(
       (e) =>
         e.externalId.length > 0 &&
         e.occurredAt >= minOccurredAt &&
         e.occurredAt <= maxOccurredAt,
     );
+    // Repo identity is placed here (§ 3.9: cwd → files → sticky → folder),
+    // while the folder may still exist; the sidecar covers the sessions
+    // whose folder is already gone. Then the scope decides what leaves: an
+    // excluded repo's events stop here.
+    await placer.place(scanned);
+    const events = candidates.filter((e) => eventInScope(e, config));
+    heldByScope += candidates.length - events.length;
     if (events.length === 0) {
       await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
     anyEvents = true;
     if (scanner.surface === "claude-code" || scanner.surface === "codex") {
-      attributionEvents.push(...events);
+      for (const e of events) attributionEvents.push(e);
     }
 
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
+      const body = {
+        source: { surface: scanner.surface, kind: "local_logs" },
+        events: batch.map((e) => toWireEvent(e, caps, config, installId)),
+      };
+      await writeLastSync(body); // `centrail inspect --last`: exactly what left
       const res = await fetch(`${auth.baseUrl}/api/cli/ingest`, {
         method: "POST",
         headers: {
@@ -103,10 +161,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
           authorization: `Bearer ${auth.token}`,
           ...versionHeaders(),
         },
-        body: JSON.stringify({
-          source: { surface: scanner.surface, kind: "local_logs" },
-          events: batch.map(toWireUsageEvent),
-        }),
+        body: JSON.stringify(body),
       });
       if (res.status === 401) {
         throw new Error("Token revoked or expired — run `centrail connect`");
@@ -128,23 +183,50 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
 
+  if (config.pendingBackfill) {
+    config.pendingBackfill = false; // every enabled surface got its full pass above
+    await writeConfig(config);
+  }
+
   if (!anyEvents) {
-    console.log(
-      anyWatermark
-        ? "No new events since the last sync."
-        : "No agent usage found (Claude Code, Copilot CLI, Codex).",
-    );
+    if (heldByScope > 0) {
+      console.log(`Nothing in scope to sync — ${heldByScope} event(s) held back by your scope (see \`centrail repos\`).`);
+    } else {
+      console.log(
+        anyWatermark
+          ? "No new events since the last sync."
+          : "No agent usage found (Claude Code, Copilot CLI, Codex).",
+      );
+    }
     return;
   }
 
   if (attributionEvents.length > 0) {
-    await pushAttributions(auth, attributionEvents);
+    await pushAttributions(auth, attributionEvents, resolver, config, caps, installId);
   }
 
   console.log(
     `Inserted ${grandInserted} · Skipped ${grandSkipped}` +
-      (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : ""),
+      (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
+      (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
+}
+
+// A hook run with a scrubbed environment (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)
+// spawns a sync that cannot see CLAUDE_CONFIG_DIR, so a relocated config
+// dir would never be scanned. The hook recorded each transcript's path;
+// every config dir those paths live under joins the scan.
+async function learnConfigDirs(): Promise<void> {
+  const known = claudeConfigDirs();
+  const learned: string[] = [];
+  for (const line of (await readSidecar()).values()) {
+    if (line.surface !== "claude-code" || !line.transcript) continue;
+    const i = line.transcript.lastIndexOf("/projects/");
+    if (i <= 0) continue;
+    const dir = line.transcript.slice(0, i);
+    if (!known.includes(dir) && !learned.includes(dir)) learned.push(dir);
+  }
+  if (learned.length > 0) process.env.CLAUDE_CONFIG_DIR = [...known, ...learned].join(",");
 }
 
 async function stampSurface(
@@ -161,6 +243,7 @@ async function stampSurface(
 type WireAttribution = {
   externalId: string;
   repoName: string;
+  repoKey?: string; // identity key; the server binds rules to this once it can
   commitSha: string;
   committedAt: string;
   branch: string | null;
@@ -169,49 +252,88 @@ type WireAttribution = {
   filesChanged: number;
 };
 
-// Group events by cwd -> repo, match each repo's events to its commits, and
-// POST the mapping. Git history never leaves the machine; only the derived
-// rows do. Failures here are logged, not thrown — attribution is best-effort
-// and must never brick a successful event sync.
+// Group events by repo, match each repo's events to its commits, and POST the
+// mapping. Git history never leaves the machine; only the derived rows do.
+// Failures here are logged, not thrown — attribution is best-effort and must
+// never brick a successful event sync.
+//
+// A session whose folder is gone (a deleted worktree — 70% of tokens on the
+// reference machine) still attributes when ANY live checkout of the same
+// repo identity exists on this machine: commits are shared across
+// worktrees and clones, so its history answers for the dead folder.
 async function pushAttributions(
   auth: { baseUrl: string; token: string },
   events: ParsedUsageEvent[],
+  resolver: IdentityResolver,
+  config: Config,
+  caps: Capabilities,
+  installId: string,
 ): Promise<void> {
-  const config = await readConfig();
-  const deny = new Set(config.denyRepos);
+  const identityAware = caps.fields.has("repo");
+  // § 3.8: a server that advertises "match" attributes events to commits
+  // itself, from the facts on the fate rows — every still-unattributed event
+  // of the repo key, no 24 h window, any machine. The CLI then declares its
+  // repos with the fates and computes no attributions at all.
+  const serverMatches = identityAware && caps.fields.has("match");
 
-  // Bucket events by cwd; resolve each distinct cwd to a repo root once.
-  const byCwd = new Map<string, ParsedUsageEvent[]>();
+  // One bucket per (checkout root, ref). A live checkout reads its own HEAD
+  // log, as before. A session whose folder is gone joins a live checkout of
+  // the same identity and reads the branch its sidecar line recorded —
+  // branches outlive worktrees — or every ref when it was detached.
+  type Bucket = { root: string; ref: string; name: string; key: string; events: ParsedUsageEvent[] };
+  const buckets = new Map<string, Bucket>();
+  const bucket = (root: string, ref: string, name: string, key: string): Bucket => {
+    const id = `${root}\u0000${ref}`;
+    let b = buckets.get(id);
+    if (!b) buckets.set(id, (b = { root, ref, name, key, events: [] }));
+    return b;
+  };
+  const orphans: ParsedUsageEvent[] = []; // repo known, folder gone
   for (const e of events) {
-    const cwd = e.metadata.cwd;
-    if (!cwd) continue;
-    (byCwd.get(cwd) ?? byCwd.set(cwd, []).get(cwd)!).push(e);
+    const repo = e.metadata.repo;
+    if (!repo || repo.source === "folder") continue; // scope already applied in syncLocked
+    const root = await resolver.liveRootFor(e);
+    if (!root) {
+      orphans.push(e);
+      continue;
+    }
+    bucket(root, "HEAD", repo.label, repo.key).events.push(e);
   }
-
-  // repoRoot -> { name, events }
-  const byRepo = new Map<
-    string,
-    { name: string; events: ParsedUsageEvent[] }
-  >();
-  for (const [cwd, cwdEvents] of byCwd) {
-    const root = await resolveRepoRoot(cwd);
-    if (!root) continue;
-    const name = repoName(root);
-    if (deny.has(name)) continue;
-    const bucket = byRepo.get(root) ?? { name, events: [] };
-    bucket.events.push(...cwdEvents);
-    byRepo.set(root, bucket);
+  const rootByKey = new Map<string, string>();
+  for (const b of buckets.values()) if (!rootByKey.has(b.key)) rootByKey.set(b.key, b.root);
+  for (const e of orphans) {
+    const repo = e.metadata.repo!;
+    let root = rootByKey.get(repo.key);
+    if (!root) {
+      // No event's cwd is a live checkout of this key; the hook may still
+      // know one (a root it recorded, or the main checkout of a dead worktree).
+      const found = await resolver.liveRootForKey(repo.key);
+      if (!found) continue; // no live checkout on this machine: usage ships, commits wait
+      rootByKey.set(repo.key, (root = found));
+    }
+    const branch = resolver.sidecarBranchFor(e);
+    bucket(root, branch ? `refs/heads/${branch}` : "--all", repo.label, repo.key).events.push(e);
   }
-  if (byRepo.size === 0) return;
+  if (buckets.size === 0) return;
 
-  const repos: { name: string; totalLoc: number | null; fileCount: number }[] = [];
+  const repos: { name: string; key?: string; totalLoc: number | null; fileCount: number }[] = [];
   const attributions: WireAttribution[] = [];
+  const sizedRoots = new Set<string>();
 
-  for (const [root, { name, events: repoEvents }] of byRepo) {
-    const commits = await readRepoCommits(root);
-    const size = await readRepoSize(root);
-    repos.push({ name, totalLoc: size.totalLoc, fileCount: size.fileCount });
+  for (const { root, ref, name, key, events: repoEvents } of buckets.values()) {
+    const commits = serverMatches ? [] : await readRepoCommits(root, ref);
+    if (!sizedRoots.has(root)) {
+      sizedRoots.add(root);
+      const size = await readRepoSize(root);
+      repos.push({
+        name,
+        ...(identityAware ? { key } : {}),
+        totalLoc: size.totalLoc,
+        fileCount: size.fileCount,
+      });
+    }
 
+    if (serverMatches) continue;
     const input: AttributionEvent[] = repoEvents.map((e) => ({
       externalId: e.externalId,
       occurredAt: e.occurredAt,
@@ -225,6 +347,7 @@ async function pushAttributions(
       attributions.push({
         externalId: m.externalId,
         repoName: name,
+        ...(identityAware ? { repoKey: key } : {}),
         commitSha: m.sha,
         committedAt: m.committedAt.toISOString(),
         branch: branchByExternalId.get(m.externalId) ?? null,
@@ -271,10 +394,17 @@ async function pushAttributions(
   // Fate pass: recompute shipped / in_flight / unshipped for every recent sha
   // in each resolved repo. Repos without a resolvable default branch are
   // skipped inside runFatePass (never guess); when none pass, no line prints.
-  const tally = await runFatePass(
-    auth,
-    [...byRepo].map(([root, { name }]) => ({ root, name })),
-  );
+  // One fact set per KEY: two live clones of one repo on this machine each
+  // hold commits the other has not fetched, and a complete set from one of
+  // them would read the other's as vanished. Their facts are unioned.
+  const fateRepos = new Map<string, { roots: string[]; name: string; key?: string }>();
+  for (const b of buckets.values()) {
+    const id = identityAware ? b.key : b.root;
+    const entry = fateRepos.get(id);
+    if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
+    else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
+  }
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }
