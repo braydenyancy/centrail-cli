@@ -2,11 +2,10 @@
 
 // src/commands/connect.ts
 import { readdir as readdir4 } from "node:fs/promises";
-import { hostname as hostname3, platform as platform3 } from "node:os";
 
 // ../parsers/src/providers/claude-code.ts
 import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir, hostname, platform } from "node:os";
+import { homedir } from "node:os";
 import { basename, join as join2 } from "node:path";
 
 // ../parsers/src/providers/evidence.ts
@@ -121,51 +120,12 @@ function claudeConfigDirs() {
 function claudeProjectDirs() {
   return claudeConfigDirs().map((d) => basename(d.replace(/[\\/]+$/, "")) === "projects" ? d : join2(d, "projects"));
 }
-function claudeAccountFiles() {
-  const env = process.env.CLAUDE_CONFIG_DIR;
-  const files = [];
-  if (env && env.trim()) {
-    for (const d of env.split(",").map((s) => s.trim()).filter(Boolean)) {
-      files.push(join2(d, ".claude.json"));
-    }
-  }
-  files.push(join2(homedir(), ".claude.json"));
-  return files;
-}
-async function readAccountFile(filePath) {
-  try {
-    const content = await readFile(filePath, "utf-8");
-    const json = JSON.parse(content);
-    const acct = json.oauthAccount;
-    if (!isObject2(acct))
-      return null;
-    return {
-      accountUuid: stringOr(acct.accountUuid),
-      emailAddress: stringOr(acct.emailAddress),
-      organizationUuid: stringOr(acct.organizationUuid),
-      billingType: stringOr(acct.billingType)
-    };
-  } catch {
-    return null;
-  }
-}
-async function readClaudeCodeAccount(filePath) {
-  const candidates = filePath ? [filePath] : claudeAccountFiles();
-  for (const p of candidates) {
-    const acct = await readAccountFile(p);
-    if (acct)
-      return acct;
-  }
-  return null;
-}
 async function scanClaudeCodeLogs(opts) {
   const since = opts.since;
-  const host = hostname();
-  const plat = platform();
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
   const events = [];
   for (const base of bases) {
-    for (const e of await scanProjectsDir(base, since, host, plat))
+    for (const e of await scanProjectsDir(base, since))
       events.push(e);
   }
   return collapseUsageEvents(foldSidechainReplays(events));
@@ -174,7 +134,7 @@ function foldSidechainReplays(events) {
   const parentId = /* @__PURE__ */ new Map();
   for (const e of events) {
     const m = e.metadata;
-    if (m.sidechain || !m.messageId)
+    if (m.isSidechain === true || !m.messageId)
       continue;
     const k = `${m.sessionId ?? ""}\0${m.messageId}`;
     if (!parentId.has(k))
@@ -182,7 +142,7 @@ function foldSidechainReplays(events) {
   }
   for (const e of events) {
     const m = e.metadata;
-    if (!m.sidechain || !m.messageId)
+    if (m.isSidechain !== true || !m.messageId)
       continue;
     const id = parentId.get(`${m.sessionId ?? ""}\0${m.messageId}`);
     if (id && !/:(iter|advisor):\d+$/.test(e.externalId))
@@ -196,6 +156,13 @@ function collapseUsageEvents(events) {
     const prev = byId.get(e.externalId);
     if (!prev) {
       byId.set(e.externalId, e);
+      continue;
+    }
+    const prevSide = prev.metadata.isSidechain === true;
+    const nextSide = e.metadata.isSidechain === true;
+    if (prevSide !== nextSide) {
+      if (prevSide)
+        byId.set(e.externalId, e);
       continue;
     }
     if (e.metadata.fallback && !prev.metadata.fallback) {
@@ -242,7 +209,7 @@ function usageExternalId(raw, message) {
   const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : "";
   return `msg:${messageId}:${sessionId}`;
 }
-async function scanProjectsDir(basePath, since, host, plat) {
+async function scanProjectsDir(basePath, since) {
   let entries;
   try {
     entries = await readdir(basePath);
@@ -288,7 +255,7 @@ async function scanProjectsDir(basePath, since, host, plat) {
           continue;
         }
         turns.observe(raw);
-        const parsed = parseAssistantEvent(raw, host, plat, turns.current);
+        const parsed = parseAssistantEvent(raw, turns.current);
         if (parsed && (!since || parsed.occurredAt > since)) {
           applyFallback(raw, parsed);
           events.push(parsed);
@@ -316,8 +283,26 @@ async function listSessionFiles(dir) {
     }
     if (!entry.isDirectory())
       continue;
-    for (const f of await jsonlUnder(join2(dir, entry.name, "subagents"), 4))
-      files.push(f);
+    const sub = join2(dir, entry.name, "subagents");
+    files.push(...await listJsonlBelow(sub, 8));
+  }
+  return files;
+}
+async function listJsonlBelow(dir, remainingDepth) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files = [];
+  for (const entry of entries) {
+    const path = join2(dir, entry.name);
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      files.push(path);
+    } else if (entry.isDirectory() && remainingDepth > 0) {
+      files.push(...await listJsonlBelow(path, remainingDepth - 1));
+    }
   }
   return files;
 }
@@ -402,24 +387,7 @@ function applyFallback(raw, e) {
     e.model = fb.model;
   e.metadata.fallback = true;
 }
-async function jsonlUnder(dir, depth) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const e of entries) {
-    if (e.isFile() && e.name.endsWith(".jsonl"))
-      out.push(join2(dir, e.name));
-    else if (e.isDirectory() && depth > 0)
-      for (const f of await jsonlUnder(join2(dir, e.name), depth - 1))
-        out.push(f);
-  }
-  return out;
-}
-function parseAssistantEvent(raw, host, plat, turn) {
+function parseAssistantEvent(raw, turn) {
   if (!isObject2(raw))
     return null;
   if (raw.type !== "assistant")
@@ -468,16 +436,10 @@ function parseAssistantEvent(raw, host, plat, turn) {
       sessionId: stringOr(raw.sessionId),
       version,
       entrypoint,
+      isSidechain: boolOr(raw.isSidechain),
       turn,
       touched: lineEvidence(message),
-      messageId: stringOr(message.id),
-      sidechain: raw.isSidechain === true,
-      origin: {
-        host,
-        platform: plat,
-        client: entrypoint,
-        clientVersion: version
-      }
+      messageId: stringOr(message.id)
     }
   };
 }
@@ -498,6 +460,9 @@ function numOr0(v) {
 }
 function stringOr(v) {
   return typeof v === "string" ? v : void 0;
+}
+function boolOr(v) {
+  return typeof v === "boolean" ? v : void 0;
 }
 
 // ../parsers/src/providers/copilot-cli.ts
@@ -574,8 +539,7 @@ async function scanCopilotLogs(opts) {
           metadata: {
             cwd: ws.cwd,
             gitBranch: ws.branch,
-            sessionId,
-            origin: { host: "", platform: "", client: "copilot-cli" }
+            sessionId
           }
         });
       }
@@ -640,7 +604,7 @@ function numOr02(v) {
 
 // ../parsers/src/providers/codex.ts
 import { readdir as readdir3, readFile as readFile3, stat as stat3 } from "node:fs/promises";
-import { homedir as homedir3, hostname as hostname2, platform as platform2 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 import { join as join4, relative } from "node:path";
 function codexHomeDir() {
   return codexHomeDirs()[0];
@@ -654,8 +618,6 @@ function codexHomeDirs() {
 }
 async function scanCodexLogs(opts) {
   const files = opts.basePath ? await findJsonlFiles(opts.basePath) : await findCodexUsageFiles();
-  const host = hostname2();
-  const plat = platform2();
   const events = [];
   const metaByPath = /* @__PURE__ */ new Map();
   for (const path of files)
@@ -674,10 +636,10 @@ async function scanCodexLogs(opts) {
         continue;
       }
     }
-    let parsed = await parseSession(path, void 0, host, plat);
+    let parsed = await parseSession(path, void 0);
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom)
-      parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents, host, plat);
+      parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
     for (const e of parsed)
       if (!opts.since || e.occurredAt > opts.since)
         events.push(e);
@@ -710,11 +672,11 @@ async function readForkMeta(path) {
   }
   return {};
 }
-async function dropForkReplay(child, fork, parentPath, parents, host, plat) {
+async function dropForkReplay(child, fork, parentPath, parents) {
   if (parentPath) {
     let parent = parents.get(parentPath);
     if (!parent) {
-      parent = await parseSession(parentPath, void 0, host, plat);
+      parent = await parseSession(parentPath, void 0);
       parents.set(parentPath, parent);
     }
     const at = fork.forkedAt?.getTime();
@@ -777,7 +739,7 @@ async function findJsonlFiles(basePath) {
   }
   return files;
 }
-async function parseSession(path, since, host, plat) {
+async function parseSession(path, since) {
   let content;
   try {
     content = await readFile3(path, "utf-8");
@@ -813,7 +775,7 @@ async function parseSession(path, since, host, plat) {
     }
     if (raw.type !== "event_msg" || raw.payload.type !== "token_count")
       continue;
-    const parsed = parseTokenCount(raw, context, previousTotals, baselineValid, host, plat);
+    const parsed = parseTokenCount(raw, context, previousTotals, baselineValid);
     if (parsed.total) {
       previousTotals = parsed.total;
       baselineValid = true;
@@ -842,7 +804,7 @@ function readTurnContext(payload, context) {
   context.model = stringOr2(payload.model);
   context.cwd = stringOr2(payload.cwd) ?? context.cwd;
 }
-function parseTokenCount(raw, context, previousTotals, baselineValid, host, plat) {
+function parseTokenCount(raw, context, previousTotals, baselineValid) {
   const timestamp = stringOr2(raw.timestamp);
   if (!timestamp || !context.sessionId)
     return { event: null, total: null, bareLast: false };
@@ -892,13 +854,7 @@ function parseTokenCount(raw, context, previousTotals, baselineValid, host, plat
         version: context.clientVersion,
         entrypoint: context.client,
         turn: context.turnId ? `${context.sessionId}#${context.turnId}` : void 0,
-        touched: context.touched ? { writes: [...context.touched.writes], reads: [...context.touched.reads] } : { writes: [], reads: [] },
-        origin: {
-          host,
-          platform: plat,
-          client: context.client ?? "codex",
-          clientVersion: context.clientVersion
-        }
+        touched: context.touched ? { writes: [...context.touched.writes], reads: [...context.touched.reads] } : { writes: [], reads: [] }
       }
     },
     total,
@@ -1055,15 +1011,17 @@ function computeCommitFates(facts) {
 var SCANNERS = [
   {
     surface: "claude-code",
-    scan: (opts) => scanClaudeCodeLogs(opts),
-    readAccount: () => readClaudeCodeAccount()
+    revision: 2,
+    scan: (opts) => scanClaudeCodeLogs(opts)
   },
   {
     surface: "copilot-cli",
+    revision: 1,
     scan: (opts) => scanCopilotLogs(opts)
   },
   {
     surface: "codex",
+    revision: 1,
     scan: (opts) => scanCodexLogs(opts)
   }
 ];
@@ -1085,14 +1043,26 @@ function parseSyncState(raw) {
         surfaces[surface] = value;
     }
   }
+  const scannerRevisions = {};
+  if (isObject5(obj.scannerRevisions)) {
+    for (const [surface, value] of Object.entries(obj.scannerRevisions)) {
+      if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+        scannerRevisions[surface] = value;
+      }
+    }
+  }
   return {
     lastSyncAt: typeof obj.lastSyncAt === "string" ? obj.lastSyncAt : null,
     surfaces,
+    scannerRevisions,
     ...typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {},
     ...Array.isArray(obj.capabilities) ? { capabilities: obj.capabilities.filter((f) => typeof f === "string") } : {}
   };
 }
-function sinceForSurface(state, surface) {
+function sinceForSurface(state, surface, scannerRevision = 1) {
+  const completedRevision = state.scannerRevisions[surface] ?? 1;
+  if (completedRevision < scannerRevision)
+    return void 0;
   const own = state.surfaces[surface];
   if (own)
     return validDate(own);
@@ -1151,29 +1121,66 @@ async function writeState(state) {
 }
 var LOCK_PATH = join5(CONFIG_DIR, "sync.lock");
 var LOCK_STALE_MS = 15 * 60 * 1e3;
+var LOCK_OWNER_FILE = "owner.json";
 async function acquireSyncLock(lockPath = LOCK_PATH) {
   await mkdir(join5(lockPath, ".."), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await mkdir(lockPath);
-      return async () => {
+      const owner = { pid: process.pid, nonce: randomUUID() };
+      try {
+        await writeFile(join5(lockPath, LOCK_OWNER_FILE), JSON.stringify(owner), {
+          mode: 384
+        });
+      } catch (err) {
         await rm(lockPath, { recursive: true, force: true });
+        throw err;
+      }
+      return async () => {
+        const current = await readLockOwner(lockPath);
+        if (current?.nonce === owner.nonce) {
+          await rm(lockPath, { recursive: true, force: true });
+        }
       };
     } catch (err) {
       if (err.code !== "EEXIST")
         throw err;
+      const owner = await readLockOwner(lockPath);
+      if (owner && processIsAlive(owner.pid))
+        return null;
       let ageMs;
       try {
         ageMs = Date.now() - (await stat4(lockPath)).mtimeMs;
       } catch {
         continue;
       }
-      if (ageMs < LOCK_STALE_MS)
+      if (!owner && ageMs < LOCK_STALE_MS)
         return null;
       await rm(lockPath, { recursive: true, force: true });
     }
   }
   return null;
+}
+async function readLockOwner(lockPath) {
+  try {
+    const raw = JSON.parse(
+      await readFile4(join5(lockPath, LOCK_OWNER_FILE), "utf-8")
+    );
+    if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.nonce !== "string" || raw.nonce.length === 0) {
+      return null;
+    }
+    return { pid: raw.pid, nonce: raw.nonce };
+  } catch {
+    return null;
+  }
+}
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== "ESRCH";
+  }
 }
 var CONFIG_PATH = join5(CONFIG_DIR, "config.json");
 var DEFAULT_CONFIG = {
@@ -2154,13 +2161,17 @@ function assertSecureBaseUrl(raw) {
 
 // src/commands/connect.ts
 var DEFAULT_BASE_URL = "https://centrail.org";
+var PRIVATE_DEVICE_NAME = "Centrail CLI";
 async function runConnect(opts) {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
   const res = await fetch(`${baseUrl}/api/cli/pair`, {
     method: "POST",
     headers: { "content-type": "application/json", ...versionHeaders() },
-    body: JSON.stringify({ hostname: hostname3(), platform: platform3() })
+    // The current server calls this field hostname, but it is only a display
+    // label. Never send the operating-system hostname or other fingerprinting
+    // data during pairing.
+    body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME })
   });
   if (!res.ok) {
     throw new Error(
@@ -2193,9 +2204,9 @@ async function runConnect(opts) {
       await writeAuth({
         baseUrl,
         token: body.token,
-        deviceName: hostname3()
+        deviceName: PRIVATE_DEVICE_NAME
       });
-      console.log(`  \u2713 Paired (this machine: ${hostname3()})`);
+      console.log(`  \u2713 Paired (${PRIVATE_DEVICE_NAME})`);
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
@@ -2239,10 +2250,11 @@ function sleep(ms) {
 }
 var FIELDS_SHOWN_ONCE = `
   What leaves this machine on each sync \u2014 and nothing else:
-    tokens per model, timestamps, agent + version, OS family, session id,
+    tokens per model, timestamps, the agent and CLI version, session id,
     repo identity (host/owner/repo or a root-commit hash), folder name,
-    branch, commit shas and line counts, a random per-install machine id.
-  Never: source, prompts, completions, secrets, home-directory paths, hostname.
+    branch, commit shas and line counts, a random per-install id.
+  Never: source, prompts, completions, secrets, paths, hostname, platform,
+  account details.
   Verify any time:  npx centrail inspect --last
   Toggles in ~/.config/centrail/config.json: hideRepoNames, hideBranchNames.
 `;
@@ -2468,7 +2480,7 @@ async function claimAutoSync(claimPath, now) {
       } catch {
         continue;
       }
-      if (!shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: new Date(at).toISOString() }, now))
+      if (!shouldAutoSync({ autoSyncAt: new Date(at).toISOString() }, now))
         return false;
       await rm2(claimPath, { recursive: true, force: true });
     }
@@ -2922,6 +2934,20 @@ function formatShipStatusLine(tally) {
 
 // src/wire.ts
 import { createHmac as createHmac2 } from "node:crypto";
+function toWireUsageEvent(event) {
+  return {
+    externalId: event.externalId,
+    model: event.model,
+    inputTokens: event.inputTokens,
+    outputTokens: event.outputTokens,
+    cacheReadTokens: event.cacheReadTokens,
+    cacheCreationTokens: event.cacheCreationTokens,
+    ...event.cacheWriteTokens === void 0 ? {} : { cacheWriteTokens: event.cacheWriteTokens },
+    cacheCreation5mTokens: event.cacheCreation5mTokens,
+    cacheCreation1hTokens: event.cacheCreation1hTokens,
+    occurredAt: event.occurredAt.toISOString()
+  };
+}
 async function readCapabilities(auth, known) {
   const fallback = known ?? { fields: /* @__PURE__ */ new Set() };
   try {
@@ -2939,37 +2965,32 @@ async function readCapabilities(auth, known) {
   }
 }
 function toWireEvent(e, caps, cfg, installId) {
-  const identityAware = caps.fields.has("repo");
-  const origin = e.metadata.origin;
-  const metadata = {
-    sessionId: e.metadata.sessionId,
-    version: e.metadata.version,
-    entrypoint: e.metadata.entrypoint
-  };
-  if (!cfg.hideBranchNames)
-    metadata.gitBranch = e.metadata.gitBranch;
-  if (identityAware) {
-    if (e.metadata.repo) {
-      metadata.repo = redactIdentity(e.metadata.repo, cfg, installId);
-      if (e.metadata.placement)
-        metadata.placement = e.metadata.placement;
-    }
-    if (origin) {
-      metadata.origin = {
-        platform: origin.platform,
-        client: origin.client,
-        clientVersion: origin.clientVersion,
-        machineId: installId
-      };
-    }
-  } else {
-    metadata.cwd = e.metadata.cwd;
-    if (origin)
-      metadata.origin = origin;
+  const wire = toWireUsageEvent(e);
+  if (caps.fields.has("usage-extras")) {
+    if (e.speed)
+      wire.speed = e.speed;
+    if (e.webSearchRequests)
+      wire.webSearchRequests = e.webSearchRequests;
   }
-  const { speed, webSearchRequests, ...rest2 } = e;
-  const extras = caps.fields.has("usage-extras") ? { ...speed ? { speed } : {}, ...webSearchRequests ? { webSearchRequests } : {} } : {};
-  return { ...rest2, ...extras, occurredAt: e.occurredAt.toISOString(), metadata };
+  if (caps.fields.has("repo"))
+    wire.metadata = identityMetadata(e, cfg, installId);
+  return wire;
+}
+function identityMetadata(e, cfg, installId) {
+  const metadata = { origin: { machineId: installId } };
+  if (e.metadata.repo) {
+    metadata.repo = wireIdentity(redactIdentity(e.metadata.repo, cfg, installId));
+    if (e.metadata.placement)
+      metadata.placement = e.metadata.placement;
+  }
+  if (e.metadata.sessionId)
+    metadata.sessionId = e.metadata.sessionId;
+  if (e.metadata.gitBranch && !cfg.hideBranchNames)
+    metadata.gitBranch = e.metadata.gitBranch;
+  return metadata;
+}
+function wireIdentity(repo) {
+  return { key: repo.key, label: repo.label, source: repo.source };
 }
 function redactIdentity(repo, cfg, installId) {
   if (!cfg.hideRepoNames || repo.source === "folder")
@@ -3029,7 +3050,7 @@ async function syncLocked(opts) {
   for (const scanner of SCANNERS) {
     if (!surfaceEnabled(config, scanner.surface))
       continue;
-    const mark = full ? void 0 : sinceForSurface(state, scanner.surface);
+    const mark = full ? void 0 : sinceForSurface(state, scanner.surface, scanner.revision);
     if (mark)
       anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : void 0;
@@ -3042,7 +3063,7 @@ async function syncLocked(opts) {
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
     if (events.length === 0) {
-      await stampSurface(state, scanner.surface, scanStartedAt);
+      await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
     anyEvents = true;
@@ -3050,12 +3071,10 @@ async function syncLocked(opts) {
       for (const e of events)
         attributionEvents.push(e);
     }
-    const account = scanner.readAccount ? await scanner.readAccount() : null;
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
       const body = {
         source: { surface: scanner.surface, kind: "local_logs" },
-        account,
         events: batch.map((e) => toWireEvent(e, caps, config, installId))
       };
       await writeLastSync(body);
@@ -3082,7 +3101,7 @@ async function syncLocked(opts) {
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
     }
-    await stampSurface(state, scanner.surface, scanStartedAt);
+    await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
   if (config.pendingBackfill) {
     config.pendingBackfill = false;
@@ -3121,8 +3140,9 @@ async function learnConfigDirs() {
   if (learned.length > 0)
     process.env.CLAUDE_CONFIG_DIR = [...known, ...learned].join(",");
 }
-async function stampSurface(state, surface, scanStartedAt) {
+async function stampSurface(state, surface, revision, scanStartedAt) {
   state.surfaces[surface] = scanStartedAt.toISOString();
+  state.scannerRevisions[surface] = revision;
   await writeState(state);
 }
 async function pushAttributions(auth, events, resolver, config, caps, installId) {

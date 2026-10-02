@@ -10,7 +10,7 @@ afterEach(async () => {
   await fx?.cleanup();
 });
 
-function memState(initial: SyncState = { lastSyncAt: null, surfaces: {} }) {
+function memState(initial: SyncState = { lastSyncAt: null, surfaces: {}, scannerRevisions: {} }) {
   let state = initial;
   return {
     readState: async () => state,
@@ -91,10 +91,10 @@ describe("runStopHook", () => {
 
   it("shouldAutoSync: first ever, unparsable stamp, or past the interval", () => {
     const now = new Date("2026-06-01T10:00:00Z");
-    expect(shouldAutoSync({ lastSyncAt: null, surfaces: {} }, now)).toBe(true);
-    expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: "garbage" }, now)).toBe(true);
-    expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: "2026-06-01T09:55:00Z" }, now)).toBe(false);
-    expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: "2026-06-01T09:50:00Z" }, now)).toBe(true);
+    expect(shouldAutoSync({}, now)).toBe(true);
+    expect(shouldAutoSync({ autoSyncAt: "garbage" }, now)).toBe(true);
+    expect(shouldAutoSync({ autoSyncAt: "2026-06-01T09:55:00Z" }, now)).toBe(false);
+    expect(shouldAutoSync({ autoSyncAt: "2026-06-01T09:50:00Z" }, now)).toBe(true);
   });
 
   it.each([
@@ -110,7 +110,7 @@ describe("runStopHook", () => {
     const now = new Date("2026-06-01T12:00:00Z");
     const autoSyncAt =
       offset === undefined ? undefined : typeof offset === "string" ? offset : new Date(now.getTime() + offset).toISOString();
-    expect(shouldAutoSync({ lastSyncAt: null, surfaces: {}, ...(autoSyncAt ? { autoSyncAt } : {}) }, now)).toBe(expected);
+    expect(shouldAutoSync({ ...(autoSyncAt ? { autoSyncAt } : {}) }, now)).toBe(expected);
   });
 
   it.each([

@@ -143,21 +143,21 @@ describe("sync invariants across triggers", () => {
     expect(server.attributions.find((a) => a.externalId === "req_H")).toMatchObject({ commitSha: sha });
   });
 
-  it("against a 0.5-era server the body is the 0.5 shape", async () => {
+  it("against a server without capabilities the body is the 0.5.1 allowlist: usage numbers, no metadata", async () => {
     server.fields = [];
     await writeTranscript(repo, "s6", [line("s6", repo, "req_G", 2, T0 + 240_000)]);
     await runSync({ full: false });
     const row = server.rows.get("req_G")!;
-    expect(row.metadata.cwd).toBe(repo);
-    expect(row.metadata.repo).toBeUndefined();
-    expect((row.metadata.origin as { host: string }).host).toBeTruthy();
+    expect(Object.keys(row).sort()).toEqual([
+      "cacheCreation1hTokens", "cacheCreation5mTokens", "cacheCreationTokens", "cacheReadTokens",
+      "externalId", "inputTokens", "model", "occurredAt", "outputTokens",
+    ]);
     server.fields = ["repo"];
   });
 
-  it("nothing on the wire ever carried the home path or hostname while identity-aware", () => {
+  it("nothing on the wire ever carried the home path or hostname, whatever the server listed", () => {
     const { hostname } = require("node:os") as typeof import("node:os");
     for (const row of server.rows.values()) {
-      if (row.externalId === "req_G") continue;
       const text = JSON.stringify(row);
       expect(text).not.toContain(hostname());
       expect(text).not.toContain(home);

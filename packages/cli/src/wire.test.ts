@@ -150,12 +150,12 @@ describe("toWireEvent", () => {
   ])("%s server: the placement tag travels with the identity and only then; touched paths and turn ids never leave", (_, fields, aware) => {
     const e: ParsedUsageEvent = { ...base, metadata: { ...base.metadata, placement: "files", turn: "s1#3", touched: { writes: ["/Users/jane/work/repo/x.ts"], reads: ["/Users/jane/work/other"] } } };
     const wire = toWireEvent(e, { fields: new Set(fields) }, cfg, "install");
-    const metadata = wire.metadata as Record<string, unknown>;
+    const metadata = (wire.metadata ?? {}) as Record<string, unknown>;
     expect(metadata.placement).toBe(aware ? "files" : undefined);
     expect(metadata.touched).toBeUndefined();
     expect(metadata.turn).toBeUndefined();
     expect(JSON.stringify(wire)).not.toContain("/Users/jane/work/other");
-    if (aware) expect(JSON.stringify(wire)).not.toContain("/Users/jane");
+    expect(JSON.stringify(wire)).not.toContain("/Users/jane");
   });
 
   it("no placement without an identity, and a hidden identity keeps its tag", () => {

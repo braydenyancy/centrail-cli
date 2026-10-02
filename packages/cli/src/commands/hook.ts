@@ -236,7 +236,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 // is not a clock step.
 export const CLOCK_STEP_MS = 60 * 1000;
 
-export function shouldAutoSync(state: SyncState, now: Date): boolean {
+export function shouldAutoSync(state: Pick<SyncState, "autoSyncAt">, now: Date): boolean {
   if (!state.autoSyncAt) return true;
   const last = new Date(state.autoSyncAt).getTime();
   return Number.isNaN(last) || last - now.getTime() > CLOCK_STEP_MS || now.getTime() - last >= AUTO_SYNC_INTERVAL_MS;
@@ -278,7 +278,7 @@ async function claimAutoSync(claimPath: string, now: Date): Promise<boolean> {
       } catch {
         continue; // reclaimed between our mkdir and stat — try once more
       }
-      if (!shouldAutoSync({ lastSyncAt: null, surfaces: {}, autoSyncAt: new Date(at).toISOString() }, now)) return false;
+      if (!shouldAutoSync({ autoSyncAt: new Date(at).toISOString() }, now)) return false;
       await rm(claimPath, { recursive: true, force: true }); // stale: reclaim
     }
   }
