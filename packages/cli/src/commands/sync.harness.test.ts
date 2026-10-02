@@ -146,7 +146,15 @@ describe("sync invariants across triggers", () => {
   it("against a server without capabilities the body is the 0.5.1 allowlist: usage numbers, no metadata", async () => {
     server.fields = [];
     await writeTranscript(repo, "s6", [line("s6", repo, "req_G", 2, T0 + 240_000)]);
+    const attributesBefore = server.attributeBodies.length;
     await runSync({ full: false });
+    // Fate rows too: the 0.5.1 four, no commit facts, no facts block.
+    const fateBodies = server.attributeBodies.slice(attributesBefore).filter((b) => (b.fates ?? []).length > 0);
+    expect(fateBodies.length).toBeGreaterThan(0);
+    for (const b of fateBodies) {
+      expect(b.facts).toBeUndefined();
+      for (const f of b.fates!) expect(Object.keys(f).sort()).toEqual(["branch", "commitSha", "fate", "repoName"]);
+    }
     const row = server.rows.get("req_G")!;
     expect(Object.keys(row).sort()).toEqual([
       "cacheCreation1hTokens", "cacheCreation5mTokens", "cacheCreationTokens", "cacheReadTokens",

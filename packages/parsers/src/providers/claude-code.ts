@@ -23,6 +23,10 @@ export type RepoIdentity = {
   key: string; // "github.com/owner/repo" | "sha:<root commit>" | "dir:<hmac>"
   label: string; // folder basename, display only
   source: "remote" | "root" | "folder";
+  // The default branch's root commit, for a repo that has one. Travels with a
+  // remote key so the server can propose merging the keys of one repo that
+  // was renamed or transferred (decision § 3.10).
+  root?: string;
 };
 
 // How a request's repo was chosen (§ 3.9): its session's cwd is inside the

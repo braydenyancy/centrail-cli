@@ -357,8 +357,8 @@ describe("parallel sessions in one checkout, one branch", () => {
     const { readSidecar } = await import("../sidecar.js");
     const { CONFIG_DIR } = await import("../config.js");
     const lines = await readSidecar(join(CONFIG_DIR, "sessions.jsonl"));
-    expect(lines.get("pa")?.roots).toEqual({ [repo]: { key: "github.com/acme/shared", label: "shared", source: "remote" } });
-    expect(lines.get("pb")?.roots).toEqual({ [repo]: { key: "github.com/acme/shared", label: "shared", source: "remote" } });
+    expect(lines.get("pa")?.roots).toEqual({ [repo]: { key: "github.com/acme/shared", label: "shared", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) } });
+    expect(lines.get("pb")?.roots).toEqual({ [repo]: { key: "github.com/acme/shared", label: "shared", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) } });
     const sha = await fx.commit(repo, "shared.ts", undefined, new Date());
     server.attributeBodies.length = 0;
     await runSync({ full: false });
@@ -450,7 +450,9 @@ describe("two live clones of one repo on one machine", () => {
 });
 
 describe("a machine offline for a week", () => {
-  it("failed syncs leave the watermark; the first online sync lands everything once; a flaky capabilities call never downgrades the body to the 0.5 shape", async () => {
+  // Ten syncs, one of them full, over every repo this file has built so far:
+  // slow by construction, so it gets more than the default five seconds.
+  it("failed syncs leave the watermark; the first online sync lands everything once; a flaky capabilities call never downgrades the body to the 0.5 shape", { timeout: 30_000 }, async () => {
     server.fields = ["repo"];
     const repo = await fx.repo("offline", { remote: "https://github.com/acme/offline.git" });
     const t = (i: number) => T0 + 70 * 60_000 + i * 1000;

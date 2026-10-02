@@ -19,6 +19,8 @@ import {
 import { versionHeaders } from "./version.js";
 
 // Wire row for the optional `fates` section of POST /api/cli/attribute.
+// The first four fields are the 0.5.1 row; the rest go only to a server
+// that lists "repo" (§ 3.10). Every field named; no row is ever spread.
 export type WireFate = {
   repoName: string;
   repoKey?: string;
@@ -27,10 +29,10 @@ export type WireFate = {
   fate: "shipped" | "in_flight" | "unshipped";
   // The commit's facts (§ 3.8): a server that advertises "match" attributes
   // this user's still-unattributed events of `repoKey` to these commits.
-  committedAt: string;
-  linesAdded: number;
-  linesDeleted: number;
-  filesChanged: number;
+  committedAt?: string;
+  linesAdded?: number;
+  linesDeleted?: number;
+  filesChanged?: number;
   mergedAs?: string; // squashed into this default-branch commit (§ ship status)
   // The commit's author is this machine's git identity. Absent when either
   // side is unknown. The server prefers own commits when several fit; a
@@ -129,11 +131,16 @@ export async function gatherShipStatusFacts(
 // aggregate tally, or null when NO repo had a fate pass (all defaults
 // unresolvable / no repos) — callers omit the output line then. Best-effort
 // like attribution: failures warn, never throw.
+//
+// `machineId` (the random install id) is given only for a server that lists
+// "repo": the commit facts, `mine`, `mergedAs` and the `facts` block ride
+// with it (§ 3.10). Without it every row is the 0.5.1 shape — repo name,
+// sha, branch, fate — and nothing else.
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
   repos: { root?: string; roots?: string[]; name: string; key?: string }[],
   declared: WireRepo[] = [],
-  machineId = "",
+  machineId?: string,
 ): Promise<FateTally | null> {
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
@@ -152,6 +159,10 @@ export async function runFatePass(
       if (row.fate === "shipped") tally.shipped++;
       else if (row.fate === "in_flight") tally.inFlight++;
       else tally.unshipped++;
+      if (!machineId) {
+        fates.push({ repoName: name, commitSha: row.sha, branch: row.branch, fate: row.fate });
+        continue;
+      }
       const c = bySha.get(row.sha);
       const mine = email && c?.authorEmail ? c.authorEmail === email : undefined;
       fates.push({
@@ -172,7 +183,7 @@ export async function runFatePass(
     // whole set at once. `complete` is false at the sha cap: an incomplete
     // set proves nothing about what vanished.
     const own = declared.filter((r) => (key && r.key === key) || r.name === name);
-    await pushFates(auth, fates, own, { machineId, complete: facts.complete });
+    await pushFates(auth, fates, own, machineId ? { machineId, complete: facts.complete } : undefined);
   }
   if (!anyRepoPassed) return null;
   return tally;
@@ -215,7 +226,7 @@ async function pushFates(
   auth: { baseUrl: string; token: string },
   fates: WireFate[],
   repos: WireRepo[],
-  facts: WireFacts,
+  facts?: WireFacts,
 ): Promise<void> {
   if (fates.length === 0) return;
   try {
@@ -228,7 +239,7 @@ async function pushFates(
           authorization: `Bearer ${auth.token}`,
           ...versionHeaders(),
         },
-        body: JSON.stringify({ repos, attributions: [], fates: chunk, facts }),
+        body: JSON.stringify({ repos, attributions: [], fates: chunk, ...(facts ? { facts } : {}) }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;

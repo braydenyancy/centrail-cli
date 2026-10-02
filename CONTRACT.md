@@ -17,13 +17,22 @@ not part of the wire shape. The server validates its own copy of the untrusted
 wire shape, and release CI verifies every exported scanner surface against
 that validator before a CLI package can publish.
 
-Usage events contain only `externalId` (opaque deduplication), `model`, token
-counts, and `occurredAt`. Optional git attribution is sent separately and may
-contain repo basename, branch, commit SHA, and aggregate line/file counts. The
-CLI never uploads absolute paths, hostnames, or provider-account identifiers.
-It does not upload a separate session metadata field; `externalId` is an opaque
-deduplication key and may be derived from identifiers already present in an
-agent's usage log.
+To every server, usage events contain only `externalId` (opaque
+deduplication), `model`, token counts, and `occurredAt` — the 0.5.1 allowlist,
+`toWireUsageEvent` in `packages/cli/src/wire.ts`. Each ingest body names its
+`source.surface` (which agent), and every request carries the CLI version
+header. Optional git attribution is sent separately and contains the repo
+basename, branch, commit SHA, and aggregate line/file counts. A server that
+lists capability fields receives the additions below, each named in the same
+module (decision § 3.10); nothing reaches the wire by spreading a parsed
+event, and `packages/cli/src/wire.test.ts` pins the exact keys.
+
+Never uploaded, to any server: absolute paths or working directories,
+hostnames, platform details, provider-account data (email, account or org
+ids), prompts, completions, source code, diffs, commit messages, or any
+encrypted blob a tool stores. `externalId` may be derived from identifiers
+already present in an agent's usage log (a Codex request id embeds its
+session id).
 
 `ParsedUsageEvent.cacheWriteTokens` is the provider-neutral cache-write bucket.
 The older `cacheCreation5mTokens` and `cacheCreation1hTokens` fields remain for
@@ -36,16 +45,21 @@ remain valid.
 
 `GET /api/cli/capabilities` returns `{ wireVersions, surfaces, fields? }`.
 `fields` lists optional event fields the deployed server accepts beyond the
-base shape. The CLI reads it once per sync; unreachable or absent means the
-0.5 shape exactly.
+base shape. The CLI reads it once per sync. Absent, or never answered, means
+the 0.5.1 shape exactly; a server that answered before and cannot be asked now
+is taken at its last answer, so a flaky route never strips identity.
 
-When `fields` contains `"repo"` the CLI sends, per event:
+When `fields` contains `"repo"` the CLI sends, per event, a `metadata` object
+with exactly these keys (each absent when unknown):
 
-- `metadata.repo: { key, label, source }` — `key` is `host/owner/repo`
+- `metadata.repo: { key, label, source, root? }` — `key` is `host/owner/repo`
   (canonical remote, lowercase, `.git` stripped), `sha:<root commit>` (no
   remote), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
   `hideRepoNames`; `label` is the folder basename (empty when hidden);
-  `source` is `remote | root | folder`.
+  `source` is `remote | root | folder`; `root` is the default branch's root
+  commit sha, sent with remote and root keys so the server can propose
+  merging two keys of one renamed or transferred repo, and withheld under
+  `hideRepoNames`.
 - `metadata.placement: "cwd" | "files" | "sticky" | "folder"` — how `repo`
   was chosen, sent with it (0.6.0, decision § 3.9): the session's folder is
   inside the repo; the turn's touched files named it (edits, then reads,
@@ -53,18 +67,26 @@ When `fields` contains `"repo"` the CLI sends, per event:
   the folder's own `dir:` id. The tag is the disclaimer next to the
   identity; a server may weight or filter on it and must accept its
   absence. The touched paths themselves never leave the machine.
-- `metadata.origin.machineId` — random per-install uuid.
-- and **omits** `metadata.cwd` and `metadata.origin.host`. A server that
-  advertises `"repo"` must therefore accept `origin` without `host`, and key
-  Inbox grouping and rules on `repo.key`, not `cwd`.
+- `metadata.sessionId` — the agent's session id, plaintext.
+- `metadata.gitBranch` — the session's branch (the Stop hook's branch when the
+  transcript says `HEAD`); absent under `hideBranchNames`.
+- `metadata.origin: { machineId }` — a random per-install uuid, minted once
+  (`crypto.randomUUID`), derived from nothing on the machine. `origin`
+  carries nothing else: no `host`, `platform`, `client` or `clientVersion`.
+  A server that advertises `"repo"` must accept `origin` with `machineId`
+  alone, and key Inbox grouping and rules on `repo.key`.
+
+Without `"repo"` none of these are sent and the body is the 0.5.1 shape.
 
 Attribution and fate rows gain `repoKey` next to `repoName`; `repos[]` gains
 `key`. `repoName` stays the display label. Several checkouts of one repo
 carry one `key` and possibly different labels; the server picks one label
-per key.
+per key. The fate-row additions below (commit facts, `mine`, `mergedAs`, the
+`facts` block) also go only to a server that lists `"repo"`; to any other a
+fate row is `{ repoName, commitSha, branch, fate }`.
 
 **Commit facts on fate rows, and `"match"` (0.6.0, decision § 3.8).** Every
-fate row now carries the commit's facts: `committedAt` (ISO), `linesAdded`,
+fate row to a `"repo"` server carries the commit's facts: `committedAt` (ISO), `linesAdded`,
 `linesDeleted`, `filesChanged`. When `fields` also contains `"match"`, the
 server attributes this user's still-unattributed events of each `repoKey` to
 those commits itself (earliest commit at or after the event, the same rule
@@ -88,11 +110,12 @@ from the Stop hook when the transcript says `HEAD`. Older servers ignore
 
 **One event per request.** The CLI now collapses the transcript lines of one
 request to one event holding the per-field maximum (Claude Code re-stamps
-usage on every content block and `output_tokens` grows across them). A
-server that previously stored the first line for a request should upsert
-`output_tokens = GREATEST(existing, incoming)` on conflict so the 24 h
-overlap re-send corrects rows inserted mid-stream. Events without an
-Anthropic `requestId` (gateways) arrive with
+usage on every content block and `output_tokens` grows across them), at the
+timestamp of its first line. A sidechain replay that shares a request id
+never adds to the original. A server that previously stored the first line
+for a request should upsert `output_tokens = GREATEST(existing, incoming)` on
+conflict so the 24 h overlap re-send corrects rows inserted mid-stream.
+Events without an Anthropic `requestId` (gateways) arrive with
 `externalId = "msg:<message id>:<session id>"` — never the timestamp, which
 differs per content block of one response.
 
@@ -162,6 +185,7 @@ staging deployment; `CENTRAIL_CONTRACT_ATTEMPTS` bounds the retry loop.
 ## Wire samples
 
 `wire-samples/ingest-0.6.json` is a real ingest body captured from the CLI
-(`centrail inspect --last`) against a server advertising `fields: ["repo"]`.
+bundle against a server advertising `fields: ["repo", "match"]`, and
+`attribute-0.6.json` the fates calls of the same sync.
 The server repo carries a copy under its wire tests and parses it; when the
 shape changes, regenerate this file from a real sync and update both.

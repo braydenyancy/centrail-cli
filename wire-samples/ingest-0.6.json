@@ -3,11 +3,9 @@
     "surface": "claude-code",
     "kind": "local_logs"
   },
-  "account": null,
   "events": [
     {
       "externalId": "req_think",
-      "provider": "anthropic",
       "model": "claude-opus-4-8",
       "inputTokens": 10,
       "outputTokens": 3,
@@ -15,25 +13,24 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T09:20:29.826Z",
+      "occurredAt": "2026-10-02T04:57:20.991Z",
       "metadata": {
-        "sessionId": "s-ws",
-        "gitBranch": "HEAD",
+        "origin": {
+          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+        },
         "repo": {
           "key": "github.com/acme/a",
           "label": "a",
-          "source": "remote"
+          "source": "remote",
+          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
         },
         "placement": "files",
-        "origin": {
-          "platform": "linux",
-          "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f"
-        }
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD"
       }
     },
     {
       "externalId": "req_edit_a",
-      "provider": "anthropic",
       "model": "claude-opus-4-8",
       "inputTokens": 10,
       "outputTokens": 40,
@@ -41,25 +38,24 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T09:20:30.826Z",
+      "occurredAt": "2026-10-02T04:57:21.991Z",
       "metadata": {
-        "sessionId": "s-ws",
-        "gitBranch": "HEAD",
+        "origin": {
+          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+        },
         "repo": {
           "key": "github.com/acme/a",
           "label": "a",
-          "source": "remote"
+          "source": "remote",
+          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
         },
         "placement": "files",
-        "origin": {
-          "platform": "linux",
-          "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f"
-        }
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD"
       }
     },
     {
       "externalId": "req_bash_b",
-      "provider": "anthropic",
       "model": "claude-opus-4-8",
       "inputTokens": 10,
       "outputTokens": 9,
@@ -67,25 +63,24 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T09:20:32.826Z",
+      "occurredAt": "2026-10-02T04:57:23.991Z",
       "metadata": {
-        "sessionId": "s-ws",
-        "gitBranch": "HEAD",
+        "origin": {
+          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+        },
         "repo": {
           "key": "github.com/acme/b",
           "label": "b-wt",
-          "source": "remote"
+          "source": "remote",
+          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
         },
         "placement": "files",
-        "origin": {
-          "platform": "linux",
-          "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f"
-        }
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD"
       }
     },
     {
       "externalId": "req_sticky",
-      "provider": "anthropic",
       "model": "claude-opus-4-8",
       "inputTokens": 10,
       "outputTokens": 2,
@@ -93,25 +88,24 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T09:20:34.826Z",
+      "occurredAt": "2026-10-02T04:57:25.991Z",
       "metadata": {
-        "sessionId": "s-ws",
-        "gitBranch": "HEAD",
+        "origin": {
+          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+        },
         "repo": {
           "key": "github.com/acme/b",
           "label": "b-wt",
-          "source": "remote"
+          "source": "remote",
+          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
         },
         "placement": "sticky",
-        "origin": {
-          "platform": "linux",
-          "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f"
-        }
+        "sessionId": "s-ws",
+        "gitBranch": "HEAD"
       }
     },
     {
       "externalId": "req_live",
-      "provider": "anthropic",
       "model": "claude-opus-4-8",
       "inputTokens": 10,
       "outputTokens": 7,
@@ -119,20 +113,20 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-09-26T09:20:35.826Z",
+      "occurredAt": "2026-10-02T04:57:26.991Z",
       "metadata": {
-        "sessionId": "s-live",
-        "gitBranch": "HEAD",
+        "origin": {
+          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+        },
         "repo": {
           "key": "github.com/acme/a",
           "label": "a",
-          "source": "remote"
+          "source": "remote",
+          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
         },
         "placement": "cwd",
-        "origin": {
-          "platform": "linux",
-          "machineId": "fc2aee07-3b90-46ce-97de-0517f3931f4f"
-        }
+        "sessionId": "s-live",
+        "gitBranch": "HEAD"
       }
     }
   ]

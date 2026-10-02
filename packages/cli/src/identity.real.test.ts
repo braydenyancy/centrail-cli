@@ -24,8 +24,11 @@ describe("repoIdentity", () => {
     await fx.git(clone, "remote", "set-url", "origin", "https://github.com/Acme/Repo");
 
     const ids = await Promise.all([repo, sibling, nested, clone].map((d) => repoIdentity(d)));
+    // The root sha rides with the remote key (§ 3.10), the same everywhere:
+    // it is what lets the server see one repo behind two keys after a rename.
+    const root = (await fx.git(repo, "rev-list", "--max-parents=0", "HEAD")).trim();
     for (const id of ids) {
-      expect(id).toMatchObject({ key: "github.com/acme/repo", source: "remote" });
+      expect(id).toMatchObject({ key: "github.com/acme/repo", source: "remote", root });
     }
     expect(ids.map((i) => i!.label)).toEqual(["repo", "repo-feature", "wt2", "clone"]);
   });
@@ -36,7 +39,7 @@ describe("repoIdentity", () => {
     const wt = await fx.worktree(repo, "local-wt", "wt");
     const root = (await fx.git(repo, "rev-list", "--max-parents=0", "HEAD")).trim();
 
-    expect(await repoIdentity(repo)).toEqual({ key: `sha:${root}`, label: "local", source: "root" });
+    expect(await repoIdentity(repo)).toEqual({ key: `sha:${root}`, label: "local", source: "root", root });
     expect((await repoIdentity(wt))!.key).toBe(`sha:${root}`);
   });
 
@@ -103,7 +106,7 @@ describe("repoIdentity", () => {
     const prev = process.env.HOME;
     process.env.HOME = fakeHome;
     try {
-      expect(await repoIdentity(fakeHome)).toEqual({ key: "github.com/jane/dotfiles", label: "~", source: "remote" });
+      expect(await repoIdentity(fakeHome)).toEqual({ key: "github.com/jane/dotfiles", label: "~", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) });
     } finally {
       process.env.HOME = prev;
     }

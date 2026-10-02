@@ -6,6 +6,19 @@ versioning.
 ## [Unreleased]
 
 ### 0.6.0 — sessions outside a repo find their home (decision § 3.9), and an adversarial pass over 0.6
+- **The field policy (decision § 3.10) extends 0.5.1's allowlist, by
+  capability.** Every server still gets 0.5.1's usage numbers and nothing
+  else. A server that lists `"repo"` also gets, per event, the plaintext repo
+  key with its root commit sha and folder label, the placement, the session
+  id, the branch and a random install id (`origin.machineId`, a
+  `randomUUID`); fate rows gain commit time, line/file counts, `mine`,
+  `mergedAs` and the `facts` block. `"usage-extras"` adds speed and
+  web-search requests. Every field is named in `wire.ts` and pinned by a
+  test that stuffs a parsed event with paths, hostname, platform, account,
+  prompt, code, diff and commit-message text and expects exactly the
+  allowed keys back. Paths, hostnames, platform, client and account data
+  never leave, whatever the server lists; `hideRepoNames` also withholds the
+  root sha.
 - **Placement by touched files, one repo per turn.** A session started in a
   workstream root or the home directory is placed by the files its turns
   touch: the session's cwd if it is a repo, else the turn's edits, else its

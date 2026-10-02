@@ -155,7 +155,7 @@ describe("runStopHook", () => {
     // Turn 1: an edit in a, plus a partial trailing line that must wait.
     await writeFile(transcript, tool("Edit", { file_path: join(a, "new-dir", "x.ts") }) + '{"type":"assistant","partial');
     const l1 = (await fire())!;
-    expect(Object.values(l1.roots!)).toEqual([{ key: "github.com/acme/a", label: "a", source: "remote" }]);
+    expect(Object.values(l1.roots!)).toEqual([{ key: "github.com/acme/a", label: "a", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) }]);
     const firstLineBytes = Buffer.byteLength(tool("Edit", { file_path: join(a, "new-dir", "x.ts") }));
     expect(l1.offset).toBe(firstLineBytes);
 
@@ -184,10 +184,10 @@ describe("runStopHook", () => {
     const deps = { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() };
     const inMain = (await runStopHook(JSON.stringify({ session_id: "s1", cwd: repo }), "claude-code", deps))!;
     expect(inMain.offset).toBeUndefined();
-    expect(inMain.roots).toEqual({ [repo]: { key: "github.com/acme/r", label: "r", source: "remote" } });
+    expect(inMain.roots).toEqual({ [repo]: { key: "github.com/acme/r", label: "r", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) } });
     expect(inMain.mains).toBeUndefined(); // a main checkout has no main
     const inWt = (await runStopHook(JSON.stringify({ session_id: "s2", cwd: wt }), "claude-code", deps))!;
-    expect(inWt.roots).toEqual({ [wt]: { key: "github.com/acme/r", label: "r-wt", source: "remote" } });
+    expect(inWt.roots).toEqual({ [wt]: { key: "github.com/acme/r", label: "r-wt", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) } });
     expect(inWt.mains).toEqual({ [wt]: repo });
   });
 

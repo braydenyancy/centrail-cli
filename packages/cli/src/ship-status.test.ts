@@ -153,6 +153,19 @@ describe("runFatePass", () => {
     expect(body.facts).toEqual({ machineId: "install-1", complete: true });
   });
 
+  it("without a machine id (a server that does not list \"repo\") every row is the 0.5.1 shape and there is no facts block", async () => {
+    stubHappyRepo();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ linked: 0 }), { status: 200 }));
+    await runFatePass(AUTH, [{ root: "/repo", name: "repo", key: "github.com/acme/repo" }]);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(Object.keys(body).sort()).toEqual(["attributions", "fates", "repos"]);
+    expect(body.fates).toEqual([
+      { repoName: "repo", commitSha: "aaa", branch: "main", fate: "shipped" },
+      { repoName: "repo", commitSha: "bbb", branch: "feature/x", fate: "in_flight" },
+      { repoName: "repo", commitSha: "ccc", branch: "feature/dead", fate: "unshipped" },
+    ]);
+  });
+
   it("without a configured user.email no row claims `mine`", async () => {
     stubHappyRepo();
     git.readUserEmail.mockResolvedValue(null);

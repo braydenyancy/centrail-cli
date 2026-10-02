@@ -1658,11 +1658,11 @@ function displayLabel(path) {
 async function repoIdentity(repoRoot) {
   const label = displayLabel(repoRoot);
   const remote = await readRemoteKey(repoRoot);
-  if (remote)
-    return { key: remote, label, source: "remote" };
   const root = await readRootSha(repoRoot);
+  if (remote)
+    return { key: remote, label, source: "remote", ...root ? { root } : {} };
   if (root)
-    return { key: `sha:${root}`, label, source: "root" };
+    return { key: `sha:${root}`, label, source: "root", root };
   return null;
 }
 function folderIdentity(cwd, installId) {
@@ -2830,7 +2830,7 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
     now: now.toISOString()
   };
 }
-async function runFatePass(auth, repos, declared = [], machineId = "") {
+async function runFatePass(auth, repos, declared = [], machineId) {
   let anyRepoPassed = false;
   const tally = { shipped: 0, inFlight: 0, unshipped: 0 };
   for (const { root: one, roots: many, name, key } of repos) {
@@ -2851,6 +2851,10 @@ async function runFatePass(auth, repos, declared = [], machineId = "") {
         tally.inFlight++;
       else
         tally.unshipped++;
+      if (!machineId) {
+        fates.push({ repoName: name, commitSha: row.sha, branch: row.branch, fate: row.fate });
+        continue;
+      }
       const c = bySha.get(row.sha);
       const mine = email && c?.authorEmail ? c.authorEmail === email : void 0;
       fates.push({
@@ -2868,7 +2872,7 @@ async function runFatePass(auth, repos, declared = [], machineId = "") {
       });
     }
     const own = declared.filter((r) => key && r.key === key || r.name === name);
-    await pushFates(auth, fates, own, { machineId, complete: facts.complete });
+    await pushFates(auth, fates, own, machineId ? { machineId, complete: facts.complete } : void 0);
   }
   if (!anyRepoPassed)
     return null;
@@ -2915,7 +2919,7 @@ async function pushFates(auth, fates, repos, facts) {
           authorization: `Bearer ${auth.token}`,
           ...versionHeaders()
         },
-        body: JSON.stringify({ repos, attributions: [], fates: chunk, facts })
+        body: JSON.stringify({ repos, attributions: [], fates: chunk, ...facts ? { facts } : {} })
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -2990,7 +2994,7 @@ function identityMetadata(e, cfg, installId) {
   return metadata;
 }
 function wireIdentity(repo) {
-  return { key: repo.key, label: repo.label, source: repo.source };
+  return { key: repo.key, label: repo.label, source: repo.source, ...repo.root ? { root: repo.root } : {} };
 }
 function redactIdentity(repo, cfg, installId) {
   if (!cfg.hideRepoNames || repo.source === "folder")
@@ -3264,7 +3268,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
     else if (!entry.roots.includes(b.root))
       entry.roots.push(b.root);
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], installId);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0);
   if (tally) {
     console.log(`  \u21B3 ${formatShipStatusLine(tally)}`);
   }

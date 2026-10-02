@@ -29,11 +29,14 @@ Centrail is the system of record for AI work. The CLI reads the usage logs your 
 ## Privacy first
 
 The CLI reads logs locally. Usage uploads contain an opaque event ID, model,
-token counts, and timestamp. Optional git attribution contains the repo
-basename, branch, commit SHA, and aggregate line/file counts. Absolute paths,
-hostnames, provider-account details, prompts, completions, and source code are
-not uploaded. Tool-provided identifiers are used only as opaque deduplication
-keys. The full guarantee is documented at [Local token
+token counts, and timestamp. To a server that accepts them they add the repo
+identity (`github.com/owner/repo` or a root-commit hash, its root commit and
+the folder name), the session id, the branch, and a random per-install id.
+Git attribution contains the repo name, branch, commit SHA, commit time and
+aggregate line/file counts. Absolute paths, hostnames, platform details,
+provider-account details, prompts, completions, diffs, commit messages and
+source code are never uploaded; `npx centrail inspect --last` prints the
+real payload. The full guarantee is documented at [Local token
 capture](https://centrail.org/docs/local-capture) and the [privacy
 policy](https://centrail.org/docs/privacy).
 

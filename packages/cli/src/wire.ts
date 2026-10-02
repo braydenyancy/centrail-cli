@@ -65,7 +65,12 @@ export async function readCapabilities(auth: { baseUrl: string }, known?: Capabi
 }
 
 // The identity block an identity-aware server receives. Every field named.
-export type WireRepoIdentity = { key: string; label: string; source: RepoIdentity["source"] };
+export type WireRepoIdentity = {
+  key: string;
+  label: string;
+  source: RepoIdentity["source"];
+  root?: string; // root commit sha; withheld with the name under hideRepoNames
+};
 
 // Extends the 0.5.1 allowlist, and only for a server that lists "repo".
 export type WireEventMetadata = {
@@ -121,11 +126,12 @@ function identityMetadata(e: ParsedUsageEvent, cfg: Config, installId: string): 
 }
 
 function wireIdentity(repo: RepoIdentity): WireRepoIdentity {
-  return { key: repo.key, label: repo.label, source: repo.source };
+  return { key: repo.key, label: repo.label, source: repo.source, ...(repo.root ? { root: repo.root } : {}) };
 }
 
 // "Hash only, still counted": the key becomes an HMAC under the install id,
-// so the same repo still groups on this machine but is unnamed off it.
+// so the same repo still groups on this machine but is unnamed off it. The
+// root sha goes too: it names a public repo as surely as its URL does.
 export function redactIdentity(repo: RepoIdentity, cfg: Config, installId: string): RepoIdentity {
   if (!cfg.hideRepoNames || repo.source === "folder") return repo;
   const digest = createHmac("sha256", installId).update(repo.key).digest("hex").slice(0, 16);

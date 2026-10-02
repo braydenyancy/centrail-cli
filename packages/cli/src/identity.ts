@@ -149,12 +149,14 @@ export function displayLabel(path: string): string {
 
 // Identity for a resolved repo root. Null only for a repo with neither a
 // hosted remote nor a commit — callers treat that like a plain folder.
+// The root sha rides along either way (§ 3.10): with a remote key it is
+// what lets the server see two keys of one renamed or transferred repo.
 export async function repoIdentity(repoRoot: string): Promise<RepoIdentity | null> {
   const label = displayLabel(repoRoot);
   const remote = await readRemoteKey(repoRoot);
-  if (remote) return { key: remote, label, source: "remote" };
   const root = await readRootSha(repoRoot);
-  if (root) return { key: `sha:${root}`, label, source: "root" };
+  if (remote) return { key: remote, label, source: "remote", ...(root ? { root } : {}) };
+  if (root) return { key: `sha:${root}`, label, source: "root", root };
   return null;
 }
 

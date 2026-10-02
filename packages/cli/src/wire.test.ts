@@ -204,3 +204,92 @@ describe("toWireEvent", () => {
   });
 });
 
+
+// The allowlist, pinned. A parsed event stuffed with everything the machine
+// knows — paths, hostname, platform, client, account, prompt and code text,
+// a diff, a commit message, a Copilot blob, fields no parser has today —
+// must come out as exactly the named keys, at every level, for a server
+// that lists nothing and for one that lists every 0.6 field. A field that
+// reaches the wire by spreading, or by being added to the parsed event,
+// fails here.
+describe("the wire allowlist", () => {
+  const ROOT = "0123456789abcdef0123456789abcdef01234567";
+  const SECRETS = [
+    "/Users/jane", "janes-mbp", "darwin", "claude-vscode", "9.9.9", "jane@acme.com",
+    "org-uuid-1", "acct-uuid-1", "PROMPT-TEXT", "CODE-TEXT", "DIFF-TEXT", "COMMIT-MESSAGE",
+    "ENCRYPTED-BLOB", "anthropic", "turn-7", "touched-file.ts",
+  ];
+  const stuffed = (): ParsedUsageEvent =>
+    ({
+      ...base,
+      cacheWriteTokens: 4,
+      speed: "fast",
+      webSearchRequests: 3,
+      prompt: "PROMPT-TEXT",
+      content: "CODE-TEXT",
+      diff: "DIFF-TEXT",
+      encrypted_content: "ENCRYPTED-BLOB",
+      metadata: {
+        cwd: "/Users/jane/work/repo",
+        gitBranch: "feature/x",
+        sessionId: "s1",
+        version: "9.9.9",
+        entrypoint: "claude-vscode",
+        isSidechain: false,
+        messageId: "msg_1",
+        fallback: true,
+        turn: "turn-7",
+        touched: { writes: ["/Users/jane/work/repo/touched-file.ts"], reads: [] },
+        placement: "files",
+        repo: { key: "github.com/acme/repo", label: "repo", source: "remote", root: ROOT, path: "/Users/jane/work/repo" },
+        origin: { host: "janes-mbp", platform: "darwin", client: "claude-vscode", clientVersion: "9.9.9" },
+        account: { emailAddress: "jane@acme.com", organizationUuid: "org-uuid-1", accountUuid: "acct-uuid-1" },
+        commitMessage: "COMMIT-MESSAGE",
+      },
+    }) as unknown as ParsedUsageEvent;
+
+  const keysDeep = (v: unknown, prefix = ""): string[] =>
+    v !== null && typeof v === "object" && !Array.isArray(v)
+      ? Object.entries(v).flatMap(([k, x]) => [`${prefix}${k}`, ...keysDeep(x, `${prefix}${k}.`)])
+      : [];
+
+  const USAGE_KEYS = [
+    "externalId", "model", "inputTokens", "outputTokens", "cacheReadTokens",
+    "cacheCreationTokens", "cacheWriteTokens", "cacheCreation5mTokens", "cacheCreation1hTokens", "occurredAt",
+  ];
+
+  it.each([
+    ["lists nothing (0.5.1-era)", [], USAGE_KEYS],
+    ["lists only \"match\"", ["match"], USAGE_KEYS],
+    ["lists \"usage-extras\" only", ["usage-extras"], [...USAGE_KEYS, "speed", "webSearchRequests"]],
+    [
+      "lists every 0.6 field",
+      ["repo", "match", "usage-extras"],
+      [
+        ...USAGE_KEYS, "speed", "webSearchRequests",
+        "metadata", "metadata.repo", "metadata.repo.key", "metadata.repo.label", "metadata.repo.source", "metadata.repo.root",
+        "metadata.placement", "metadata.sessionId", "metadata.gitBranch", "metadata.origin", "metadata.origin.machineId",
+      ],
+    ],
+  ])("a server that %s gets exactly the allowed keys, nothing local", (_, fields, allowed) => {
+    const wire = toWireEvent(stuffed(), { fields: new Set(fields) }, cfg, "3f0c2a8e-7d1b-4c55-9a3e-2b8f6d4e1c90");
+    expect(keysDeep(wire).sort()).toEqual([...allowed].sort());
+    const json = JSON.stringify(wire);
+    for (const secret of SECRETS) expect(json).not.toContain(secret);
+    if (fields.includes("repo")) {
+      expect(wire.metadata).toEqual({
+        repo: { key: "github.com/acme/repo", label: "repo", source: "remote", root: ROOT },
+        placement: "files",
+        sessionId: "s1",
+        gitBranch: "feature/x",
+        origin: { machineId: "3f0c2a8e-7d1b-4c55-9a3e-2b8f6d4e1c90" },
+      });
+    }
+  });
+
+  it("hideRepoNames withholds the root sha with the name: a hidden repo cannot be joined back by its first commit", () => {
+    const wire = toWireEvent(stuffed(), { fields: new Set(["repo"]) }, { ...cfg, hideRepoNames: true }, "i");
+    expect(Object.keys(wire.metadata!.repo!).sort()).toEqual(["key", "label", "source"]);
+    expect(JSON.stringify(wire)).not.toContain(ROOT);
+  });
+});
