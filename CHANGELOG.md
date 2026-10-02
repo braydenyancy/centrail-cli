@@ -57,7 +57,8 @@ versioning.
 - **Five 0.6 claims fell to their own tests and are fixed.** The
   no-`requestId` fallback id carried the line's timestamp and split one
   gateway response into one event per content block (99.3% of multi-line
-  responses differ per line); it is now message id + session. A
+  responses differ per line); it is now the message id alone (see the
+  resumed-session entry above). A
   remote-less repo's root sha came from `--all`, so a `--single-branch`
   clone of a repo with an orphan branch keyed differently; it is the default
   branch's root. A session in the home directory (or a dotfiles repo checked
