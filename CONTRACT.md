@@ -223,7 +223,9 @@ staging deployment; `CENTRAIL_CONTRACT_ATTEMPTS` bounds the retry loop.
 ## Wire samples
 
 `wire-samples/ingest-0.6.json` is a real ingest body captured from the CLI
-bundle against a server advertising `fields: ["repo", "match"]`, and
-`attribute-0.6.json` the fates calls of the same sync.
+bundle against a server advertising `fields: ["repo", "match", "patch-id"]`,
+and `attribute-0.6.json` the fates calls of the same sync: the root commit
+with no patch id, a default-branch commit with `patchId` only, and the
+worktree branch's commit with `patchId` and `branchPatchId`.
 The server repo carries a copy under its wire tests and parses it; when the
 shape changes, regenerate this file from a real sync and update both.

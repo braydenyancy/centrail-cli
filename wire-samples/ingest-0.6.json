@@ -13,16 +13,16 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-10-02T04:57:20.991Z",
+      "occurredAt": "2026-10-02T07:07:27.820Z",
       "metadata": {
         "origin": {
-          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+          "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a"
         },
         "repo": {
           "key": "github.com/acme/a",
           "label": "a",
           "source": "remote",
-          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
+          "root": "30c370eadecd60b0b3d048deab1b92cc534c0202"
         },
         "placement": "files",
         "sessionId": "s-ws",
@@ -38,16 +38,16 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-10-02T04:57:21.991Z",
+      "occurredAt": "2026-10-02T07:07:28.820Z",
       "metadata": {
         "origin": {
-          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+          "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a"
         },
         "repo": {
           "key": "github.com/acme/a",
           "label": "a",
           "source": "remote",
-          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
+          "root": "30c370eadecd60b0b3d048deab1b92cc534c0202"
         },
         "placement": "files",
         "sessionId": "s-ws",
@@ -63,16 +63,16 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-10-02T04:57:23.991Z",
+      "occurredAt": "2026-10-02T07:07:30.820Z",
       "metadata": {
         "origin": {
-          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+          "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a"
         },
         "repo": {
           "key": "github.com/acme/b",
           "label": "b-wt",
           "source": "remote",
-          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
+          "root": "30c370eadecd60b0b3d048deab1b92cc534c0202"
         },
         "placement": "files",
         "sessionId": "s-ws",
@@ -88,16 +88,16 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-10-02T04:57:25.991Z",
+      "occurredAt": "2026-10-02T07:07:32.820Z",
       "metadata": {
         "origin": {
-          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+          "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a"
         },
         "repo": {
           "key": "github.com/acme/b",
           "label": "b-wt",
           "source": "remote",
-          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
+          "root": "30c370eadecd60b0b3d048deab1b92cc534c0202"
         },
         "placement": "sticky",
         "sessionId": "s-ws",
@@ -113,16 +113,16 @@
       "cacheCreationTokens": 0,
       "cacheCreation5mTokens": 0,
       "cacheCreation1hTokens": 0,
-      "occurredAt": "2026-10-02T04:57:26.991Z",
+      "occurredAt": "2026-10-02T07:07:33.820Z",
       "metadata": {
         "origin": {
-          "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a"
+          "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a"
         },
         "repo": {
           "key": "github.com/acme/a",
           "label": "a",
           "source": "remote",
-          "root": "9db3d2af4e51835c7aeccd71866882a0fc5040e9"
+          "root": "30c370eadecd60b0b3d048deab1b92cc534c0202"
         },
         "placement": "cwd",
         "sessionId": "s-live",
