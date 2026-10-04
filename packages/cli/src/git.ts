@@ -217,7 +217,11 @@ const SQUASH_PREFIX_CAP = 50;
 // have continued on it after the merge) with each default-branch commit
 // committed since the branch began. The commits of the matching prefix map
 // to that squash commit. Empty when nothing matches, the branch is already
-// merged, or git fails. Bounded: 50 prefixes, 200 candidates.
+// merged, or git fails. Bounded: the branch's newest 50 commits as
+// prefixes, and the default branch's OLDEST 200 commits since the branch
+// began as candidates — a set later commits never change, so a squash once
+// found stays found. (The newest 200 lost it after 200 more commits, and
+// the branch flipped back from shipped.)
 export async function squashedShas(repoRoot: string, defaultRef: string, tipRef: string): Promise<Record<string, string>> {
   try {
     const { stdout: baseOut } = await exec("git", ["-C", repoRoot, "merge-base", defaultRef, tipRef]);
@@ -230,15 +234,16 @@ export async function squashedShas(repoRoot: string, defaultRef: string, tipRef:
       .map((l) => l.split("\x1f"))
       .map(([sha, iso]) => ({ sha: sha.trim(), at: iso.trim() }));
     if (branch.length === 0) return {};
-    // A squash commit postdates the work it squashes.
-    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", `--max-count=${SQUASH_CANDIDATE_CAP}`, `--since=${branch[0].at}`, `${base}..${defaultRef}`]);
-    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean);
+    // A squash commit postdates the work it squashes. (`--max-count` would
+    // apply before `--reverse`, keeping the newest, hence the slice.)
+    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--since=${branch[0].at}`, `${base}..${defaultRef}`], { maxBuffer: FACT_BUFFER });
+    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, SQUASH_CANDIDATE_CAP);
     if (candidates.length === 0) return {};
     const byPatchId = new Map<string, string>();
     for (const sha of candidates) {
       const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff-tree", "-p", "--root", sha], { maxBuffer: FACT_BUFFER });
       const id = await patchId(repoRoot, diff);
-      if (id && !byPatchId.has(id)) byPatchId.set(id, sha);
+      if (id) byPatchId.set(id, sha); // oldest first: one patch landed twice maps to its latest landing
     }
     // Longest prefix first: a branch squashed twice maps to its latest squash.
     for (let k = branch.length; k >= 1; k--) {

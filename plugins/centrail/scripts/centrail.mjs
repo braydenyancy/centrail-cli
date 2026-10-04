@@ -1432,15 +1432,15 @@ async function squashedShas(repoRoot, defaultRef, tipRef) {
     const branch = branchOut.split("\n").filter((l) => !l.startsWith("commit ") && l.includes("")).map((l) => l.split("")).map(([sha, iso]) => ({ sha: sha.trim(), at: iso.trim() }));
     if (branch.length === 0)
       return {};
-    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", `--max-count=${SQUASH_CANDIDATE_CAP}`, `--since=${branch[0].at}`, `${base}..${defaultRef}`]);
-    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean);
+    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--since=${branch[0].at}`, `${base}..${defaultRef}`], { maxBuffer: FACT_BUFFER });
+    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, SQUASH_CANDIDATE_CAP);
     if (candidates.length === 0)
       return {};
     const byPatchId = /* @__PURE__ */ new Map();
     for (const sha of candidates) {
       const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff-tree", "-p", "--root", sha], { maxBuffer: FACT_BUFFER });
       const id = await patchId(repoRoot, diff);
-      if (id && !byPatchId.has(id))
+      if (id)
         byPatchId.set(id, sha);
     }
     for (let k = branch.length; k >= 1; k--) {

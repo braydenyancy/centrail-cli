@@ -106,7 +106,10 @@ versioning.
   A multi-commit branch squash-merged on GitHub, its local branch deleted, its
   stale `origin/<branch>` ref left behind: `git cherry` never saw it, so its
   commits read in flight and kept the events. Fate rows now carry `mergedAs`
-  from whole-branch-prefix patch-ids, and ancestry comes from `origin/main`
+  from whole-branch-prefix patch-ids (the branch's newest 50 commits against
+  the default branch's oldest 200 since the branch began, a set later
+  commits never change: the newest 200 lost a squash once 200 more commits
+  landed, and its branch flipped back from shipped), and ancestry comes from `origin/main`
   when it exists (a parked worktree's local `main` is stale by design). Two
   parallel sessions' racing hooks started four syncs; the throttle is now an
   atomic claim, one sync per interval whatever races.
