@@ -1,10 +1,11 @@
 // Real-git tests. git.test.ts mocks child_process to test parsing; the bugs
 // that matter here are in what git itself does with the environment and the
 // tree, which no mock can show. Fixtures: ./testing/git-fixture.ts.
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readRepoCommits, resolveRepoRoot } from "./git.js";
+import { listRecentShas, readRepoCommits, resolveRepoRoot } from "./git.js";
+import { repoIdentity } from "./identity.js";
 import { scratch, type Scratch } from "./testing/git-fixture.js";
 
 let fx: Scratch;
@@ -63,6 +64,41 @@ describe("resolveRepoRoot against real repos", () => {
     expect(await resolveRepoRoot(join(nested, "sub"))).toBeNull(); // does not exist
   });
 
+});
+
+// `--all` is every ref, and two kinds of ref hold commits that are nobody's
+// work: a stash (its WIP and index commits, and with -u a ROOT commit of the
+// untracked files) and notes. Neither may become a fate row, an attribution
+// target or a repo's root.
+describe("stash and notes are not history", () => {
+  async function stashed(name: string, branch = "main") {
+    const repo = join(fx.root, name);
+    await mkdir(repo);
+    await fx.git(repo, "init", "-q", "--template=", "-b", branch);
+    await fx.commit(repo, "a.txt");
+    const head = await fx.git(repo, "rev-parse", "HEAD");
+    for (const n of [1, 2, 3]) {
+      await writeFile(join(repo, "a.txt"), `wip ${n}\n`);
+      await writeFile(join(repo, `untracked-${n}.txt`), `${n}\n`);
+      await fx.git(repo, "stash", "push", "-q", "-u", "-m", `wip ${n}`);
+    }
+    await fx.git(repo, "notes", "add", "-m", "a note", "HEAD");
+    return { repo, head };
+  }
+
+  it("a stash and a note are neither recent commits nor --all history", async () => {
+    fx = await scratch();
+    const { repo, head } = await stashed("repo");
+    expect((await listRecentShas(repo, 100_000)).map((c) => c.sha)).toEqual([head]);
+    expect((await readRepoCommits(repo, "--all")).map((c) => c.sha)).toEqual([head]);
+  });
+
+  it("a detached repo with no default branch keys by its own root, not a stash's untracked-files root", async () => {
+    fx = await scratch();
+    const { repo, head } = await stashed("detached", "trunk");
+    await fx.git(repo, "checkout", "-q", "--detach");
+    expect(await repoIdentity(repo)).toMatchObject({ key: `sha:${head}`, source: "root", root: head });
+  });
 });
 
 describe("squashedShas against real repos", () => {

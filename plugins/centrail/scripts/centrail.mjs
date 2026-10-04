@@ -1323,11 +1323,14 @@ async function readMainCheckout(repoRoot) {
     return null;
   }
 }
+function revRange(ref) {
+  return ref === "--all" ? ["--exclude=refs/stash", "--exclude=refs/notes/*", "--all"] : [ref];
+}
 async function readRepoCommits(repoRoot, ref = "HEAD") {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", ref, "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
+      ["-C", repoRoot, "log", ...revRange(ref), "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
       { maxBuffer: 64 * 1024 * 1024 }
     );
     return parseGitLogNumstat(stdout);
@@ -1440,7 +1443,7 @@ async function listRecentShas(repoRoot, sinceDays = 90) {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
+      ["-C", repoRoot, "log", ...revRange("--all"), `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
       { maxBuffer: 64 * 1024 * 1024 }
     );
     return parseGitLogNumstat(stdout).slice(0, RECENT_SHA_CAP).map((c) => ({
@@ -1651,7 +1654,7 @@ async function readRootSha(repoRoot) {
 }
 async function listRoots(repoRoot, ref) {
   try {
-    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ref]);
+    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ...revRange(ref)]);
     return stdout.split("\n").map((s) => s.trim()).filter((s) => /^[0-9a-f]{40,64}$/.test(s)).sort();
   } catch {
     return [];

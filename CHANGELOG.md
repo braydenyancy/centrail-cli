@@ -88,7 +88,11 @@ versioning.
   commits instead of leaving them on a ghost sha. Fate rows carry `mine`
   (author is this machine's git identity; the email never leaves) and the
   Stop hook's branch replaces the transcript's `HEAD`, so the server prefers
-  your own commits on the session's branch.
+  your own commits on the session's branch. A stash and a note are not
+  history: every `--all` skips `refs/stash` and `refs/notes/*`, so a
+  `git stash` no longer becomes unshipped fate rows dated now, and a
+  `stash -u`'s untracked-files root commit can no longer become a repo's
+  root key.
 - **Squash merges resolve, and "shipped" is judged against the remote.**
   A multi-commit branch squash-merged on GitHub, its local branch deleted, its
   stale `origin/<branch>` ref left behind: `git cherry` never saw it, so its

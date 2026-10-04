@@ -98,6 +98,15 @@ export function repoName(repoRoot: string): string {
   return basename(repoRoot);
 }
 
+// "--all" as every ref that holds work. A stash's commits (WIP, index, and
+// with -u a root commit of the untracked files) and notes commits are
+// nobody's work: as fate rows, attribution targets or a repo's root they
+// would be wrong. An --exclude applies to the --all after it, so order
+// matters.
+export function revRange(ref: string): string[] {
+  return ref === "--all" ? ["--exclude=refs/stash", "--exclude=refs/notes/*", "--all"] : [ref];
+}
+
 // Commits reachable from `ref` with numstat — HEAD for a live checkout, a
 // branch ref for a session whose own worktree is gone (branches outlive
 // worktrees), or "--all" when nothing better is known. Empty for an empty
@@ -106,7 +115,7 @@ export async function readRepoCommits(repoRoot: string, ref = "HEAD"): Promise<R
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", ref, "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
+      ["-C", repoRoot, "log", ...revRange(ref), "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout);
@@ -236,7 +245,7 @@ function patchId(repoRoot: string, diff: string): Promise<string | null> {
   });
 }
 
-// Recent commits across ALL refs with their facts — sha, committer date,
+// Recent commits across every work ref (revRange) with their facts — sha, committer date,
 // line counts — newest first, in ONE spawn, capped so a monorepo can't
 // flood the fate pass. The facts ride every fate row (§ 3.8) so the server
 // can match events to commits without a window, on any machine.
@@ -253,7 +262,7 @@ export async function listRecentShas(repoRoot: string, sinceDays = 90): Promise<
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
+      ["-C", repoRoot, "log", ...revRange("--all"), `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout)

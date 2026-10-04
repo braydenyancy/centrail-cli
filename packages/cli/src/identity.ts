@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { RepoIdentity } from "@centrail/parsers";
-import { gitExec, resolveDefaultBranch } from "./git.js";
+import { gitExec, resolveDefaultBranch, revRange } from "./git.js";
 
 // Repo identity: the one string that is the same for every checkout of a
 // repo — every worktree, every clone, every machine, every user on a team.
@@ -142,7 +142,7 @@ async function readRootSha(repoRoot: string): Promise<string | null> {
 
 async function listRoots(repoRoot: string, ref: string): Promise<string[]> {
   try {
-    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ref]);
+    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ...revRange(ref)]);
     return stdout
       .split("\n")
       .map((s) => s.trim())
