@@ -136,6 +136,10 @@ versioning.
   replay on 09-03, synced incrementally on 09-03, became two rows. Files are
   still chosen by mtime; their lines are now folded and collapsed whole and
   filtered after, keeping any response with a line in the window.
+- **The hook reads each transcript line once.** Its per-session offset is
+  in bytes but was taken from a string index (UTF-16 units), so a turn with
+  "—" or "→" left it short and the next turn re-read the tail. It is now the
+  last newline's byte position.
 - Shared stand-in server for harness tests; 284 CLI and 157 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix

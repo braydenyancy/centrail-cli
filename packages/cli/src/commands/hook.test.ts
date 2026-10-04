@@ -176,6 +176,23 @@ describe("runStopHook", () => {
     expect((await readSidecar(sidecarPath)).get("s")?.roots).toEqual(l4.roots);
   });
 
+  it("the offset is in bytes: a transcript with multi-byte text (— →) is read once, never re-read from short of where the last turn stopped", async () => {
+    fx = await scratch();
+    const { writeFile, appendFile, stat } = await import("node:fs/promises");
+    const a = await fx.repo("a", { remote: "https://github.com/acme/a.git" });
+    const transcript = join(fx.root, "t.jsonl");
+    const edit = (file: string) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "x", name: "Edit", input: { file_path: join(a, file), old_string: "a — b", new_string: "a → b — c → d" } }] } })}\n`;
+    const deps = { sidecarPath: join(fx.root, "sessions.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState() };
+    const fire = async () => (await runStopHook(JSON.stringify({ session_id: "s", cwd: fx.root, transcript_path: transcript }), "claude-code", deps))!;
+    await writeFile(transcript, edit("x.ts") + '{"type":"assistant","partial — →');
+    expect((await fire()).offset).toBe(Buffer.byteLength(edit("x.ts")));
+    await writeFile(transcript, edit("x.ts") + edit("y.ts"));
+    expect((await fire()).offset).toBe((await stat(transcript)).size);
+    await appendFile(transcript, edit("z.ts"));
+    expect((await fire()).offset).toBe((await stat(transcript)).size);
+  });
+
   it("a submodule's files record the submodule's root, though the superproject around it was recorded first", async () => {
     fx = await scratch();
     const { writeFile, mkdir } = await import("node:fs/promises");

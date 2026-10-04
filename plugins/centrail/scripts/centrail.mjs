@@ -2430,13 +2430,12 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
     const length = Math.min(size - offset, MAX_BYTES_PER_TURN);
     const buf = Buffer.alloc(length);
     const { bytesRead } = await fh.read(buf, 0, length, offset);
-    const text = buf.toString("utf-8", 0, bytesRead);
-    const complete = text.lastIndexOf("\n");
+    const complete = buf.subarray(0, bytesRead).lastIndexOf(10);
     if (complete < 0)
       return offset;
     const dirs = /* @__PURE__ */ new Set();
     let turnCwd = cwd;
-    for (const raw of text.slice(0, complete).split("\n")) {
+    for (const raw of buf.toString("utf-8", 0, complete).split("\n")) {
       if (!raw.includes('"tool_use"') && !raw.includes('"function_call"') && !raw.includes('"turn_context"'))
         continue;
       let line;

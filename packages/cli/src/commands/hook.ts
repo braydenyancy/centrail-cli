@@ -164,12 +164,14 @@ async function recordTouchedRoots(transcript: string, offset: number, roots: Rec
     const length = Math.min(size - offset, MAX_BYTES_PER_TURN);
     const buf = Buffer.alloc(length);
     const { bytesRead } = await fh.read(buf, 0, length, offset);
-    const text = buf.toString("utf-8", 0, bytesRead);
-    const complete = text.lastIndexOf("\n");
+    // The offset is in bytes, so the last newline is found in bytes: a
+    // string index counts UTF-16 units, and "—" or "→" (3 bytes, 1 unit)
+    // would leave the offset short and the next turn re-reading.
+    const complete = buf.subarray(0, bytesRead).lastIndexOf(0x0a);
     if (complete < 0) return offset; // no whole line yet
     const dirs = new Set<string>();
     let turnCwd = cwd; // Codex: turn_context may move the cwd
-    for (const raw of text.slice(0, complete).split("\n")) {
+    for (const raw of buf.toString("utf-8", 0, complete).split("\n")) {
       if (!raw.includes('"tool_use"') && !raw.includes('"function_call"') && !raw.includes('"turn_context"')) continue;
       let line: unknown;
       try {
