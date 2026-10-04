@@ -33,10 +33,11 @@ import { gitExec, resolveDefaultBranch, revRange } from "./git.js";
 // Also null for a remote that names a machine rather than a hosted repo: an
 // IP literal, a LAN-only name (`.local`, `.lan`, …), a dotless host (an ssh
 // config alias like `github-work`, or a bare machine name), a path into a
-// home directory (`~`), or scp's absolute path (`host:/Users/…`). As a key
-// each would put a hostname, an address or a home path on the wire, or a
-// name no other clone shares; the root sha that replaces it is the same for
-// every clone.
+// home directory (`~`, or under `home`, `Users` or `root` off the forges, in
+// any URL shape), or scp's absolute path (`host:/srv/…`). As a key each
+// would put a hostname, an address or a home path on the wire, or a name no
+// other clone shares; the root sha that replaces it is the same for every
+// clone.
 export function remoteKey(url: string): string | null {
   const raw = url.trim();
   if (!raw) return null;
@@ -67,12 +68,16 @@ export function remoteKey(url: string): string | null {
     scp = true;
   }
   host = host.toLowerCase();
-  if (!isHostedName(host) || /^\/?~/.test(path)) return null;
+  if (!isHostedName(host)) return null;
   // The forges ignore a leading slash (`git@github.com:/acme/repo`); on any
   // other host scp's absolute path is a folder on that machine.
-  if (scp && path.startsWith("/") && !LEADING_SLASH_FORGES.has(host)) return null;
+  if (scp && path.startsWith("/") && !FORGES.has(host)) return null;
   path = path.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
   if (!host || !path) return null;
+  // A path under a home-directory root (`/home/alice`, `/Users/alice`,
+  // `/root`) names a login on that machine, in any URL shape. A forge's
+  // first segment is an account (`github.com/root/x`), never a folder.
+  if (path.startsWith("~") || (!FORGES.has(host) && HOME_ROOT.test(path))) return null;
 
   // Azure DevOps: ssh `ssh.dev.azure.com:v3/org/project/repo` and https
   // `dev.azure.com/org/project/_git/repo` are one repo. Fold ssh into the
@@ -95,7 +100,8 @@ export function remoteKey(url: string): string | null {
   return /^[a-z0-9.-]+\/[^\s]+$/.test(key) ? key : null;
 }
 
-const LEADING_SLASH_FORGES = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+const FORGES = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+const HOME_ROOT = /^(?:home|users|root)(?:\/|$)/i;
 const LAN_SUFFIXES = [".local", ".localhost", ".localdomain", ".lan", ".home.arpa"];
 
 // A name a server is reached by, not a machine on a LAN, an address, or an

@@ -45,9 +45,10 @@ versioning.
   `ssh://alice@192.168.1.20/home/alice/…` likewise. IP literals, LAN-only
   names (`.local`, `.lan`, `.home.arpa`, `.localdomain`, `localhost`),
   dotless hosts (an ssh config alias such as `github-work:acme/repo`, which
-  no other clone shares and the server rejects), home paths (`~`) and scp's
-  absolute paths off the forges now key by the root sha, which every clone
-  shares.
+  no other clone shares and the server rejects), home paths (`~`, or a first
+  segment `home`, `Users` or `root` off the forges, in ssh, scp and https
+  alike) and scp's absolute paths off the forges now key by the root sha,
+  which every clone shares.
 - **One full re-send on upgrade, so the server can enrich what it holds.**
   Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
   the first sync after upgrading re-sends each surface's history once, and to
