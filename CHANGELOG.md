@@ -33,7 +33,8 @@ versioning.
   prompt, code, diff and commit-message text and expects exactly the
   allowed keys back. Paths, hostnames, platform, client and account data
   never leave, whatever the server lists; `hideRepoNames` also withholds the
-  root sha. Both toggles reach the attribute route too: `repos[]`,
+  root sha, and blanks a non-repo folder's label (its basename) as it does a
+  repo's. Both toggles reach the attribute route too: `repos[]`,
   attributions and fate rows carry the events' `hidden:` key (as their name
   as well) and no branch, so a matching server joins them. Before, they
   reached events only, and the fates' real keys never matched the events'

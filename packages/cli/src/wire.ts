@@ -134,9 +134,12 @@ function wireIdentity(repo: RepoIdentity): WireRepoIdentity {
 
 // "Hash only, still counted": the key becomes an HMAC under the install id,
 // so the same repo still groups on this machine but is unnamed off it. The
-// root sha goes too: it names a public repo as surely as its URL does.
+// root sha goes too: it names a public repo as surely as its URL does. A
+// folder's `dir:` key is already a keyed hash of its path; its label, the
+// basename, would name it, so the label goes.
 export function redactIdentity(repo: RepoIdentity, cfg: Config, installId: string): RepoIdentity {
-  if (!cfg.hideRepoNames || repo.source === "folder") return repo;
+  if (!cfg.hideRepoNames) return repo;
+  if (repo.source === "folder") return { key: repo.key, label: "", source: repo.source };
   const digest = createHmac("sha256", installId).update(repo.key).digest("hex").slice(0, 16);
   return { key: `hidden:${digest}`, label: "", source: repo.source };
 }

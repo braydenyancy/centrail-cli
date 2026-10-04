@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ParsedUsageEvent } from "@centrail/parsers";
 import type { Config } from "./config.js";
-import { toWireEvent, toWireFate, toWireUsageEvent, type LocalFate } from "./wire.js";
+import { toWireEvent, toWireFate, toWireUsageEvent, wireRepoRef, type LocalFate } from "./wire.js";
 
 describe("toWireUsageEvent", () => {
   it("uploads only the explicit usage allowlist", () => {
@@ -142,6 +142,19 @@ describe("toWireEvent", () => {
     expect(w.metadata.repo.key).toMatch(/^hidden:[0-9a-f]{16}$/);
     expect(w.metadata.repo.label).toBe("");
     expect(JSON.stringify(w)).not.toContain("acme");
+  });
+
+  it("hideRepoNames also blanks a folder's label: its basename names it as surely as a repo's", () => {
+    const folder: ParsedUsageEvent = {
+      ...base,
+      metadata: { ...base.metadata, repo: { key: "dir:0123456789abcdef", label: "acquisition-target", source: "folder" } },
+    };
+    const w = toWireEvent(folder, aware, { ...cfg, hideRepoNames: true }, "install-1") as { metadata: { repo: { key: string; label: string } } };
+    expect(w.metadata.repo).toEqual({ key: "dir:0123456789abcdef", label: "", source: "folder" });
+    expect(wireRepoRef(folder.metadata.repo!, { ...cfg, hideRepoNames: true }, "install-1")).toEqual({ name: "dir:0123456789abcdef", key: "dir:0123456789abcdef" });
+    expect(JSON.stringify(w)).not.toContain("acquisition-target");
+    // Without the toggle the folder keeps its label, as every repo does.
+    expect((toWireEvent(folder, aware, cfg, "install-1") as { metadata: { repo: { label: string } } }).metadata.repo.label).toBe("acquisition-target");
   });
 
   it.each([
