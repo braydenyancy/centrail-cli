@@ -45,9 +45,10 @@ versioning.
   `ssh://alice@192.168.1.20/home/alice/…` likewise. IP literals, LAN-only
   names (`.local`, `.lan`, `.home.arpa`, `.localdomain`, `localhost`),
   dotless hosts (an ssh config alias such as `github-work:acme/repo`, which
-  no other clone shares and the server rejects), home paths (`~`) and scp's
-  absolute paths off the forges now key by the root sha, which every clone
-  shares.
+  no other clone shares and the server rejects), home paths (`~`, or a first
+  segment `home`, `Users` or `root` off the forges, in ssh, scp and https
+  alike) and scp's absolute paths off the forges now key by the root sha,
+  which every clone shares.
 - **Abandoned work stays abandoned: patch ids prove what a vanished commit
   became.** To a server that lists `"patch-id"`, each fate row carries
   `patchId` (`git patch-id --stable` of the commit's own diff; none for a

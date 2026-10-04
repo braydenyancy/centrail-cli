@@ -119,6 +119,18 @@ describe("remoteKey equivalence classes", () => {
     ["scp home-relative path", "devbox.corp.example:~/repos/proj.git"],
     ["scp another user's home", "git@devbox.corp.example:~alice/proj.git"],
     ["ssh URL into a home", "ssh://alice@devbox.corp.example/~alice/proj.git"],
+    ["ssh URL into a home, doubled slash", "ssh://alice@devbox.corp.example//~alice/proj.git"],
+    ["https into a home", "https://devbox.corp.example/~alice/proj.git"],
+    // A path under a home-directory root names a login on that machine,
+    // whatever the host and however the URL is spelled.
+    ["ssh URL under /home", "ssh://alice@devbox.corp.example/home/alice/repos/proj.git"],
+    ["ssh URL under /Users, with a port", "ssh://git@devbox.corp.example:2222/Users/alice/proj.git"],
+    ["ssh URL under /root", "ssh://root@devbox.corp.example/root/proj.git"],
+    ["scp relative path under home", "git@devbox.corp.example:home/alice/proj.git"],
+    ["scp relative path under Users", "devbox.corp.example:Users/alice/proj.git"],
+    ["https under /home", "https://devbox.corp.example/home/alice/repos/proj.git"],
+    ["https under /USERS", "https://git.corp.example/USERS/alice/proj.git"],
+    ["https under /root", "https://git.corp.example/root/proj"],
     ["file URL", "file:///Users/alice/repos/acme-secret.git"],
     // A dotless host is an ssh config alias or a bare machine name: not the
     // repo's canonical host, and a key the server rejects.
@@ -128,6 +140,16 @@ describe("remoteKey equivalence classes", () => {
     ["bare machine name", "nas:repos/proj.git"],
   ])("%s (%s) is not a key", (_, url) => {
     expect(remoteKey(url)).toBeNull();
+  });
+
+  // On the forges the first segment is an account, not a folder: an owner
+  // that happens to be named like a home root is still owner/repo.
+  it.each([
+    ["https://github.com/root/repo.git", "github.com/root/repo"],
+    ["git@gitlab.com:home/repo.git", "gitlab.com/home/repo"],
+    ["ssh://git@bitbucket.org/Users/repo.git", "bitbucket.org/users/repo"],
+  ])("%s keys as %s", (url, key) => {
+    expect(remoteKey(url)).toBe(key);
   });
 
   it("a key never carries whitespace, credentials or a scheme", () => {
