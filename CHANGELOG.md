@@ -140,6 +140,14 @@ versioning.
   in bytes but was taken from a string index (UTF-16 units), so a turn with
   "—" or "→" left it short and the next turn re-read the tail. It is now the
   last newline's byte position.
+- **The sidecar stays small, connected or not.** Compaction kept the last
+  line of every session ever run, and only a sync compacted, so a machine
+  that never connected grew it forever; every hook reads it whole (2 ms at
+  1k sessions, 47 ms at 20k, parse alone). A session silent past the 90-day fate
+  window is now dropped, and while not connected the hook compacts on the
+  auto-sync throttle, under the sync lock. A turn past the 64-directory cap
+  recorded 64 roots and moved its offset past the rest; it now stops before
+  the line it could not finish, and the next turn resumes there.
 - Shared stand-in server for harness tests; 284 CLI and 157 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix

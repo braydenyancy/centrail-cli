@@ -1787,6 +1787,7 @@ async function readSidecar(path = SIDECAR_PATH) {
   }
   return out;
 }
+var SIDECAR_RETENTION_DAYS = 90;
 async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   let text;
   try {
@@ -1797,6 +1798,7 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   const keep = /* @__PURE__ */ new Map();
   const recent = [];
   const cutoff = now - 60 * 60 * 1e3;
+  const lastSeen = /* @__PURE__ */ new Map();
   for (const raw of text.split("\n")) {
     if (!raw.trim())
       continue;
@@ -1808,11 +1810,17 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
     }
     if (!isSidecarLine(line))
       continue;
-    if (new Date(line.ts).getTime() >= cutoff)
+    const at = new Date(line.ts).getTime();
+    lastSeen.set(line.sessionId, Math.max(lastSeen.get(line.sessionId) ?? -Infinity, at));
+    if (at >= cutoff)
       recent.push(raw);
     else
       keep.set(line.sessionId, raw);
   }
+  const expired = now - SIDECAR_RETENTION_DAYS * 24 * 60 * 60 * 1e3;
+  for (const [sessionId, at] of lastSeen)
+    if (at < expired)
+      keep.delete(sessionId);
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile2(tmp, [...keep.values(), ...recent].map((l) => `${l}
 `).join(""), { mode: 384 });
@@ -2433,9 +2441,12 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
     const complete = buf.subarray(0, bytesRead).lastIndexOf(10);
     if (complete < 0)
       return offset;
-    const dirs = /* @__PURE__ */ new Set();
+    const lines = [];
     let turnCwd = cwd;
-    for (const raw of buf.toString("utf-8", 0, complete).split("\n")) {
+    for (let start = 0; start <= complete; ) {
+      const nl = buf.indexOf(10, start);
+      const raw = buf.toString("utf-8", start, nl);
+      start = nl + 1;
       if (!raw.includes('"tool_use"') && !raw.includes('"function_call"') && !raw.includes('"turn_context"'))
         continue;
       let line;
@@ -2455,31 +2466,32 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
         ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
       if (!ev)
         continue;
-      for (const path of [...ev.writes, ...ev.reads])
-        dirs.add(path);
+      lines.push({ paths: [...ev.writes, ...ev.reads], end: start });
     }
     let spawned = 0;
     const seen = /* @__PURE__ */ new Set();
-    for (const path of dirs) {
-      const dir = await nearestDirectory(path);
-      if (!dir || seen.has(dir))
-        continue;
-      seen.add(dir);
-      const known = deepestRoot(Object.keys(roots), path);
-      if (known && !await nestedCheckout(known, dir))
-        continue;
-      if (spawned++ >= MAX_DIRS_PER_TURN)
-        break;
-      const r = await resolveRepoRoot(dir);
-      if (!r)
-        continue;
-      const id = roots[r] ?? await repoIdentity(r);
-      if (!id)
-        continue;
-      await recordRoot(r, id, roots, mains);
-      const alias = logicalRoot(dir, r);
-      if (alias && !roots[alias])
-        roots[alias] = id;
+    for (let i = 0; i < lines.length; i++) {
+      for (const path of lines[i].paths) {
+        const dir = await nearestDirectory(path);
+        if (!dir || seen.has(dir))
+          continue;
+        seen.add(dir);
+        const known = deepestRoot(Object.keys(roots), path);
+        if (known && !await nestedCheckout(known, dir))
+          continue;
+        if (spawned++ >= MAX_DIRS_PER_TURN)
+          return offset + (i > 0 ? lines[i - 1].end : lines[i].end);
+        const r = await resolveRepoRoot(dir);
+        if (!r)
+          continue;
+        const id = roots[r] ?? await repoIdentity(r);
+        if (!id)
+          continue;
+        await recordRoot(r, id, roots, mains);
+        const alias = logicalRoot(dir, r);
+        if (alias && !roots[alias])
+          roots[alias] = id;
+      }
     }
     return offset + complete + 1;
   } finally {
@@ -2518,13 +2530,26 @@ async function maybeAutoSync(now, deps, claimPath) {
   const state = await read();
   if (!shouldAutoSync(state, now))
     return;
-  if (!await connected())
+  if (!await connected()) {
+    if (await claimAutoSync(claimPath, now))
+      await compactLocked(now, deps);
     return;
+  }
   if (!await claimAutoSync(claimPath, now))
     return;
   state.autoSyncAt = now.toISOString();
   await write(state);
   (deps.spawnSync ?? spawnDetachedSync)();
+}
+async function compactLocked(now, deps) {
+  const release = await acquireSyncLock(deps.lockPath ?? join8(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  if (!release)
+    return;
+  try {
+    await compactSidecar(deps.sidecarPath, now.getTime());
+  } finally {
+    await release();
+  }
 }
 async function claimAutoSync(claimPath, now) {
   for (let attempt = 0; attempt < 3; attempt++) {

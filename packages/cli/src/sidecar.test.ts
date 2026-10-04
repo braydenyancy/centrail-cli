@@ -46,6 +46,21 @@ describe("sidecar", () => {
     expect((await readSidecar(path)).get("old")?.branch).toBe("y");
   });
 
+  it("compaction drops a session whose last line is older than the 90-day fate window", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "centrail-sc-")), "s.jsonl");
+    const now = Date.parse("2026-10-01T00:00:00Z");
+    const daysAgo = (d: number) => new Date(now - d * 24 * 60 * 60 * 1000).toISOString();
+    await appendSidecar(line("gone", daysAgo(120)), path);
+    await appendSidecar(line("gone", daysAgo(91)), path);
+    await appendSidecar(line("kept", daysAgo(120)), path);
+    await appendSidecar(line("kept", daysAgo(89), "latest"), path); // its last line is inside the window
+    await appendSidecar(line("live", daysAgo(0)), path);
+    await compactSidecar(path, now);
+    const map = await readSidecar(path);
+    expect([...map.keys()].sort()).toEqual(["kept", "live"]);
+    expect(map.get("kept")?.branch).toBe("latest");
+  });
+
   it("readSidecar of a missing file is empty, compact of a missing file is a no-op", async () => {
     const path = join(await mkdtemp(join(tmpdir(), "centrail-sc-")), "none.jsonl");
     expect((await readSidecar(path)).size).toBe(0);

@@ -71,13 +71,20 @@ export async function readSidecar(path: string = SIDECAR_PATH): Promise<Map<stri
   return out;
 }
 
+// Past the fate window (ship-status.ts) nothing re-attributes, and a
+// session silent that long has nothing left to place: an incremental scan
+// never reads it again, and the server keeps the identity a re-send lacks.
+export const SIDECAR_RETENTION_DAYS = 90;
+
 // Rewrite the file as its last line per session, atomically. Hooks do not
 // take the sync lock (they must stay fast), so an append that lands between
 // the read below and the rename goes to the old inode and is lost. The bound
 // on that loss: one turn's line, and only for a session with no earlier line
 // kept — its next turn appends again. Lines from the last hour are kept
 // verbatim so a session's most recent branch/head is never collapsed away
-// while it is still live.
+// while it is still live. A session whose last line is older than
+// SIDECAR_RETENTION_DAYS is dropped: every hook reads the whole file, so it
+// must not grow with every session ever run.
 export async function compactSidecar(path: string = SIDECAR_PATH, now = Date.now()): Promise<void> {
   let text: string;
   try {
@@ -88,6 +95,7 @@ export async function compactSidecar(path: string = SIDECAR_PATH, now = Date.now
   const keep = new Map<string, string>();
   const recent: string[] = [];
   const cutoff = now - 60 * 60 * 1000;
+  const lastSeen = new Map<string, number>();
   for (const raw of text.split("\n")) {
     if (!raw.trim()) continue;
     let line: unknown;
@@ -97,9 +105,13 @@ export async function compactSidecar(path: string = SIDECAR_PATH, now = Date.now
       continue;
     }
     if (!isSidecarLine(line)) continue;
-    if (new Date(line.ts).getTime() >= cutoff) recent.push(raw);
+    const at = new Date(line.ts).getTime();
+    lastSeen.set(line.sessionId, Math.max(lastSeen.get(line.sessionId) ?? -Infinity, at));
+    if (at >= cutoff) recent.push(raw);
     else keep.set(line.sessionId, raw);
   }
+  const expired = now - SIDECAR_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  for (const [sessionId, at] of lastSeen) if (at < expired) keep.delete(sessionId); // unparsable ts: NaN, kept
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile(tmp, [...keep.values(), ...recent].map((l) => `${l}\n`).join(""), { mode: 0o600 });
   await rename(tmp, path);

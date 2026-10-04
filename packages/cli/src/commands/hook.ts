@@ -3,10 +3,10 @@ import { realpathSync } from "node:fs";
 import { mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
-import { readAuth, readState, writeState } from "../config.js";
+import { acquireSyncLock, readAuth, readState, writeState } from "../config.js";
 import { deepestRoot, nearestDirectory, nestedCheckout, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
-import { appendSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
+import { appendSidecar, compactSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
 import type { SyncState } from "../watermarks.js";
 
 // `centrail hook stop` — the collection trigger. Claude Code runs it at the
@@ -46,7 +46,8 @@ export function detectSurface(input: HookInput, fallback: string): string {
 }
 
 // Bounds on the transcript read per turn: distinct directories that cost
-// a git spawn, and bytes. A turn past either is recorded with what fit.
+// a git spawn, and bytes. A turn past either records what fit and leaves
+// its offset where it stopped; the next turn reads on from there.
 const MAX_DIRS_PER_TURN = 64;
 const MAX_BYTES_PER_TURN = 64 * 1024 * 1024;
 
@@ -58,6 +59,7 @@ export type HookDeps = {
   writeState?: (s: SyncState) => Promise<void>;
   connected?: () => Promise<boolean>;
   claimPath?: string; // the atomic throttle claim; beside the sidecar by default
+  lockPath?: string; // the sync lock; beside the sidecar by default, as in production
 };
 
 export async function runStopHook(
@@ -169,9 +171,13 @@ async function recordTouchedRoots(transcript: string, offset: number, roots: Rec
     // would leave the offset short and the next turn re-reading.
     const complete = buf.subarray(0, bytesRead).lastIndexOf(0x0a);
     if (complete < 0) return offset; // no whole line yet
-    const dirs = new Set<string>();
+    // Each line's touched paths, with the byte offset just past the line.
+    const lines: { paths: string[]; end: number }[] = [];
     let turnCwd = cwd; // Codex: turn_context may move the cwd
-    for (const raw of buf.toString("utf-8", 0, complete).split("\n")) {
+    for (let start = 0; start <= complete; ) {
+      const nl = buf.indexOf(0x0a, start);
+      const raw = buf.toString("utf-8", start, nl);
+      start = nl + 1;
       if (!raw.includes('"tool_use"') && !raw.includes('"function_call"') && !raw.includes('"turn_context"')) continue;
       let line: unknown;
       try {
@@ -185,30 +191,35 @@ async function recordTouchedRoots(transcript: string, offset: number, roots: Rec
       else if (line.type === "turn_context" && isObject(line.payload) && typeof line.payload.cwd === "string") turnCwd = line.payload.cwd; // Codex
       else if (line.type === "response_item" && isObject(line.payload) && line.payload.type === "function_call") ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd); // Codex
       if (!ev) continue;
-      for (const path of [...ev.writes, ...ev.reads]) dirs.add(path); // a file or a directory; the lookup climbs
+      lines.push({ paths: [...ev.writes, ...ev.reads], end: start }); // files or directories; the lookup climbs
     }
     let spawned = 0;
     const seen = new Set<string>();
-    for (const path of dirs) {
-      const dir = await nearestDirectory(path);
-      if (!dir || seen.has(dir)) continue;
-      seen.add(dir);
-      // A known root covers the path unless a checkout nested inside it (a
-      // submodule) holds it: the most specific root is the one recorded.
-      const known = deepestRoot(Object.keys(roots), path);
-      if (known && !(await nestedCheckout(known, dir))) continue;
-      if (spawned++ >= MAX_DIRS_PER_TURN) break;
-      const r = await resolveRepoRoot(dir);
-      if (!r) continue;
-      const id = roots[r] ?? (await repoIdentity(r));
-      if (!id) continue;
-      await recordRoot(r, id, roots, mains);
-      // git answers with the physical path; the model may have typed a
-      // logical one (a symlinked ~/code, macOS /tmp → /private/tmp). Record
-      // the root under the prefix the path actually used too, so the path
-      // still places after the folder — and its symlink target — is gone.
-      const alias = logicalRoot(dir, r);
-      if (alias && !roots[alias]) roots[alias] = id;
+    for (let i = 0; i < lines.length; i++) {
+      for (const path of lines[i].paths) {
+        const dir = await nearestDirectory(path);
+        if (!dir || seen.has(dir)) continue;
+        seen.add(dir);
+        // A known root covers the path unless a checkout nested inside it (a
+        // submodule) holds it: the most specific root is the one recorded.
+        const known = deepestRoot(Object.keys(roots), path);
+        if (known && !(await nestedCheckout(known, dir))) continue;
+        // Out of spawns: stop before this line, and the next turn resumes
+        // here — the roots found so far cost it nothing. Only a first line
+        // that alone needs more is passed over, or the offset never moves.
+        if (spawned++ >= MAX_DIRS_PER_TURN) return offset + (i > 0 ? lines[i - 1].end : lines[i].end);
+        const r = await resolveRepoRoot(dir);
+        if (!r) continue;
+        const id = roots[r] ?? (await repoIdentity(r));
+        if (!id) continue;
+        await recordRoot(r, id, roots, mains);
+        // git answers with the physical path; the model may have typed a
+        // logical one (a symlinked ~/code, macOS /tmp → /private/tmp). Record
+        // the root under the prefix the path actually used too, so the path
+        // still places after the folder — and its symlink target — is gone.
+        const alias = logicalRoot(dir, r);
+        if (alias && !roots[alias]) roots[alias] = id;
+      }
     }
     return offset + complete + 1;
   } finally {
@@ -260,11 +271,27 @@ async function maybeAutoSync(now: Date, deps: HookDeps, claimPath: string): Prom
   const connected = deps.connected ?? (async () => (await readAuth()) !== null);
   const state = await read();
   if (!shouldAutoSync(state, now)) return;
-  if (!(await connected())) return; // nothing to sync to; the sidecar still grew
+  if (!(await connected())) {
+    // Nothing to sync to, and a sync is what compacts the sidecar, which
+    // every hook reads whole. Compact it here instead: same throttle, the
+    // lock a sync takes.
+    if (await claimAutoSync(claimPath, now)) await compactLocked(now, deps);
+    return;
+  }
   if (!(await claimAutoSync(claimPath, now))) return;
   state.autoSyncAt = now.toISOString();
   await write(state);
   (deps.spawnSync ?? spawnDetachedSync)();
+}
+
+async function compactLocked(now: Date, deps: HookDeps): Promise<void> {
+  const release = await acquireSyncLock(deps.lockPath ?? join(dirname(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  if (!release) return; // a sync holds it, and compacts
+  try {
+    await compactSidecar(deps.sidecarPath, now.getTime());
+  } finally {
+    await release();
+  }
 }
 
 async function claimAutoSync(claimPath: string, now: Date): Promise<boolean> {
