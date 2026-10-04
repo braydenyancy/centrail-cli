@@ -148,7 +148,7 @@ versioning.
   auto-sync throttle, under the sync lock. A turn past the 64-directory cap
   recorded 64 roots and moved its offset past the rest; it now stops before
   the line it could not finish, and the next turn resumes there.
-- Shared stand-in server for harness tests; 284 CLI and 157 parsers tests.
+- Shared stand-in server for harness tests; 319 CLI and 160 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,
