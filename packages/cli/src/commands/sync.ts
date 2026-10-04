@@ -26,7 +26,8 @@ import { IdentityResolver } from "../resolver.js";
 import { compactSidecar, readSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
 import { eventInScope, surfaceEnabled } from "../scope.js";
-import { readCapabilities, toWireEvent, wireBranch, wireRepoRef, type Capabilities } from "../wire.js";
+import { consentedCapabilities, readCapabilities, toWireEvent, wireBranch, wireRepoRef, type Capabilities } from "../wire.js";
+import { isInteractiveTerminal, runSetup, SCOPE_UNANSWERED } from "./scope.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
@@ -69,25 +70,37 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
   assertSecureBaseUrl(auth.baseUrl);
 
-  const state = await readState();
-  const config = await readConfig();
   // Fresh installs answer the scope question in `connect`. An install that
-  // synced before 0.6 consented under the old model; record that once.
+  // synced under 0.5.x never saw it (§ 3.7: nothing beyond the 0.5.1 wire
+  // leaves before that answer). In a terminal it is asked here, once, and
+  // the sync goes on; a sync a hook started has no terminal, never asks and
+  // never waits, and sends what 0.5.1 sent.
+  let config = await readConfig();
   if (!config.scopeDecidedAt) {
-    config.scopeDecidedAt = new Date().toISOString();
-    await writeConfig(config);
+    if (isInteractiveTerminal()) {
+      console.log("  Choose what syncs before any repo name leaves this machine (asked once).");
+      await runSetup({ interactive: true });
+      config = await readConfig();
+    } else {
+      console.log(SCOPE_UNANSWERED);
+    }
   }
+  const state = await readState();
   const installId = await ensureInstallId();
   const known = state.capabilities;
-  const caps = await readCapabilities(auth, known ? { fields: new Set(known) } : undefined);
-  const capsNow = [...caps.fields].sort();
+  const served = await readCapabilities(auth, known ? { fields: new Set(known) } : undefined);
+  // Every route below reads `caps`, never `served`: empty while the scope is
+  // unanswered, so events, attributions and fate rows all keep 0.5.1's shape.
+  const caps = consentedCapabilities(served, config);
+  const capsNow = [...served.fields].sort();
   // A server that starts listing a field events carry gets the history
   // re-sent once with it — the widened-scope rule: what it can now store
   // was held back from events already behind the watermark. Marked before
   // the new list is saved, and cleared only after a complete pass, so a
   // failed pass retries. (Upgrading from 0.5.1, which saved no list, is the
-  // scanner revision bump's job.)
-  if (known && RESEND_ON_GAIN.some((f) => caps.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
+  // scanner revision bump's job; an install whose scope is unanswered sends
+  // none of these fields yet, and its answer marks the re-send itself.)
+  if (config.scopeDecidedAt && known && RESEND_ON_GAIN.some((f) => served.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
     config.pendingBackfill = true;
     await writeConfig(config);
   }

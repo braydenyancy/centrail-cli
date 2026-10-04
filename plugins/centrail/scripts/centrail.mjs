@@ -2104,6 +2104,10 @@ function parseSelection(answer, count2) {
 }
 
 // src/commands/scope.ts
+var SCOPE_UNANSWERED = "Scope not answered: repo names held back; run `centrail setup`.";
+function isInteractiveTerminal() {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
 async function discoverRepos() {
   const installId = await ensureInstallId();
   const resolver = await IdentityResolver.create(installId);
@@ -2120,13 +2124,13 @@ async function discoverRepos() {
   return summarizeRepos(events);
 }
 async function runSetup(opts) {
-  const cfg = await readConfig();
   console.log("  Scanning local agent logs\u2026");
   const rows = await discoverRepos();
+  const cfg = await readConfig();
   printScope(rows, cfg);
   if (rows.length === 0 || !opts.interactive) {
     if (!cfg.scopeDecidedAt) {
-      cfg.scopeDecidedAt = (/* @__PURE__ */ new Date()).toISOString();
+      recordAnswer(cfg);
       await writeConfig(cfg);
     }
     console.log("  Change any time: `centrail setup`, `centrail exclude <repo>`, `centrail repos`.");
@@ -2167,15 +2171,27 @@ async function runSetup(opts) {
   } finally {
     rl.close();
   }
-  cfg.scopeDecidedAt = (/* @__PURE__ */ new Date()).toISOString();
+  recordAnswer(cfg);
   await writeConfig(cfg);
   console.log("");
   printScope(rows, cfg);
   console.log("  Saved. Change any time: `centrail exclude <repo>`, `centrail include <repo>`, `centrail repos`.");
 }
+function recordAnswer(cfg) {
+  if (!cfg.scopeDecidedAt)
+    cfg.pendingBackfill = true;
+  cfg.scopeDecidedAt = (/* @__PURE__ */ new Date()).toISOString();
+}
 async function runRepos() {
   const cfg = await readConfig();
   printScope(await discoverRepos(), cfg);
+  if (!cfg.scopeDecidedAt)
+    console.log(`  ${SCOPE_UNANSWERED}`);
+}
+async function runInspect() {
+  console.log(await readLastSync() ?? "No sync has run on this machine yet.");
+  if (!(await readConfig()).scopeDecidedAt)
+    console.error(SCOPE_UNANSWERED);
 }
 function printScope(rows, cfg) {
   const repos = rows.filter((r) => r.source !== "folder").length;
@@ -2907,6 +2923,9 @@ function toWireUsageEvent(event) {
     occurredAt: event.occurredAt.toISOString()
   };
 }
+function consentedCapabilities(served, cfg) {
+  return cfg.scopeDecidedAt ? served : { fields: /* @__PURE__ */ new Set() };
+}
 async function readCapabilities(auth, known) {
   const fallback = known ?? { fields: /* @__PURE__ */ new Set() };
   try {
@@ -3220,17 +3239,23 @@ async function syncLocked(opts) {
     throw new Error("Not connected \u2014 run `centrail connect` first");
   }
   assertSecureBaseUrl(auth.baseUrl);
-  const state = await readState();
-  const config = await readConfig();
+  let config = await readConfig();
   if (!config.scopeDecidedAt) {
-    config.scopeDecidedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await writeConfig(config);
+    if (isInteractiveTerminal()) {
+      console.log("  Choose what syncs before any repo name leaves this machine (asked once).");
+      await runSetup({ interactive: true });
+      config = await readConfig();
+    } else {
+      console.log(SCOPE_UNANSWERED);
+    }
   }
+  const state = await readState();
   const installId = await ensureInstallId();
   const known = state.capabilities;
-  const caps = await readCapabilities(auth, known ? { fields: new Set(known) } : void 0);
-  const capsNow = [...caps.fields].sort();
-  if (known && RESEND_ON_GAIN.some((f) => caps.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
+  const served = await readCapabilities(auth, known ? { fields: new Set(known) } : void 0);
+  const caps = consentedCapabilities(served, config);
+  const capsNow = [...served.fields].sort();
+  if (config.scopeDecidedAt && known && RESEND_ON_GAIN.some((f) => served.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
     config.pendingBackfill = true;
     await writeConfig(config);
   }
@@ -3520,8 +3545,7 @@ try {
   } else if (command === "uninstall-hooks") {
     await runInstallHooks({ remove: true });
   } else if (command === "inspect") {
-    const last = await readLastSync();
-    console.log(last ?? "No sync has run on this machine yet.");
+    await runInspect();
   } else if (command === "hook") {
     try {
       await runStopHook(await readStdin(), "claude-code");

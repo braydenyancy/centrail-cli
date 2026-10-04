@@ -2,7 +2,9 @@
 // so the first sync after upgrading re-sends each surface's whole history
 // once — and to a server that lists "repo" the re-sent events carry the
 // identity metadata 0.5.1 never sent, so the server can enrich rows it
-// already holds. Real runSync, real git, real files, the stand-in server.
+// already holds. The scope question is answered here; an install that has
+// not answered it is sync.consent.test.ts. Real runSync, real git, real
+// files, the stand-in server.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

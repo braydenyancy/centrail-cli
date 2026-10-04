@@ -72,6 +72,14 @@ on this machine, with the identity each will ship under, and asks once: sync all
 about that repo leaves: no events, no commits, no identity. `allow` mode syncs
 only the repos you list and holds new ones until you `include` them.
 
+**Upgrading from 0.5.x.** Nothing beyond what 0.5.1 sent (usage numbers, and
+commit attribution by folder name) leaves until you answer that question. Your
+first `centrail sync` in a terminal asks it, or run `centrail setup`; a sync
+started by the hook never asks and never waits, and `centrail repos` says
+"scope not answered" until you do. Once you answer, your history is re-sent
+once with repo identity; the server fills it into the usage it already holds
+and never counts anything twice.
+
 Repo identity is the same for every worktree, clone and machine, so one
 assignment in the dashboard covers all of them, and a session whose worktree
 was deleted before sync still lands on its repo (the hook captured it).

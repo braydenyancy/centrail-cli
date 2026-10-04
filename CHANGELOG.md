@@ -15,6 +15,24 @@ versioning.
   on past ~125k lines (`push(...)` overflow) — 54,189 requests and 6.28B
   cache-read tokens on that corpus, about 2.5x its rows. Tell users before
   they upgrade that the jump is history, not new usage.
+- **Upgrading asks before any repo name leaves (decision § 3.7).** An install
+  that synced under 0.5.x has never answered the scope question, and until
+  it does every sync sends exactly what 0.5.1 sent, whatever the server
+  lists: usage numbers on ingest, and the 0.5.1 attribute body (folder name,
+  branch, commit shas and counts; no repo key, no commit facts, no
+  server-side matching). Repos it excluded stay excluded. The first
+  `centrail sync` in a terminal asks the question `connect` asks, then goes
+  on; a sync the Stop hook starts never asks and never waits. `centrail
+  repos` and `centrail inspect --last` say "scope not answered" until then.
+  The answer, from any path (`sync` in a terminal, `setup`, `connect`,
+  `install-hooks`), re-sends the history once with identity; the server
+  fills it into the rows it holds and keeps the larger count, so nothing
+  doubles. Before, the first 0.6 sync recorded an answer nobody gave and
+  re-sent the whole history with repo keys, branches and session ids. On the
+  way: the question read the config before listing the repos, which mints
+  the install id on a first run, and saved the id back as null, so the first
+  sync keyed folders under a new one and a folder excluded at `connect`
+  still shipped.
 - **A response without a `requestId` is keyed by its message id alone.**
   Gateways (Bedrock, Vertex, proxies) strip `requestId`; the fallback was
   `msg:<message id>:<session>`, so a resumed session's copied responses
@@ -73,9 +91,10 @@ versioning.
   `origin/` twin at one tip are asked once.
 - **One full re-send on upgrade, so the server can enrich what it holds.**
   Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
-  the first sync after upgrading re-sends each surface's history once, and to
-  a server that lists `"repo"` those events carry the repo, placement,
-  session, branch and install id that 0.5.1 never sent. The server fills
+  the first sync after upgrading re-sends each surface's history once, and,
+  once the scope question is answered, to a server that lists `"repo"` those
+  events carry the repo, placement, session, branch and install id that
+  0.5.1 never sent (answered later, the answer's own re-send carries them). The server fills
   missing identity into rows it already holds and never lowers a count. A
   server that starts listing `"repo"` or `"usage-extras"` later gets the
   history once more; a failed pass retries.
@@ -174,7 +193,7 @@ versioning.
   auto-sync throttle, under the sync lock. A turn past the 64-directory cap
   recorded 64 roots and moved its offset past the rest; it now stops before
   the line it could not finish, and the next turn resumes there.
-- Shared stand-in server for harness tests; 353 CLI and 160 parsers tests.
+- Shared stand-in server for harness tests; 358 CLI and 160 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,

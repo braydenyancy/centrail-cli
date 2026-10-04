@@ -4,8 +4,7 @@ import { runStopHook } from "./commands/hook.js";
 import { runInstallHooks } from "./commands/hooks-install.js";
 import { runImport } from "./commands/import.js";
 import { runSync } from "./commands/sync.js";
-import { readLastSync } from "./config.js";
-import { runExclude, runInclude, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
+import { runExclude, runInclude, runInspect, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
 
 const [, , command, ...rest] = process.argv;
 
@@ -49,8 +48,7 @@ try {
   } else if (command === "uninstall-hooks") {
     await runInstallHooks({ remove: true });
   } else if (command === "inspect") {
-    const last = await readLastSync();
-    console.log(last ?? "No sync has run on this machine yet.");
+    await runInspect();
   } else if (command === "hook") {
     // Never fail the agent's turn: any error is swallowed, nothing is printed.
     try {

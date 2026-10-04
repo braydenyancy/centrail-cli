@@ -49,6 +49,15 @@ base shape. The CLI reads it once per sync. Absent, or never answered, means
 the 0.5.1 shape exactly; a server that answered before and cannot be asked now
 is taken at its last answer, so a flaky route never strips identity.
 
+The user's scope answer (decision § 3.7) gates all of it. Until the install
+has answered the scope question (`connect`, `setup`, `install-hooks`, or the
+first `sync` run in a terminal), the CLI treats `fields` as empty on every
+route, whatever the server lists: ingest bodies, attributions and fate rows
+are the 0.5.1 shape exactly, and the CLI matches commits itself. An install
+upgraded from 0.5.x starts unanswered. Its answer re-sends the whole history
+once with the fields the server lists, as a widened scope does, and the
+server fills the identity into the rows it already holds (below).
+
 When `fields` contains `"repo"` the CLI sends, per event, a `metadata` object
 with exactly these keys (each absent when unknown):
 
@@ -127,8 +136,10 @@ content block of one response.
 
 **One full re-send on upgrade (0.6.0).** Every scanner's revision is bumped
 (`SCANNERS[].revision`), so the first sync after upgrading re-sends each
-surface's whole history once. Against a `"repo"` server those events carry
-the identity metadata above, so the server can enrich rows it already holds:
+surface's whole history once. Against a `"repo"` server, once the scope
+question is answered, those events carry the identity metadata above (an
+install that answers later re-sends them then), so the server can enrich rows
+it already holds:
 fill identity fields a row lacks (`repo`, `placement`, `sessionId`,
 `gitBranch`, `origin.machineId`) and keep token counts at
 `GREATEST(existing, incoming)` — a re-send never lowers a count, never adds a
