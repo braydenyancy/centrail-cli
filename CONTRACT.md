@@ -115,12 +115,14 @@ from the Stop hook when the transcript says `HEAD`. Older servers ignore
 request to one event holding the per-field maximum (Claude Code re-stamps
 usage on every content block and `output_tokens` grows across them), at the
 timestamp of its first line. A sidechain replay that shares a request id
-never adds to the original. A server that previously stored the first line
-for a request should upsert `output_tokens = GREATEST(existing, incoming)` on
-conflict so the 24 h overlap re-send corrects rows inserted mid-stream.
-Events without an Anthropic `requestId` (gateways) arrive with
-`externalId = "msg:<message id>:<session id>"` — never the timestamp, which
-differs per content block of one response.
+never adds to the original, and a `/btw` replay under a new request id takes
+its parent's; an incremental scan folds whole files before it filters by
+time, so it emits the ids a full scan does. A server that previously stored
+the first line for a request should upsert `output_tokens = GREATEST(existing,
+incoming)` on conflict so the 24 h overlap re-send corrects rows inserted
+mid-stream. Events without an Anthropic `requestId` (gateways) arrive with
+`externalId = "msg:<message id>"` — never the timestamp, which differs per
+content block of one response.
 
 **One full re-send on upgrade (0.6.0).** Every scanner's revision is bumped
 (`SCANNERS[].revision`), so the first sync after upgrading re-sends each

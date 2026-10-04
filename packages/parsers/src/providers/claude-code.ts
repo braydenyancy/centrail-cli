@@ -169,7 +169,16 @@ export async function scanClaudeCodeLogs(opts: {
     // call takes, and the spread crashed a full scan at 177k lines.
     for (const e of await scanProjectsDir(base, since)) events.push(e);
   }
-  return collapseUsageEvents(foldSidechainReplays(events));
+  // `since` picks the files (by mtime); their lines are folded and collapsed
+  // whole, and only then filtered, so every id is the one a full scan
+  // gives: a /btw replay after `since` of a parent before it folds onto the
+  // parent instead of arriving as a second row. A response is in the window
+  // when any of its lines is — one that straddles `since` re-sends at its
+  // final count; the server dedupes the re-send.
+  const folded = foldSidechainReplays(events);
+  if (!since) return collapseUsageEvents(folded);
+  const inWindow = new Set(folded.filter((e) => e.occurredAt > since).map((e) => e.externalId));
+  return collapseUsageEvents(folded).filter((e) => inWindow.has(e.externalId));
 }
 
 // A /btw side question runs in a sidechain that replays parent messages
@@ -335,7 +344,7 @@ async function scanProjectsDir(
         }
         turns.observe(raw);
         const parsed = parseAssistantEvent(raw, turns.current);
-        if (parsed && (!since || parsed.occurredAt > since)) {
+        if (parsed) {
           applyFallback(raw, parsed);
           events.push(parsed);
           for (const extra of extraIterations(raw, parsed)) events.push(extra);

@@ -121,6 +121,12 @@ versioning.
   history (provider `ccusage`), never as certified events.
 - **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
   hit the call-stack limit at 177k lines on the reference machine.
+- **An incremental sync emits the ids a full scan does.** A `/btw` replay
+  folds onto its parent's id only when both are in the scan, and the
+  scanner dropped lines before `since` first: a parent on 09-01 and its
+  replay on 09-03, synced incrementally on 09-03, became two rows. Files are
+  still chosen by mtime; their lines are now folded and collapsed whole and
+  filtered after, keeping any response with a line in the window.
 - Shared stand-in server for harness tests; 284 CLI and 157 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix

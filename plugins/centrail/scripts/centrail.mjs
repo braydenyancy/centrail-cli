@@ -128,7 +128,11 @@ async function scanClaudeCodeLogs(opts) {
     for (const e of await scanProjectsDir(base, since))
       events.push(e);
   }
-  return collapseUsageEvents(foldSidechainReplays(events));
+  const folded = foldSidechainReplays(events);
+  if (!since)
+    return collapseUsageEvents(folded);
+  const inWindow = new Set(folded.filter((e) => e.occurredAt > since).map((e) => e.externalId));
+  return collapseUsageEvents(folded).filter((e) => inWindow.has(e.externalId));
 }
 function foldSidechainReplays(events) {
   const parentId = /* @__PURE__ */ new Map();
@@ -255,7 +259,7 @@ async function scanProjectsDir(basePath, since) {
         }
         turns.observe(raw);
         const parsed = parseAssistantEvent(raw, turns.current);
-        if (parsed && (!since || parsed.occurredAt > since)) {
+        if (parsed) {
           applyFallback(raw, parsed);
           events.push(parsed);
           for (const extra of extraIterations(raw, parsed))

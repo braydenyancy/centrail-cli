@@ -207,6 +207,20 @@ describe("found by the cross-tool comparison", () => {
     expect(events.map((e) => [e.externalId, e.outputTokens])).toEqual([["req_parent", 50]]);
   });
 
+  // An incremental scan that filtered lines by `since` before folding left a
+  // replay with no parent to fold onto: the server got req_parent from the
+  // sync that covered its day and req_replay from this one — one response,
+  // two rows. The fold now sees the whole file first.
+  it("a /btw replay after `since` of a parent before it gives the full scan's id, never a second one", async () => {
+    const parent = a({ rid: "req_parent", mid: "msg_1", out: 50, at: "2026-09-01T10:00:00.000Z" });
+    const replay = a({ rid: "req_replay", mid: "msg_1", side: true, out: 50, at: "2026-09-03T10:00:00.000Z" });
+    const base = await write({ "p/s.jsonl": [parent, replay] });
+    const full = await scanClaudeCodeLogs({ basePath: base });
+    const incremental = await scanClaudeCodeLogs({ basePath: base, since: new Date("2026-09-02T00:00:00.000Z") });
+    expect(full.map((e) => [e.externalId, e.outputTokens])).toEqual([["req_parent", 50]]);
+    expect(incremental.map((e) => [e.externalId, e.outputTokens])).toEqual([["req_parent", 50]]); // a re-send the server dedupes
+  });
+
   it.each([
     ["two non-sidechain responses reusing a message id (a gateway) stay two", [a({ rid: "r1", mid: "msg_g", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_g", out: 2, at: T(2) })], 2],
     ["a sidechain in ANOTHER session with the same message id stays separate", [a({ rid: "r1", mid: "msg_x", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_x", sid: "other", side: true, out: 2, at: T(2) })], 2],
