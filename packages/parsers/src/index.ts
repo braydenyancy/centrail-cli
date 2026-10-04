@@ -63,7 +63,12 @@ export type Scanner = {
   // perform one safe full backfill on upgrade: the server dedupes on
   // externalId and keeps the larger count, so it is a re-send, never a row.
   revision: number;
-  scan: (opts: { since?: Date }) => Promise<ParsedUsageEvent[]>;
+  // `since` picks which files are read (by mtime) and which events return.
+  // `wholeFiles` returns every event of a file read, those outside `since`
+  // marked `metadata.context`: the caller places them with their session,
+  // as a full scan would, and sends only the rest. A scanner without turns
+  // (Copilot) may ignore it.
+  scan: (opts: { since?: Date; wholeFiles?: boolean }) => Promise<ParsedUsageEvent[]>;
 };
 
 // 0.6.0 bumps every surface once (claude-code 2→3, copilot-cli and codex

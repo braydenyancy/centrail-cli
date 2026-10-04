@@ -64,6 +64,10 @@ export type ParsedUsageEvent = {
     touched?: Evidence; // local only: files this request wrote and read
     fallback?: boolean; // local only: this line carries the fallback iteration; see collapse
     messageId?: string; // local only: for sidechain-replay folding
+    // local only: outside `since`, returned by a `wholeFiles` scan for its
+    // session's context (an earlier turn decides a later turn's sticky
+    // repo). The caller places it and does not send it.
+    context?: boolean;
     origin?: {
       host: string;
       platform: string;
@@ -159,6 +163,7 @@ export async function readClaudeCodeAccount(
 export async function scanClaudeCodeLogs(opts: {
   basePath?: string;
   since?: Date;
+  wholeFiles?: boolean;
 }): Promise<ParsedUsageEvent[]> {
   const since = opts.since;
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
@@ -178,7 +183,10 @@ export async function scanClaudeCodeLogs(opts: {
   const folded = foldSidechainReplays(events);
   if (!since) return collapseUsageEvents(folded);
   const inWindow = new Set(folded.filter((e) => e.occurredAt > since).map((e) => e.externalId));
-  return collapseUsageEvents(folded).filter((e) => inWindow.has(e.externalId));
+  const collapsed = collapseUsageEvents(folded);
+  if (!opts.wholeFiles) return collapsed.filter((e) => inWindow.has(e.externalId));
+  for (const e of collapsed) if (!inWindow.has(e.externalId)) e.metadata.context = true;
+  return collapsed;
 }
 
 // A /btw side question runs in a sidechain that replays parent messages

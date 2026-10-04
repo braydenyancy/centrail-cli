@@ -4,7 +4,7 @@
 // Real bundle code (runSync, runStopHook), real git, real files, and an
 // in-process stand-in server that models the real one: one row per
 // (externalId), per-field max on re-send, `inserted` from what landed.
-import { mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -141,6 +141,23 @@ describe("sync invariants across triggers", () => {
     expect(server.rows.get("req_I")?.metadata.repo).toMatchObject({ key: "github.com/acme/moved", label: "moved-dst" });
     // The pre-move session (its folder is gone) attributed to the commit made after the move.
     expect(server.attributions.find((a) => a.externalId === "req_H")).toMatchObject({ commitSha: sha });
+  });
+
+  it("a session resumed a day later places its text-only turn as --full does: sticky reaches behind the watermark", async () => {
+    const ws = join(fx.root, "ws-resumed"); // not a repo: turns place by files, then sticky
+    await mkdir(ws);
+    const yesterday = Date.now() - 30 * 60 * 60 * 1000; // behind the 24 h overlap
+    const user = (text: string, atMs: number) =>
+      JSON.stringify({ type: "user", sessionId: "s10", cwd: ws, timestamp: new Date(atMs).toISOString(), message: { role: "user", content: text } });
+    await writeTranscript(ws, "s10", [
+      user("edit k", yesterday),
+      transcriptLine({ sessionId: "s10", cwd: ws, requestId: "req_K", out: 2, atMs: yesterday + 1000, toolUse: { name: "Edit", input: { file_path: join(repo, "k.ts") } } }),
+      user("thanks", Date.now() - 5 * 60 * 1000),
+      transcriptLine({ sessionId: "s10", cwd: ws, requestId: "req_L", out: 1, atMs: Date.now() - 4 * 60 * 1000 }),
+    ]);
+    await runSync({ full: false });
+    expect(server.rows.get("req_L")?.metadata).toMatchObject({ repo: { key: "github.com/acme/repo" }, placement: "sticky" });
+    expect(out("req_K")).toBeUndefined(); // context for placement, not a send: older than the window
   });
 
   it("against a server without capabilities the body is the 0.5.1 allowlist: usage numbers, no metadata", async () => {

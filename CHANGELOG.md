@@ -67,7 +67,13 @@ versioning.
   stay on the machine. The most specific root wins: a turn that edits only a
   submodule is the submodule's whether or not an earlier turn resolved the
   superproject around it (the resolver and the hook took the first known
-  root that prefixed a path, so the answer depended on turn order).
+  root that prefixed a path, so the answer depended on turn order). Sticky
+  reaches behind the watermark: an incremental sync reads changed files
+  whole and places their earlier turns as context (never sent), so a
+  session resumed a day later gives its text-only turn the repo `--full`
+  gives, not its folder. The bound: a file unchanged since the watermark is
+  not read, so a turn in one (a subagent transcript of that resumed
+  session) cannot be the sticky one.
 - **Five 0.6 claims fell to their own tests and are fixed.** The
   no-`requestId` fallback id carried the line's timestamp and split one
   gateway response into one event per content block (99.3% of multi-line

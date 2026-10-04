@@ -35,6 +35,7 @@ export function codexSessionsDir(): string {
 export async function scanCodexLogs(opts: {
   basePath?: string;
   since?: Date;
+  wholeFiles?: boolean;
 }): Promise<ParsedUsageEvent[]> {
   const files = opts.basePath
     ? await findJsonlFiles(opts.basePath)
@@ -59,7 +60,13 @@ export async function scanCodexLogs(opts: {
     let parsed = await parseSession(path, undefined);
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom) parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
-    for (const e of parsed) if (!opts.since || e.occurredAt > opts.since) events.push(e);
+    for (const e of parsed) {
+      if (opts.since && e.occurredAt <= opts.since) {
+        if (!opts.wholeFiles) continue;
+        e.metadata.context = true; // its session's earlier turn: placed, not sent
+      }
+      events.push(e);
+    }
   }
 
   return suffixDuplicateExternalIds(events);

@@ -173,6 +173,15 @@ describe("scanCodexLogs", () => {
     expect(await scanCodexLogs({ basePath: join(base, "missing") })).toEqual([]);
   });
 
+  it("wholeFiles returns the read file's events before since too, marked context, for the caller to place and not send", async () => {
+    const base = await makeSession([META, TURN, tokenCount("2026-07-18T12:00:02.000Z"), tokenCount("2026-07-18T12:00:09.000Z")]);
+    const events = await scanCodexLogs({ basePath: base, since: new Date("2026-07-18T12:00:05.000Z"), wholeFiles: true });
+    expect(events.map((e) => [e.occurredAt.toISOString(), e.metadata.context ?? false])).toEqual([
+      ["2026-07-18T12:00:02.000Z", true],
+      ["2026-07-18T12:00:09.000Z", false],
+    ]);
+  });
+
   it("does not resurrect already-counted usage when a cumulative-only line follows per-call lines", async () => {
     // Per-call lines without totals leave the cumulative baseline out of sync:
     // the next cumulative-only total overlaps usage that was already emitted,

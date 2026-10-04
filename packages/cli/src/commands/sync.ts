@@ -124,9 +124,14 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
-    const scanned = await scanner.scan({ since });
+    // Whole files: the events of a file read that fall before `since` come
+    // back marked `context`, so a session resumed after the window still
+    // places its turns with its earlier ones (sticky), as `--full` does.
+    // They are placed, never sent.
+    const scanned = await scanner.scan({ since, wholeFiles: true });
     const candidates = scanned.filter(
       (e) =>
+        !e.metadata.context &&
         e.externalId.length > 0 &&
         e.occurredAt >= minOccurredAt &&
         e.occurredAt <= maxOccurredAt,

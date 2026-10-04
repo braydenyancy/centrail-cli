@@ -13,7 +13,11 @@ import type { IdentityResolver } from "./resolver.js";
 // Paths resolve through the roots the Stop hook recorded for the session
 // (so a deleted worktree still places) and then live git. Pure over its
 // inputs, so a `--full` rescan places every old event exactly as the
-// incremental sync did.
+// incremental sync did. Its inputs are the files a scan reads, whole: an
+// incremental sync passes the earlier turns of every file changed since its
+// watermark too (`context`), so sticky reaches behind the window. Bound: a
+// file unchanged since then is not read, so a session's turns in one — a
+// subagent transcript of a session resumed a day later — cannot be sticky.
 export class Placer {
   constructor(private readonly resolver: IdentityResolver) {}
 

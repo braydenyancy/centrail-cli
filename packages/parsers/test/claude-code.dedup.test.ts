@@ -221,6 +221,12 @@ describe("found by the cross-tool comparison", () => {
     expect(incremental.map((e) => [e.externalId, e.outputTokens])).toEqual([["req_parent", 50]]); // a re-send the server dedupes
   });
 
+  it("wholeFiles returns the read file's responses before since too, marked context, for the caller to place and not send", async () => {
+    const base = await write({ "p/s.jsonl": [a({ rid: "r_old", mid: "m1", out: 1, at: "2026-09-01T10:00:00.000Z" }), a({ rid: "r_new", mid: "m2", out: 1, at: "2026-09-03T10:00:00.000Z" })] });
+    const events = await scanClaudeCodeLogs({ basePath: base, since: new Date("2026-09-02T00:00:00.000Z"), wholeFiles: true });
+    expect(events.map((e) => [e.externalId, e.metadata.context ?? false])).toEqual([["r_old", true], ["r_new", false]]);
+  });
+
   it.each([
     ["two non-sidechain responses reusing a message id (a gateway) stay two", [a({ rid: "r1", mid: "msg_g", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_g", out: 2, at: T(2) })], 2],
     ["a sidechain in ANOTHER session with the same message id stays separate", [a({ rid: "r1", mid: "msg_x", out: 1, at: T(1) }), a({ rid: "r2", mid: "msg_x", sid: "other", side: true, out: 2, at: T(2) })], 2],

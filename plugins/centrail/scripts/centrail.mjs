@@ -132,7 +132,13 @@ async function scanClaudeCodeLogs(opts) {
   if (!since)
     return collapseUsageEvents(folded);
   const inWindow = new Set(folded.filter((e) => e.occurredAt > since).map((e) => e.externalId));
-  return collapseUsageEvents(folded).filter((e) => inWindow.has(e.externalId));
+  const collapsed = collapseUsageEvents(folded);
+  if (!opts.wholeFiles)
+    return collapsed.filter((e) => inWindow.has(e.externalId));
+  for (const e of collapsed)
+    if (!inWindow.has(e.externalId))
+      e.metadata.context = true;
+  return collapsed;
 }
 function foldSidechainReplays(events) {
   const parentId = /* @__PURE__ */ new Map();
@@ -643,9 +649,14 @@ async function scanCodexLogs(opts) {
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom)
       parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
-    for (const e of parsed)
-      if (!opts.since || e.occurredAt > opts.since)
-        events.push(e);
+    for (const e of parsed) {
+      if (opts.since && e.occurredAt <= opts.since) {
+        if (!opts.wholeFiles)
+          continue;
+        e.metadata.context = true;
+      }
+      events.push(e);
+    }
   }
   return suffixDuplicateExternalIds(events);
 }
@@ -3129,9 +3140,9 @@ async function syncLocked(opts) {
       anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : void 0;
     const scanStartedAt = /* @__PURE__ */ new Date();
-    const scanned = await scanner.scan({ since });
+    const scanned = await scanner.scan({ since, wholeFiles: true });
     const candidates = scanned.filter(
-      (e) => e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
+      (e) => !e.metadata.context && e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
     );
     await placer.place(scanned);
     const events = candidates.filter((e) => eventInScope(e, config));
