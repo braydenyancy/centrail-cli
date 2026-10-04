@@ -42,6 +42,17 @@ async function world(): Promise<World> {
   return { ws, a, b, placer, sidecar };
 }
 
+// A superproject `a` with a submodule at vendor/lib, its own repo.
+async function withSubmodule(): Promise<World & { sub: string }> {
+  const w = await world();
+  const lib = await fx.repo("lib-src");
+  await fx.git(w.a, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib");
+  await fx.git(w.a, "commit", "-q", "-m", "add lib");
+  const sub = join(w.a, "vendor", "lib");
+  await fx.git(sub, "remote", "set-url", "origin", "https://github.com/acme/lib.git");
+  return { ...w, sub };
+}
+
 describe("Placer", () => {
   it("cwd inside a repo wins over every file the turn touched elsewhere", async () => {
     const { a, b, placer } = await world();
@@ -110,6 +121,29 @@ describe("Placer", () => {
     await placer.place([byFiles, nothing]);
     expect(placed(byFiles)).toEqual(["github.com/acme/a", "files"]);
     expect(nothing.metadata.repo).toBeUndefined(); // no sidecar for s9, folder gone: the Inbox
+  });
+
+  // The most specific root wins, wherever the answer comes from: a turn
+  // that edits only the submodule is the submodule's, whether or not an
+  // earlier turn already resolved the superproject around it.
+  it("a turn that edits only a submodule lands on the submodule, after a superproject turn as when placed alone", async () => {
+    const { ws, a, sub, placer, sidecar } = await withSubmodule();
+    const t1 = ev({ cwd: ws, turn: "t1", at: 1, touched: { writes: [join(a, "x.ts")] } });
+    const t2 = ev({ cwd: ws, turn: "t2", at: 2, touched: { writes: [join(sub, "y.ts")] } });
+    await placer.place([t1, t2]);
+    const alone = ev({ cwd: ws, sessionId: "s2", turn: "t1", at: 3, touched: { writes: [join(sub, "y.ts")] } });
+    await new Placer(await IdentityResolver.create("install", sidecar)).place([alone]);
+    expect(placed(t1)).toEqual(["github.com/acme/a", "files"]);
+    expect(placed(t2)).toEqual(["github.com/acme/lib", "files"]);
+    expect(placed(alone)).toEqual(placed(t2));
+  });
+
+  it("a sidecar that recorded only the superproject (an older hook) still places a live submodule's files on the submodule", async () => {
+    const { ws, a, sub, sidecar } = await withSubmodule();
+    await appendSidecar({ v: 1, ts: new Date().toISOString(), surface: "claude-code", sessionId: "s", cwd: ws, repo: null, root: null, branch: null, head: null, offset: 0, roots: { [a]: { key: "github.com/acme/a", label: "a", source: "remote" } } }, sidecar);
+    const e = ev({ cwd: ws, turn: "t1", touched: { writes: [join(sub, "y.ts")] } });
+    await new Placer(await IdentityResolver.create("install", sidecar)).place([e]);
+    expect(placed(e)).toEqual(["github.com/acme/lib", "files"]);
   });
 
   it("events without a session or turn are placed one by one, as before", async () => {

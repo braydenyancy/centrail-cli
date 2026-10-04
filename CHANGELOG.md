@@ -64,7 +64,10 @@ versioning.
   (`transcript_path` in the hook input); the placer runs at sync over the
   same evidence, so a `--full` rescan places identically after the worktree
   is gone. Ships `metadata.placement` next to `metadata.repo`; touched paths
-  stay on the machine.
+  stay on the machine. The most specific root wins: a turn that edits only a
+  submodule is the submodule's whether or not an earlier turn resolved the
+  superproject around it (the resolver and the hook took the first known
+  root that prefixed a path, so the answer depended on turn order).
 - **Five 0.6 claims fell to their own tests and are fixed.** The
   no-`requestId` fallback id carried the line's timestamp and split one
   gateway response into one event per content block (99.3% of multi-line

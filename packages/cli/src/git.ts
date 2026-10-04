@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { parseGitLogNumstat, type RepoCommit } from "@centrail/parsers";
 
@@ -76,6 +76,31 @@ export async function nearestDirectory(path: string): Promise<string | null> {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+// The longest of `roots` that `path` is at or under: the most specific
+// checkout that may hold it. Null when none does.
+export function deepestRoot(roots: Iterable<string>, path: string): string | null {
+  let best: string | null = null;
+  for (const r of roots) if ((path === r || path.startsWith(`${r}/`)) && (!best || r.length > best.length)) best = r;
+  return best;
+}
+
+// Whether a checkout nested inside `root` holds `dir` — a submodule, a repo
+// cloned inside another, a worktree placed inside its main checkout. Git's
+// discovery stops at the first folder with a `.git` entry, so a known root
+// answers for `dir` only when no folder below it on the way has one. Stats,
+// never a spawn: this is what lets a known root stand in for git.
+export async function nestedCheckout(root: string, dir: string): Promise<boolean> {
+  for (let d = dir; d !== root && d.startsWith(`${root}/`); d = dirname(d)) {
+    try {
+      await stat(join(d, ".git"));
+      return true;
+    } catch {
+      // no .git here: climb
+    }
+  }
+  return false;
 }
 
 // The main checkout of a linked worktree — the folder whose `.git` holds the

@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import type { ParsedUsageEvent, RepoIdentity } from "@centrail/parsers";
-import { nearestDirectory, resolveRepoRoot } from "./git.js";
+import { deepestRoot, nearestDirectory, nestedCheckout, resolveRepoRoot } from "./git.js";
 import { folderIdentity, repoIdentity, staleWorktree } from "./identity.js";
 import { basename } from "node:path";
 import { readSidecar, type SidecarLine } from "./sidecar.js";
@@ -50,26 +50,40 @@ export class IdentityResolver {
 
   // The repo a touched path falls under: first the roots the Stop hook
   // recorded for the session (the folder may be gone), then live git on
-  // the path's directory. Null for a path in no repo.
+  // the path's directory. Null for a path in no repo. The most specific
+  // root wins: a known root answers only when no checkout nested inside it
+  // (a submodule) holds the path, so the answer never depends on which
+  // turn resolved what first.
   async identityForPath(path: string, sessionId: string | undefined): Promise<RepoIdentity | null> {
     const roots = sessionId ? this.sidecar.get(sessionId)?.roots : undefined;
-    if (roots) {
-      let best: string | null = null;
-      for (const root of Object.keys(roots)) {
-        if ((path === root || path.startsWith(`${root}/`)) && (!best || root.length > best.length)) best = root;
-      }
-      if (best) return roots[best];
-    }
-    // A path under a root already resolved live costs nothing; otherwise
+    const recorded = roots ? deepestRoot(Object.keys(roots), path) : null;
+    if (recorded && (await this.answers(recorded, path))) return roots![recorded];
+    // A path under a root already resolved live costs no spawn; otherwise
     // one git spawn per distinct existing directory, never per file (a
     // turn touches many files in few directories).
-    for (const root of this.liveRoots) {
-      if (path === root || path.startsWith(`${root}/`)) return this.identityForRoot(root);
-    }
-    const dir = await nearestDirectory(path);
+    const live = deepestRoot(this.liveRoots, path);
+    if (live && (await this.answers(live, path))) return this.identityForRoot(live);
+    const dir = await this.dirFor(path);
     if (!dir) return null;
     const root = await this.rootFor(dir);
     return root ? this.identityForRoot(root) : null;
+  }
+
+  // Whether a known root holds `path` itself, rather than a checkout nested
+  // inside it. A path whose folder is gone climbs above the root: it holds.
+  private async answers(root: string, path: string): Promise<boolean> {
+    const dir = await this.dirFor(path);
+    if (!dir) return true;
+    const k = `${root}\u0000${dir}`;
+    let nested = this.nestedByDir.get(k);
+    if (nested === undefined) this.nestedByDir.set(k, (nested = await nestedCheckout(root, dir)));
+    return !nested;
+  }
+
+  private async dirFor(path: string): Promise<string | null> {
+    let dir = this.dirByPath.get(path);
+    if (dir === undefined) this.dirByPath.set(path, (dir = await nearestDirectory(path)));
+    return dir;
   }
 
   // The live checkout root for this event's cwd, or null when the folder is
@@ -143,6 +157,8 @@ export class IdentityResolver {
 
   private readonly liveRoots = new Set<string>();
   private readonly liveRootByKey = new Map<string, string | null>();
+  private readonly dirByPath = new Map<string, string | null>();
+  private readonly nestedByDir = new Map<string, boolean>();
 
   private async rootFor(cwd: string): Promise<string | null> {
     let root = this.rootByCwd.get(cwd);

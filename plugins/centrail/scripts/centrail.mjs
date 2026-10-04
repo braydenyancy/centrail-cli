@@ -1264,7 +1264,7 @@ import { stat as stat6 } from "node:fs/promises";
 // src/git.ts
 import { execFile, spawn } from "node:child_process";
 import { readFile as readFile5, stat as stat5 } from "node:fs/promises";
-import { basename as basename2, dirname } from "node:path";
+import { basename as basename2, dirname, join as join6 } from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var GIT_REDIRECT_VARS = [
@@ -1310,6 +1310,23 @@ async function nearestDirectory(path) {
       return null;
     dir = parent;
   }
+}
+function deepestRoot(roots, path) {
+  let best = null;
+  for (const r of roots)
+    if ((path === r || path.startsWith(`${r}/`)) && (!best || r.length > best.length))
+      best = r;
+  return best;
+}
+async function nestedCheckout(root, dir) {
+  for (let d = dir; d !== root && d.startsWith(`${root}/`); d = dirname(d)) {
+    try {
+      await stat5(join6(d, ".git"));
+      return true;
+    } catch {
+    }
+  }
+  return false;
 }
 async function readMainCheckout(repoRoot) {
   try {
@@ -1563,7 +1580,7 @@ import { createHmac } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { readFile as readFile6 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname2, join as join6 } from "node:path";
+import { basename as basename3, dirname as dirname2, join as join7 } from "node:path";
 function remoteKey(url) {
   const raw = url.trim();
   if (!raw)
@@ -1690,7 +1707,7 @@ async function staleWorktree(dir) {
   let d = dir;
   for (; ; ) {
     try {
-      const text = await readFile6(join6(d, ".git"), "utf-8");
+      const text = await readFile6(join7(d, ".git"), "utf-8");
       const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
       const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
       return wt ? { folder: d, main: wt[1] } : null;
@@ -1829,27 +1846,41 @@ var IdentityResolver = class _IdentityResolver {
   }
   // The repo a touched path falls under: first the roots the Stop hook
   // recorded for the session (the folder may be gone), then live git on
-  // the path's directory. Null for a path in no repo.
+  // the path's directory. Null for a path in no repo. The most specific
+  // root wins: a known root answers only when no checkout nested inside it
+  // (a submodule) holds the path, so the answer never depends on which
+  // turn resolved what first.
   async identityForPath(path, sessionId) {
     const roots = sessionId ? this.sidecar.get(sessionId)?.roots : void 0;
-    if (roots) {
-      let best = null;
-      for (const root2 of Object.keys(roots)) {
-        if ((path === root2 || path.startsWith(`${root2}/`)) && (!best || root2.length > best.length))
-          best = root2;
-      }
-      if (best)
-        return roots[best];
-    }
-    for (const root2 of this.liveRoots) {
-      if (path === root2 || path.startsWith(`${root2}/`))
-        return this.identityForRoot(root2);
-    }
-    const dir = await nearestDirectory(path);
+    const recorded = roots ? deepestRoot(Object.keys(roots), path) : null;
+    if (recorded && await this.answers(recorded, path))
+      return roots[recorded];
+    const live = deepestRoot(this.liveRoots, path);
+    if (live && await this.answers(live, path))
+      return this.identityForRoot(live);
+    const dir = await this.dirFor(path);
     if (!dir)
       return null;
     const root = await this.rootFor(dir);
     return root ? this.identityForRoot(root) : null;
+  }
+  // Whether a known root holds `path` itself, rather than a checkout nested
+  // inside it. A path whose folder is gone climbs above the root: it holds.
+  async answers(root, path) {
+    const dir = await this.dirFor(path);
+    if (!dir)
+      return true;
+    const k = `${root}\0${dir}`;
+    let nested = this.nestedByDir.get(k);
+    if (nested === void 0)
+      this.nestedByDir.set(k, nested = await nestedCheckout(root, dir));
+    return !nested;
+  }
+  async dirFor(path) {
+    let dir = this.dirByPath.get(path);
+    if (dir === void 0)
+      this.dirByPath.set(path, dir = await nearestDirectory(path));
+    return dir;
   }
   // The live checkout root for this event's cwd, or null when the folder is
   // gone or not a repo. Attribution reads commits from here.
@@ -1927,6 +1958,8 @@ var IdentityResolver = class _IdentityResolver {
   }
   liveRoots = /* @__PURE__ */ new Set();
   liveRootByKey = /* @__PURE__ */ new Map();
+  dirByPath = /* @__PURE__ */ new Map();
+  nestedByDir = /* @__PURE__ */ new Map();
   async rootFor(cwd) {
     let root = this.rootByCwd.get(cwd);
     if (root === void 0) {
@@ -2280,7 +2313,7 @@ var FIELDS_SHOWN_ONCE = `
 import { spawn as spawn2 } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import { mkdir as mkdir3, open, readdir as readdir5, rm as rm2, stat as stat7 } from "node:fs/promises";
-import { dirname as dirname4, join as join7 } from "node:path";
+import { dirname as dirname4, join as join8 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
@@ -2347,15 +2380,15 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(mains).length > 0)
     line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join7(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join8(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl"))
     return [];
-  const dir = join7(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join8(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join7(dir, f));
+    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join8(dir, f));
   } catch {
     return [];
   }
@@ -2414,12 +2447,13 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
     let spawned = 0;
     const seen = /* @__PURE__ */ new Set();
     for (const path of dirs) {
-      if (Object.keys(roots).some((r2) => path === r2 || path.startsWith(`${r2}/`)))
-        continue;
       const dir = await nearestDirectory(path);
       if (!dir || seen.has(dir))
         continue;
       seen.add(dir);
+      const known = deepestRoot(Object.keys(roots), path);
+      if (known && !await nestedCheckout(known, dir))
+        continue;
       if (spawned++ >= MAX_DIRS_PER_TURN)
         break;
       const r = await resolveRepoRoot(dir);
@@ -2516,14 +2550,14 @@ function spawnDetachedSync() {
 // src/commands/hooks-install.ts
 import { realpathSync as realpathSync3 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile8, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname5, join as join8 } from "node:path";
+import { dirname as dirname5, join as join9 } from "node:path";
 import { stat as stat8 } from "node:fs/promises";
 var HOOK_MARK = "hook stop";
 function claudeSettingsPath() {
-  return join8(claudeConfigDirs()[0], "settings.json");
+  return join9(claudeConfigDirs()[0], "settings.json");
 }
 function codexHooksPath() {
-  return join8(codexHomeDir(), "hooks.json");
+  return join9(codexHomeDir(), "hooks.json");
 }
 function hookCommand(node = process.execPath, script = process.argv[1]) {
   const abs = safeRealpath(script);

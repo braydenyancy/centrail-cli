@@ -176,6 +176,27 @@ describe("runStopHook", () => {
     expect((await readSidecar(sidecarPath)).get("s")?.roots).toEqual(l4.roots);
   });
 
+  it("a submodule's files record the submodule's root, though the superproject around it was recorded first", async () => {
+    fx = await scratch();
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const ws = join(fx.root, "ws");
+    await mkdir(ws);
+    const a = await fx.repo("ws/a", { remote: "https://github.com/acme/a.git" });
+    const lib = await fx.repo("lib-src");
+    await fx.git(a, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib");
+    const sub = join(a, "vendor", "lib");
+    await fx.git(sub, "remote", "set-url", "origin", "https://github.com/acme/lib.git");
+    const transcript = join(fx.root, "t.jsonl");
+    const tool = (input: Record<string, unknown>) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "x", name: "Edit", input }] } })}\n`;
+    await writeFile(transcript, tool({ file_path: join(a, "x.ts") }) + tool({ file_path: join(sub, "y.ts") }));
+    const line = (await runStopHook(JSON.stringify({ session_id: "s", cwd: ws, transcript_path: transcript }), "claude-code", {
+      sidecarPath: join(fx.root, "sessions.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState(),
+    }))!;
+    expect(line.roots?.[a]?.key).toBe("github.com/acme/a");
+    expect(line.roots?.[sub]?.key).toBe("github.com/acme/lib");
+  });
+
   it("without a transcript_path (another harness, an older Claude Code) there is no offset; the cwd root is still recorded, with its main checkout when it is a worktree", async () => {
     fx = await scratch();
     const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });

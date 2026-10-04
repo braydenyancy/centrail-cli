@@ -4,7 +4,7 @@ import { mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
 import { readAuth, readState, writeState } from "../config.js";
-import { nearestDirectory, readMainCheckout, resolveRepoRoot } from "../git.js";
+import { deepestRoot, nearestDirectory, nestedCheckout, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
 import { appendSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
 import type { SyncState } from "../watermarks.js";
@@ -126,10 +126,7 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   return line;
 }
 
-// Read the transcript from `offset`, resolve the repo of every directory a
-// tool call touched, and add it to `roots`. Returns the new offset. A
-// directory under a root already known costs nothing; every other distinct
-// one costs one git spawn, capped per turn.
+// The subagent transcripts beside a session's transcript.
 async function subagentTranscripts(transcript: string): Promise<string[]> {
   if (!transcript.endsWith(".jsonl")) return [];
   const dir = join(transcript.slice(0, -".jsonl".length), "subagents");
@@ -149,6 +146,11 @@ async function recordRoot(root: string, id: RepoIdentity, roots: Record<string, 
   if (main) mains[root] = main;
 }
 
+// Read the transcript from `offset`, resolve the repo of every directory a
+// tool call touched, and add it to `roots`. Returns the new offset. A
+// directory under a root already known costs no spawn (a few stats, to see
+// that no submodule inside the root holds it); every other distinct one
+// costs one git spawn, capped per turn.
 async function recordTouchedRoots(transcript: string, offset: number, roots: Record<string, RepoIdentity>, mains: Record<string, string>, cwd: string): Promise<number> {
   let fh;
   try {
@@ -186,10 +188,13 @@ async function recordTouchedRoots(transcript: string, offset: number, roots: Rec
     let spawned = 0;
     const seen = new Set<string>();
     for (const path of dirs) {
-      if (Object.keys(roots).some((r) => path === r || path.startsWith(`${r}/`))) continue;
       const dir = await nearestDirectory(path);
       if (!dir || seen.has(dir)) continue;
       seen.add(dir);
+      // A known root covers the path unless a checkout nested inside it (a
+      // submodule) holds it: the most specific root is the one recorded.
+      const known = deepestRoot(Object.keys(roots), path);
+      if (known && !(await nestedCheckout(known, dir))) continue;
       if (spawned++ >= MAX_DIRS_PER_TURN) break;
       const r = await resolveRepoRoot(dir);
       if (!r) continue;
