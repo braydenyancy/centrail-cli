@@ -1655,7 +1655,7 @@ var LAN_SUFFIXES = [".local", ".localhost", ".localdomain", ".lan", ".home.arpa"
 function isHostedName(host) {
   if (/^[0-9.]+$/.test(host) || host.includes(":") || host.startsWith("["))
     return false;
-  if (host === "localhost")
+  if (!host.includes("."))
     return false;
   return !LAN_SUFFIXES.some((s) => host.endsWith(s));
 }
