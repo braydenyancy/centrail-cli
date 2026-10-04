@@ -81,7 +81,7 @@ function sentBy051(externalId: string, outputTokens: number, atMs: number): Row 
 
 beforeAll(async () => {
   await server.start();
-  server.fields = ["repo", "match", "usage-extras"];
+  server.fields = ["repo", "match", "usage-extras", "patch-id"];
   fx = await scratch();
   await mkdir(process.env.HOME!, { recursive: true });
   open = await fx.repo("open", { remote: "https://github.com/acme/open.git" });
@@ -129,7 +129,8 @@ describe("upgrading from 0.5.x: nothing beyond the 0.5.1 wire leaves before the 
     expect(server.rows.get("req_old")?.metadata).toBeUndefined();
 
     // The attribute route as 0.5.1 shaped it: the CLI matched commits itself
-    // ("match" is not used), no repo keys, no commit facts, no facts block.
+    // ("match" is not used), no repo keys, no commit facts, no patch ids, no
+    // facts block.
     const bodies = server.attributeBodies.slice(attributeFrom);
     const attributions = bodies.flatMap((b) => b.attributions ?? []);
     const fates = bodies.flatMap((b) => b.fates ?? []);

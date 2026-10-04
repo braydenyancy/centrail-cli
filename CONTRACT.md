@@ -179,8 +179,8 @@ A vanished sha's events may then move to a live commit only on proof: its
 `patchId` equals the live commit's (a rebase, a cherry-pick, a reworded
 amend), or its `branchPatchId` equals a default-branch commit's
 `patchId` (a squash merge, even with the branch deleted). Neither field
-reveals code; they are sent with or without `"repo"`. Without `"patch-id"`
-fate rows are exactly as above.
+reveals code; they are sent with or without `"repo"`, once the scope question
+is answered. Without `"patch-id"` fate rows are exactly as above.
 
 **Usage extras (0.6.0).** When `fields` contains `"usage-extras"`, an event may
 carry top-level `speed` (Claude's `usage.speed`, e.g. `"standard"` or `"fast"`)

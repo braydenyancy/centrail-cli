@@ -75,7 +75,8 @@ versioning.
   commit carries, so a squash of any prefix matches; none on the default
   branch). The server moves a vanished sha's events only on that proof, never
   by time. Content hashes, computed with pinned diff options so machines
-  agree; they reveal no code. Old servers get exactly today's rows. No
+  agree; they reveal no code. Old servers, and installs that have not
+  answered the scope question, get exactly today's rows. No
   attributes file is read and the diff is `--text`: a `*.js -diff` in a
   global, system or in-repo attributes file printed "Binary files differ"
   and changed the id, so two machines disagreed on one commit.
