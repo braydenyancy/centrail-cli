@@ -264,15 +264,19 @@ export async function branchPrefixes(repoRoot: string, defaultRef: string, tipRe
 // cumulative diff from `base` to `sha`. Keyed by sha, so one kind per call.
 // The diff options are pinned, not read from config (renames, algorithm,
 // path quoting): the server compares ids computed on different machines.
+// So are attributes: a `-diff` from a global, system or in-repo attributes
+// file prints "Binary files differ" instead of the text, whose id is
+// another; no attributes file is read, and `--text` overrides the rest
+// (a binary file's bytes are hashed as its diff, the same everywhere).
 // A content hash: it says two changes are the same, never what they are.
 // Empty on any failure.
 export function patchIds(repoRoot: string, commits: { sha: string; base?: string }[]): Promise<Record<string, string>> {
   if (commits.length === 0) return Promise.resolve({});
   return new Promise((resolve) => {
-    const opts = { env: gitEnv(), stdio: ["pipe", "pipe", "ignore"] as ["pipe", "pipe", "ignore"] };
+    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] as ["pipe", "pipe", "ignore"] };
     const diff = spawn(
       "git",
-      ["-C", repoRoot, "-c", "core.quotePath=true", "diff-tree", "--stdin", "-p", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
+      ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
       opts,
     );
     const ids = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], opts);

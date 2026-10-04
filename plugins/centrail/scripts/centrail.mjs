@@ -1457,10 +1457,10 @@ function patchIds(repoRoot, commits) {
   if (commits.length === 0)
     return Promise.resolve({});
   return new Promise((resolve) => {
-    const opts = { env: gitEnv(), stdio: ["pipe", "pipe", "ignore"] };
+    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] };
     const diff = spawn(
       "git",
-      ["-C", repoRoot, "-c", "core.quotePath=true", "diff-tree", "--stdin", "-p", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
+      ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
       opts
     );
     const ids = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], opts);

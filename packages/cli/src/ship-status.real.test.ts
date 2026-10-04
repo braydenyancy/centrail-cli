@@ -222,6 +222,41 @@ describe("merge and root commits", () => {
   });
 });
 
+// Ids are compared across machines, so nothing local may change them. A
+// `-diff` attribute (a global attributes file, the repo's own, the system's)
+// turns a text diff into "Binary files differ", whose patch id is another.
+describe("patch ids ignore the machine's attributes", () => {
+  const savedGlobal = process.env.GIT_CONFIG_GLOBAL;
+  afterEach(() => {
+    if (savedGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = savedGlobal;
+  });
+
+  it.each([
+    ["a global attributes file", "global"],
+    ["the repo's own .gitattributes", "tree"],
+  ])("%s marking *.js -diff changes neither id", async (_, where) => {
+    fx = await scratch();
+    const dir = await repo("attrs");
+    const root = await g(dir, "rev-parse", "HEAD");
+    await g(dir, "checkout", "-q", "-b", "feat");
+    const c = await commit(dir, "app.js", "console.log(1)\n");
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    const reference = referenceId(dir, root, c); // git's own id, before any attribute
+    const plain = await gather(dir);
+    if (where === "global") {
+      await writeFile(join(fx.root, "attributes"), "*.js -diff\n");
+      await writeFile(join(fx.root, "gitconfig"), `[core]\n\tattributesFile = ${join(fx.root, "attributes")}\n`);
+      process.env.GIT_CONFIG_GLOBAL = join(fx.root, "gitconfig");
+    } else {
+      await writeFile(join(dir, ".gitattributes"), "*.js -diff\n");
+    }
+    const marked = await gather(dir);
+    expect(plain.patchIds[c]).toBe(reference);
+    expect([marked.patchIds[c], marked.branchPatchIds[c]]).toEqual([plain.patchIds[c], plain.branchPatchIds[c]]);
+  });
+});
+
 describe("patch ids on the wire, real git", () => {
   const AUTH = { baseUrl: "https://centrail.test", token: "t" };
   async function fatesFor(dir: string, fields: string[], machineId?: string) {

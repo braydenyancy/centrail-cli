@@ -53,7 +53,10 @@ versioning.
   commit carries, so a squash of any prefix matches; none on the default
   branch). The server moves a vanished sha's events only on that proof, never
   by time. Content hashes, computed with pinned diff options so machines
-  agree; they reveal no code. Old servers get exactly today's rows.
+  agree; they reveal no code. Old servers get exactly today's rows. No
+  attributes file is read and the diff is `--text`: a `*.js -diff` in a
+  global, system or in-repo attributes file printed "Binary files differ"
+  and changed the id, so two machines disagreed on one commit.
 - **Squash detection reads the same ids, batched.** Every commit's patch id
   comes from one `git diff-tree --stdin` piped into one `git patch-id`, so
   the fate pass no longer spawns per squash candidate or per branch prefix:
