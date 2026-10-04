@@ -31,10 +31,12 @@ import { gitExec, resolveDefaultBranch, revRange } from "./git.js";
 // treat owner/repo case-insensitively.
 //
 // Also null for a remote that names a machine rather than a hosted repo: an
-// IP literal, a LAN-only name (`.local`, `.lan`, …), a path into a home
-// directory (`~`), or scp's absolute path (`host:/Users/…`). As a key each
-// would put a hostname, an address or a home path on the wire; the root sha
-// that replaces it is the same for every clone.
+// IP literal, a LAN-only name (`.local`, `.lan`, …), a dotless host (an ssh
+// config alias like `github-work`, or a bare machine name), a path into a
+// home directory (`~`), or scp's absolute path (`host:/Users/…`). As a key
+// each would put a hostname, an address or a home path on the wire, or a
+// name no other clone shares; the root sha that replaces it is the same for
+// every clone.
 export function remoteKey(url: string): string | null {
   const raw = url.trim();
   if (!raw) return null;
@@ -96,10 +98,12 @@ export function remoteKey(url: string): string | null {
 const LEADING_SLASH_FORGES = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
 const LAN_SUFFIXES = [".local", ".localhost", ".localdomain", ".lan", ".home.arpa"];
 
-// A name a server is reached by, not a machine on a LAN or an address.
+// A name a server is reached by, not a machine on a LAN, an address, or an
+// alias only this machine's ssh config resolves. (The server also rejects a
+// dotless host in a key.)
 function isHostedName(host: string): boolean {
   if (/^[0-9.]+$/.test(host) || host.includes(":") || host.startsWith("[")) return false; // IPv4 / IPv6 literal
-  if (host === "localhost") return false;
+  if (!host.includes(".")) return false; // `localhost`, `github-work`, `nas`
   return !LAN_SUFFIXES.some((s) => host.endsWith(s));
 }
 

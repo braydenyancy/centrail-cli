@@ -42,9 +42,11 @@ versioning.
   a machine is no longer a key: `alice-macbook.local:/Users/alice/src/x.git`
   keyed as `alice-macbook.local/users/alice/src/x`, and
   `ssh://alice@192.168.1.20/home/alice/…` likewise. IP literals, LAN-only
-  names (`.local`, `.lan`, `.home.arpa`, `.localdomain`, `localhost`), home
-  paths (`~`) and scp's absolute paths off the forges now key by the root
-  sha, which every clone shares.
+  names (`.local`, `.lan`, `.home.arpa`, `.localdomain`, `localhost`),
+  dotless hosts (an ssh config alias such as `github-work:acme/repo`, which
+  no other clone shares and the server rejects), home paths (`~`) and scp's
+  absolute paths off the forges now key by the root sha, which every clone
+  shares.
 - **Abandoned work stays abandoned: patch ids prove what a vanished commit
   became.** To a server that lists `"patch-id"`, each fate row carries
   `patchId` (`git patch-id --stable` of the commit's own diff; none for a
@@ -170,7 +172,7 @@ versioning.
   auto-sync throttle, under the sync lock. A turn past the 64-directory cap
   recorded 64 roots and moved its offset past the rest; it now stops before
   the line it could not finish, and the next turn resumes there.
-- Shared stand-in server for harness tests; 319 CLI and 160 parsers tests.
+- Shared stand-in server for harness tests; 323 CLI and 160 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,

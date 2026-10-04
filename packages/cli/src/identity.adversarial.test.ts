@@ -120,6 +120,12 @@ describe("remoteKey equivalence classes", () => {
     ["scp another user's home", "git@devbox.corp.example:~alice/proj.git"],
     ["ssh URL into a home", "ssh://alice@devbox.corp.example/~alice/proj.git"],
     ["file URL", "file:///Users/alice/repos/acme-secret.git"],
+    // A dotless host is an ssh config alias or a bare machine name: not the
+    // repo's canonical host, and a key the server rejects.
+    ["ssh config alias, scp", "github-work:acme/repo.git"],
+    ["ssh config alias with a user", "git@gh:acme/repo.git"],
+    ["ssh config alias, ssh URL", "ssh://git@gh-work/acme/repo.git"],
+    ["bare machine name", "nas:repos/proj.git"],
   ])("%s (%s) is not a key", (_, url) => {
     expect(remoteKey(url)).toBeNull();
   });
