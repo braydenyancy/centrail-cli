@@ -2926,8 +2926,10 @@ function wireIdentity(repo) {
   return { key: repo.key, label: repo.label, source: repo.source, ...repo.root ? { root: repo.root } : {} };
 }
 function redactIdentity(repo, cfg, installId) {
-  if (!cfg.hideRepoNames || repo.source === "folder")
+  if (!cfg.hideRepoNames)
     return repo;
+  if (repo.source === "folder")
+    return { key: repo.key, label: "", source: repo.source };
   const digest = createHmac2("sha256", installId).update(repo.key).digest("hex").slice(0, 16);
   return { key: `hidden:${digest}`, label: "", source: repo.source };
 }
