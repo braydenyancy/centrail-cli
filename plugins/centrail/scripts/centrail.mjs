@@ -2773,6 +2773,81 @@ function merge(a, b) {
   return { writes: [.../* @__PURE__ */ new Set([...a.writes, ...b.writes])], reads: [.../* @__PURE__ */ new Set([...a.reads, ...b.reads])] };
 }
 
+// src/wire.ts
+import { createHmac as createHmac2 } from "node:crypto";
+function toWireUsageEvent(event) {
+  return {
+    externalId: event.externalId,
+    model: event.model,
+    inputTokens: event.inputTokens,
+    outputTokens: event.outputTokens,
+    cacheReadTokens: event.cacheReadTokens,
+    cacheCreationTokens: event.cacheCreationTokens,
+    ...event.cacheWriteTokens === void 0 ? {} : { cacheWriteTokens: event.cacheWriteTokens },
+    cacheCreation5mTokens: event.cacheCreation5mTokens,
+    cacheCreation1hTokens: event.cacheCreation1hTokens,
+    occurredAt: event.occurredAt.toISOString()
+  };
+}
+async function readCapabilities(auth, known) {
+  const fallback = known ?? { fields: /* @__PURE__ */ new Set() };
+  try {
+    const res = await fetch(`${auth.baseUrl}/api/cli/capabilities`, {
+      headers: versionHeaders(),
+      signal: AbortSignal.timeout(5e3)
+    });
+    if (!res.ok)
+      return fallback;
+    const body = await res.json();
+    const fields = Array.isArray(body.fields) ? body.fields.filter((f) => typeof f === "string") : [];
+    return { fields: new Set(fields) };
+  } catch {
+    return fallback;
+  }
+}
+function toWireEvent(e, caps, cfg, installId) {
+  const wire = toWireUsageEvent(e);
+  if (caps.fields.has("usage-extras")) {
+    if (e.speed)
+      wire.speed = e.speed;
+    if (e.webSearchRequests)
+      wire.webSearchRequests = e.webSearchRequests;
+  }
+  if (caps.fields.has("repo"))
+    wire.metadata = identityMetadata(e, cfg, installId);
+  return wire;
+}
+function identityMetadata(e, cfg, installId) {
+  const metadata = { origin: { machineId: installId } };
+  if (e.metadata.repo) {
+    metadata.repo = wireIdentity(redactIdentity(e.metadata.repo, cfg, installId));
+    if (e.metadata.placement)
+      metadata.placement = e.metadata.placement;
+  }
+  if (e.metadata.sessionId)
+    metadata.sessionId = e.metadata.sessionId;
+  const branch = wireBranch(e.metadata.gitBranch, cfg);
+  if (branch)
+    metadata.gitBranch = branch;
+  return metadata;
+}
+function wireIdentity(repo) {
+  return { key: repo.key, label: repo.label, source: repo.source, ...repo.root ? { root: repo.root } : {} };
+}
+function redactIdentity(repo, cfg, installId) {
+  if (!cfg.hideRepoNames || repo.source === "folder")
+    return repo;
+  const digest = createHmac2("sha256", installId).update(repo.key).digest("hex").slice(0, 16);
+  return { key: `hidden:${digest}`, label: "", source: repo.source };
+}
+function wireRepoRef(repo, cfg, installId) {
+  const shown = redactIdentity(repo, cfg, installId);
+  return { name: shown.label || shown.key, key: shown.key };
+}
+function wireBranch(branch, cfg) {
+  return branch && !cfg.hideBranchNames ? branch : null;
+}
+
 // src/ship-status.ts
 var FATE_CHUNK = 2e3;
 var WINDOW_DAYS = 90;
@@ -2829,7 +2904,7 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
     now: now.toISOString()
   };
 }
-async function runFatePass(auth, repos, declared = [], machineId) {
+async function runFatePass(auth, repos, declared = [], machineId, cfg = { hideBranchNames: false }) {
   let anyRepoPassed = false;
   const tally = { shipped: 0, inFlight: 0, unshipped: 0 };
   for (const { root: one, roots: many, name, key } of repos) {
@@ -2850,8 +2925,9 @@ async function runFatePass(auth, repos, declared = [], machineId) {
         tally.inFlight++;
       else
         tally.unshipped++;
+      const branch = wireBranch(row.branch, cfg);
       if (!machineId) {
-        fates.push({ repoName: name, commitSha: row.sha, branch: row.branch, fate: row.fate });
+        fates.push({ repoName: name, commitSha: row.sha, branch, fate: row.fate });
         continue;
       }
       const c = bySha.get(row.sha);
@@ -2860,7 +2936,7 @@ async function runFatePass(auth, repos, declared = [], machineId) {
         repoName: name,
         ...key ? { repoKey: key } : {},
         commitSha: row.sha,
-        branch: row.branch,
+        branch,
         fate: row.fate,
         ...row.mergedAs ? { mergedAs: row.mergedAs } : {},
         committedAt: c?.committedAt ?? "",
@@ -2933,73 +3009,6 @@ async function pushFates(auth, fates, repos, facts) {
 }
 function formatShipStatusLine(tally) {
   return `ship status: ${tally.shipped} shipped / ${tally.inFlight} in flight / ${tally.unshipped} unshipped`;
-}
-
-// src/wire.ts
-import { createHmac as createHmac2 } from "node:crypto";
-function toWireUsageEvent(event) {
-  return {
-    externalId: event.externalId,
-    model: event.model,
-    inputTokens: event.inputTokens,
-    outputTokens: event.outputTokens,
-    cacheReadTokens: event.cacheReadTokens,
-    cacheCreationTokens: event.cacheCreationTokens,
-    ...event.cacheWriteTokens === void 0 ? {} : { cacheWriteTokens: event.cacheWriteTokens },
-    cacheCreation5mTokens: event.cacheCreation5mTokens,
-    cacheCreation1hTokens: event.cacheCreation1hTokens,
-    occurredAt: event.occurredAt.toISOString()
-  };
-}
-async function readCapabilities(auth, known) {
-  const fallback = known ?? { fields: /* @__PURE__ */ new Set() };
-  try {
-    const res = await fetch(`${auth.baseUrl}/api/cli/capabilities`, {
-      headers: versionHeaders(),
-      signal: AbortSignal.timeout(5e3)
-    });
-    if (!res.ok)
-      return fallback;
-    const body = await res.json();
-    const fields = Array.isArray(body.fields) ? body.fields.filter((f) => typeof f === "string") : [];
-    return { fields: new Set(fields) };
-  } catch {
-    return fallback;
-  }
-}
-function toWireEvent(e, caps, cfg, installId) {
-  const wire = toWireUsageEvent(e);
-  if (caps.fields.has("usage-extras")) {
-    if (e.speed)
-      wire.speed = e.speed;
-    if (e.webSearchRequests)
-      wire.webSearchRequests = e.webSearchRequests;
-  }
-  if (caps.fields.has("repo"))
-    wire.metadata = identityMetadata(e, cfg, installId);
-  return wire;
-}
-function identityMetadata(e, cfg, installId) {
-  const metadata = { origin: { machineId: installId } };
-  if (e.metadata.repo) {
-    metadata.repo = wireIdentity(redactIdentity(e.metadata.repo, cfg, installId));
-    if (e.metadata.placement)
-      metadata.placement = e.metadata.placement;
-  }
-  if (e.metadata.sessionId)
-    metadata.sessionId = e.metadata.sessionId;
-  if (e.metadata.gitBranch && !cfg.hideBranchNames)
-    metadata.gitBranch = e.metadata.gitBranch;
-  return metadata;
-}
-function wireIdentity(repo) {
-  return { key: repo.key, label: repo.label, source: repo.source, ...repo.root ? { root: repo.root } : {} };
-}
-function redactIdentity(repo, cfg, installId) {
-  if (!cfg.hideRepoNames || repo.source === "folder")
-    return repo;
-  const digest = createHmac2("sha256", installId).update(repo.key).digest("hex").slice(0, 16);
-  return { key: `hidden:${digest}`, label: "", source: repo.source };
 }
 
 // src/commands/sync.ts
@@ -3175,7 +3184,8 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
       orphans.push(e);
       continue;
     }
-    bucket(root, "HEAD", repo.label, repo.key).events.push(e);
+    const shown = wireRepoRef(repo, config, installId);
+    bucket(root, "HEAD", shown.name, shown.key).events.push(e);
   }
   const rootByKey = /* @__PURE__ */ new Map();
   for (const b of buckets.values())
@@ -3183,15 +3193,16 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
       rootByKey.set(b.key, b.root);
   for (const e of orphans) {
     const repo = e.metadata.repo;
-    let root = rootByKey.get(repo.key);
+    const shown = wireRepoRef(repo, config, installId);
+    let root = rootByKey.get(shown.key);
     if (!root) {
       const found = await resolver.liveRootForKey(repo.key);
       if (!found)
         continue;
-      rootByKey.set(repo.key, root = found);
+      rootByKey.set(shown.key, root = found);
     }
     const branch = resolver.sidecarBranchFor(e);
-    bucket(root, branch ? `refs/heads/${branch}` : "--all", repo.label, repo.key).events.push(e);
+    bucket(root, branch ? `refs/heads/${branch}` : "--all", shown.name, shown.key).events.push(e);
   }
   if (buckets.size === 0)
     return;
@@ -3227,7 +3238,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
         ...identityAware ? { repoKey: key } : {},
         commitSha: m.sha,
         committedAt: m.committedAt.toISOString(),
-        branch: branchByExternalId.get(m.externalId) ?? null,
+        branch: wireBranch(branchByExternalId.get(m.externalId), config),
         linesAdded: m.linesAdded,
         linesDeleted: m.linesDeleted,
         filesChanged: m.filesChanged
@@ -3273,7 +3284,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
     else if (!entry.roots.includes(b.root))
       entry.roots.push(b.root);
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, config);
   if (tally) {
     console.log(`  \u21B3 ${formatShipStatusLine(tally)}`);
   }

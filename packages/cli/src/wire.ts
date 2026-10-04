@@ -97,7 +97,8 @@ export type WireEvent = WireUsageEvent & WireUsageExtras & { metadata?: WireEven
 //   - a server that lists "usage-extras": speed and web-search requests
 //   - never: working-directory paths, hostnames, platform, account data,
 //     touched paths and turn ids (they exist to choose the repo)
-//   - hideRepoNames / hideBranchNames: user toggles, applied here
+//   - hideRepoNames / hideBranchNames: user toggles, applied here and, through
+//     wireRepoRef / wireBranch, to every attribute body
 export function toWireEvent(
   e: ParsedUsageEvent,
   caps: Capabilities,
@@ -121,7 +122,8 @@ function identityMetadata(e: ParsedUsageEvent, cfg: Config, installId: string): 
     if (e.metadata.placement) metadata.placement = e.metadata.placement;
   }
   if (e.metadata.sessionId) metadata.sessionId = e.metadata.sessionId;
-  if (e.metadata.gitBranch && !cfg.hideBranchNames) metadata.gitBranch = e.metadata.gitBranch;
+  const branch = wireBranch(e.metadata.gitBranch, cfg);
+  if (branch) metadata.gitBranch = branch;
   return metadata;
 }
 
@@ -136,4 +138,20 @@ export function redactIdentity(repo: RepoIdentity, cfg: Config, installId: strin
   if (!cfg.hideRepoNames || repo.source === "folder") return repo;
   const digest = createHmac("sha256", installId).update(repo.key).digest("hex").slice(0, 16);
   return { key: `hidden:${digest}`, label: "", source: repo.source };
+}
+
+// A repo as the attribute route names it — `repos[]`, attributions, fate
+// rows: the key its events carry, so the toggles mean the same on both
+// routes and a server that matches joins the two. The name is the label,
+// or under hideRepoNames the hidden key itself: the server rejects an
+// empty name, and the folder's would name the repo.
+export function wireRepoRef(repo: RepoIdentity, cfg: Config, installId: string): { name: string; key: string } {
+  const shown = redactIdentity(repo, cfg, installId);
+  return { name: shown.label || shown.key, key: shown.key };
+}
+
+// A branch as any route carries it: absent (null on a row) under
+// hideBranchNames.
+export function wireBranch(branch: string | null | undefined, cfg: Pick<Config, "hideBranchNames">): string | null {
+  return branch && !cfg.hideBranchNames ? branch : null;
 }

@@ -81,7 +81,9 @@ Without `"repo"` none of these are sent and the body is the 0.5.1 shape.
 Attribution and fate rows gain `repoKey` next to `repoName`; `repos[]` gains
 `key`. `repoName` stays the display label. Several checkouts of one repo
 carry one `key` and possibly different labels; the server picks one label
-per key. The fate-row additions below (commit facts, `mine`, `mergedAs`, the
+per key. The toggles apply here as on events: under `hideRepoNames` the key
+is the events' `hidden:<hmac>` and the name is that same key (never empty,
+never the folder); under `hideBranchNames` every row's `branch` is `null`. The fate-row additions below (commit facts, `mine`, `mergedAs`, the
 `facts` block) also go only to a server that lists `"repo"`; to any other a
 fate row is `{ repoName, commitSha, branch, fate }`.
 

@@ -33,7 +33,12 @@ versioning.
   prompt, code, diff and commit-message text and expects exactly the
   allowed keys back. Paths, hostnames, platform, client and account data
   never leave, whatever the server lists; `hideRepoNames` also withholds the
-  root sha.
+  root sha. Both toggles reach the attribute route too: `repos[]`,
+  attributions and fate rows carry the events' `hidden:` key (as their name
+  as well) and no branch, so a matching server joins them. Before, they
+  reached events only, and the fates' real keys never matched the events'
+  hidden ones. Commit shas still go: they are what attribution matches, so a
+  hidden public repo can still be found by its commits.
 - **One full re-send on upgrade, so the server can enrich what it holds.**
   Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
   the first sync after upgrading re-sends each surface's history once, and to

@@ -26,7 +26,7 @@ import { IdentityResolver } from "../resolver.js";
 import { compactSidecar, readSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
 import { eventInScope, surfaceEnabled } from "../scope.js";
-import { readCapabilities, toWireEvent, type Capabilities } from "../wire.js";
+import { readCapabilities, toWireEvent, wireBranch, wireRepoRef, type Capabilities } from "../wire.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
 // events stays far below the 2MB body limit.
@@ -279,7 +279,9 @@ async function pushAttributions(
   // One bucket per (checkout root, ref). A live checkout reads its own HEAD
   // log, as before. A session whose folder is gone joins a live checkout of
   // the same identity and reads the branch its sidecar line recorded —
-  // branches outlive worktrees — or every ref when it was detached.
+  // branches outlive worktrees — or every ref when it was detached. A
+  // bucket's name and key are what the wire carries (wireRepoRef: hidden
+  // under hideRepoNames); the plaintext key only finds checkouts.
   type Bucket = { root: string; ref: string; name: string; key: string; events: ParsedUsageEvent[] };
   const buckets = new Map<string, Bucket>();
   const bucket = (root: string, ref: string, name: string, key: string): Bucket => {
@@ -297,22 +299,24 @@ async function pushAttributions(
       orphans.push(e);
       continue;
     }
-    bucket(root, "HEAD", repo.label, repo.key).events.push(e);
+    const shown = wireRepoRef(repo, config, installId);
+    bucket(root, "HEAD", shown.name, shown.key).events.push(e);
   }
   const rootByKey = new Map<string, string>();
   for (const b of buckets.values()) if (!rootByKey.has(b.key)) rootByKey.set(b.key, b.root);
   for (const e of orphans) {
     const repo = e.metadata.repo!;
-    let root = rootByKey.get(repo.key);
+    const shown = wireRepoRef(repo, config, installId);
+    let root = rootByKey.get(shown.key);
     if (!root) {
       // No event's cwd is a live checkout of this key; the hook may still
       // know one (a root it recorded, or the main checkout of a dead worktree).
       const found = await resolver.liveRootForKey(repo.key);
       if (!found) continue; // no live checkout on this machine: usage ships, commits wait
-      rootByKey.set(repo.key, (root = found));
+      rootByKey.set(shown.key, (root = found));
     }
     const branch = resolver.sidecarBranchFor(e);
-    bucket(root, branch ? `refs/heads/${branch}` : "--all", repo.label, repo.key).events.push(e);
+    bucket(root, branch ? `refs/heads/${branch}` : "--all", shown.name, shown.key).events.push(e);
   }
   if (buckets.size === 0) return;
 
@@ -350,7 +354,7 @@ async function pushAttributions(
         ...(identityAware ? { repoKey: key } : {}),
         commitSha: m.sha,
         committedAt: m.committedAt.toISOString(),
-        branch: branchByExternalId.get(m.externalId) ?? null,
+        branch: wireBranch(branchByExternalId.get(m.externalId), config),
         linesAdded: m.linesAdded,
         linesDeleted: m.linesDeleted,
         filesChanged: m.filesChanged,
@@ -404,7 +408,7 @@ async function pushAttributions(
     if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
     else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined, config);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }

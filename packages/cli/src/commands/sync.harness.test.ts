@@ -20,7 +20,7 @@ process.env.CODEX_HOME = join(home, "codex");
 const { runSync } = await import("./sync.js");
 const { runStopHook } = await import("./hook.js");
 const { runExclude, runInclude } = await import("./scope.js");
-const { writeAuth, writeConfig, parseConfig, readState } = await import("../config.js");
+const { writeAuth, writeConfig, parseConfig, readConfig, readState } = await import("../config.js");
 
 // Near the wall clock: incremental syncs only look 24 h behind their watermark.
 const T0 = Date.now() - 60 * 60 * 1000;
@@ -163,10 +163,39 @@ describe("sync invariants across triggers", () => {
     server.fields = ["repo"];
   });
 
+  it("hideRepoNames and hideBranchNames reach the attribute route: repos, attributions and fates carry the events' hidden key and no branch", async () => {
+    const saved = await readConfig();
+    await writeConfig({ ...saved, hideRepoNames: true, hideBranchNames: true });
+    try {
+      const hush = await fx.repo("hush", { remote: "https://github.com/acme/hush.git" });
+      await fx.git(hush, "checkout", "-q", "-b", "hush-branch");
+      await writeTranscript(hush, "s9", [transcriptLine({ sessionId: "s9", cwd: hush, requestId: "req_J", out: 3, atMs: T0 + 360_000, gitBranch: "hush-branch" })]);
+      const sha = await fx.commit(hush, "h.txt", undefined, new Date()); // after the event: it attributes here
+      const ingestFrom = server.ingestBodies.length;
+      const attributeFrom = server.attributeBodies.length;
+      await runSync({ full: false });
+      const sent = JSON.stringify([...server.ingestBodies.slice(ingestFrom), ...server.attributeBodies.slice(attributeFrom)]);
+      expect(sent).not.toContain("hush"); // not the folder, the key, nor the branch
+      const hidden = (server.rows.get("req_J")!.metadata.repo as { key: string }).key;
+      expect(hidden).toMatch(/^hidden:[0-9a-f]{16}$/);
+      const bodies = server.attributeBodies.slice(attributeFrom);
+      expect(bodies.flatMap((b) => b.repos).filter((r) => r.key === hidden)).not.toHaveLength(0);
+      expect(bodies.flatMap((b) => b.attributions).find((a) => a.externalId === "req_J")).toMatchObject({ repoKey: hidden, commitSha: sha, branch: null });
+      // The fates carry the key the events carry, so a server that matches joins them.
+      const fates = bodies.flatMap((b) => b.fates ?? []).filter((f) => f.commitSha === sha);
+      expect(fates).toEqual([expect.objectContaining({ repoKey: hidden, branch: null })]);
+      for (const r of [...bodies.flatMap((b) => b.repos), ...bodies.flatMap((b) => b.attributions), ...bodies.flatMap((b) => b.fates ?? [])]) {
+        expect("name" in r ? r.name : r.repoName).not.toBe(""); // the server rejects an empty name
+      }
+    } finally {
+      await writeConfig(saved);
+    }
+  });
+
   it("nothing on the wire ever carried the home path or hostname, whatever the server listed", () => {
     const { hostname } = require("node:os") as typeof import("node:os");
-    for (const row of server.rows.values()) {
-      const text = JSON.stringify(row);
+    for (const body of [...server.rows.values(), ...server.ingestBodies, ...server.attributeBodies]) {
+      const text = JSON.stringify(body);
       expect(text).not.toContain(hostname());
       expect(text).not.toContain(home);
     }

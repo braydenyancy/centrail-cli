@@ -16,7 +16,9 @@ import {
   type BranchTip,
   type RecentCommit,
 } from "./git.js";
+import type { Config } from "./config.js";
 import { versionHeaders } from "./version.js";
+import { wireBranch } from "./wire.js";
 
 // Wire row for the optional `fates` section of POST /api/cli/attribute.
 // The first four fields are the 0.5.1 row; the rest go only to a server
@@ -135,12 +137,15 @@ export async function gatherShipStatusFacts(
 // `machineId` (the random install id) is given only for a server that lists
 // "repo": the commit facts, `mine`, `mergedAs` and the `facts` block ride
 // with it (§ 3.10). Without it every row is the 0.5.1 shape — repo name,
-// sha, branch, fate — and nothing else.
+// sha, branch, fate — and nothing else. `name` and `key` arrive as the
+// wire carries them (wireRepoRef); the branch is dropped here under
+// hideBranchNames.
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
   repos: { root?: string; roots?: string[]; name: string; key?: string }[],
   declared: WireRepo[] = [],
   machineId?: string,
+  cfg: Pick<Config, "hideBranchNames"> = { hideBranchNames: false },
 ): Promise<FateTally | null> {
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
@@ -159,8 +164,9 @@ export async function runFatePass(
       if (row.fate === "shipped") tally.shipped++;
       else if (row.fate === "in_flight") tally.inFlight++;
       else tally.unshipped++;
+      const branch = wireBranch(row.branch, cfg);
       if (!machineId) {
-        fates.push({ repoName: name, commitSha: row.sha, branch: row.branch, fate: row.fate });
+        fates.push({ repoName: name, commitSha: row.sha, branch, fate: row.fate });
         continue;
       }
       const c = bySha.get(row.sha);
@@ -169,7 +175,7 @@ export async function runFatePass(
         repoName: name,
         ...(key ? { repoKey: key } : {}),
         commitSha: row.sha,
-        branch: row.branch,
+        branch,
         fate: row.fate,
         ...(row.mergedAs ? { mergedAs: row.mergedAs } : {}),
         committedAt: c?.committedAt ?? "",

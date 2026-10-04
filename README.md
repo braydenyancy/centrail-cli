@@ -58,8 +58,10 @@ Never: absolute paths, hostnames, platform details, provider-account details,
 source, prompts, completions, diffs, commit messages or secrets. Tool-provided identifiers are used
 only as opaque deduplication keys. `centrail inspect --last` prints the real
 payload. Two toggles in `~/.config/centrail/config.json`: `hideRepoNames`
-(identity ships as a hash, still counted) and `hideBranchNames`. See
-[SECURITY.md](./SECURITY.md).
+(identity ships as a hash, still counted) and `hideBranchNames`, applied to
+usage events and git attribution alike. Commit SHAs still go with a hidden
+repo (they are what attribution matches), so a public repo's commits can
+still be looked up. See [SECURITY.md](./SECURITY.md).
 
 **Which repos.** `connect` lists every repo and folder your agents have touched
 on this machine, with the identity each will ship under, and asks once: sync all
