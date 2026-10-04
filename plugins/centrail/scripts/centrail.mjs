@@ -1567,6 +1567,7 @@ function remoteKey(url) {
     return null;
   let host;
   let path;
+  let scp = false;
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(raw);
   if (scheme) {
     const proto = scheme[1].toLowerCase();
@@ -1586,10 +1587,15 @@ function remoteKey(url) {
       return null;
     host = m[1];
     path = m[2];
+    scp = true;
   }
   host = host.toLowerCase();
+  if (!isHostedName(host) || /^\/?~/.test(path))
+    return null;
+  if (scp && path.startsWith("/") && !LEADING_SLASH_FORGES.has(host))
+    return null;
   path = path.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
-  if (!host || !path || host === "localhost")
+  if (!host || !path)
     return null;
   if (host === "ssh.dev.azure.com") {
     const m = /^v3\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(path);
@@ -1608,6 +1614,15 @@ function remoteKey(url) {
   }
   const key = `${host}/${path}`.toLowerCase();
   return /^[a-z0-9.-]+\/[^\s]+$/.test(key) ? key : null;
+}
+var LEADING_SLASH_FORGES = /* @__PURE__ */ new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+var LAN_SUFFIXES = [".local", ".localhost", ".localdomain", ".lan", ".home.arpa"];
+function isHostedName(host) {
+  if (/^[0-9.]+$/.test(host) || host.includes(":") || host.startsWith("["))
+    return false;
+  if (host === "localhost")
+    return false;
+  return !LAN_SUFFIXES.some((s) => host.endsWith(s));
 }
 async function readRemoteKey(repoRoot) {
   let url = null;

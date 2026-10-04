@@ -29,12 +29,19 @@ import { gitExec, resolveDefaultBranch } from "./git.js";
 // ssh vs https shapes — folds to one lowercase `host/path` with `.git`
 // stripped. Lowercase because GitHub, GitLab, Bitbucket and Azure DevOps all
 // treat owner/repo case-insensitively.
+//
+// Also null for a remote that names a machine rather than a hosted repo: an
+// IP literal, a LAN-only name (`.local`, `.lan`, …), a path into a home
+// directory (`~`), or scp's absolute path (`host:/Users/…`). As a key each
+// would put a hostname, an address or a home path on the wire; the root sha
+// that replaces it is the same for every clone.
 export function remoteKey(url: string): string | null {
   const raw = url.trim();
   if (!raw) return null;
 
   let host: string;
   let path: string;
+  let scp = false;
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(raw);
   if (scheme) {
     const proto = scheme[1].toLowerCase();
@@ -55,10 +62,15 @@ export function remoteKey(url: string): string | null {
     if (!m) return null;
     host = m[1];
     path = m[2];
+    scp = true;
   }
   host = host.toLowerCase();
+  if (!isHostedName(host) || /^\/?~/.test(path)) return null;
+  // The forges ignore a leading slash (`git@github.com:/acme/repo`); on any
+  // other host scp's absolute path is a folder on that machine.
+  if (scp && path.startsWith("/") && !LEADING_SLASH_FORGES.has(host)) return null;
   path = path.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
-  if (!host || !path || host === "localhost") return null;
+  if (!host || !path) return null;
 
   // Azure DevOps: ssh `ssh.dev.azure.com:v3/org/project/repo` and https
   // `dev.azure.com/org/project/_git/repo` are one repo. Fold ssh into the
@@ -79,6 +91,16 @@ export function remoteKey(url: string): string | null {
 
   const key = `${host}/${path}`.toLowerCase();
   return /^[a-z0-9.-]+\/[^\s]+$/.test(key) ? key : null;
+}
+
+const LEADING_SLASH_FORGES = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+const LAN_SUFFIXES = [".local", ".localhost", ".localdomain", ".lan", ".home.arpa"];
+
+// A name a server is reached by, not a machine on a LAN or an address.
+function isHostedName(host: string): boolean {
+  if (/^[0-9.]+$/.test(host) || host.includes(":") || host.startsWith("[")) return false; // IPv4 / IPv6 literal
+  if (host === "localhost") return false;
+  return !LAN_SUFFIXES.some((s) => host.endsWith(s));
 }
 
 // The repo's remote key: `origin` when it has one, else the first remote.

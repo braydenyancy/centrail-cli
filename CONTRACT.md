@@ -54,7 +54,8 @@ with exactly these keys (each absent when unknown):
 
 - `metadata.repo: { key, label, source, root? }` — `key` is `host/owner/repo`
   (canonical remote, lowercase, `.git` stripped), `sha:<root commit>` (no
-  remote), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
+  remote, or one that names a machine: an IP literal, a LAN-only name, a
+  home or absolute scp path), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
   `hideRepoNames`; `label` is the folder basename (empty when hidden);
   `source` is `remote | root | folder`; `root` is the default branch's root
   commit sha, sent with remote and root keys so the server can propose

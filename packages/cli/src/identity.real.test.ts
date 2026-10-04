@@ -43,6 +43,15 @@ describe("repoIdentity", () => {
     expect((await repoIdentity(wt))!.key).toBe(`sha:${root}`);
   });
 
+  it("a clone of a laptop's repo over ssh keys by its root sha: no hostname, no home path", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("acme-secret", { remote: "alice-macbook.local:/Users/alice/src/acme-secret.git" });
+    const root = (await fx.git(repo, "rev-list", "--max-parents=0", "HEAD")).trim();
+    const id = await repoIdentity(repo);
+    expect(id).toEqual({ key: `sha:${root}`, label: "acme-secret", source: "root", root });
+    expect(JSON.stringify(id)).not.toMatch(/alice|macbook/);
+  });
+
   it("is null for an empty repo with no remote", async () => {
     fx = await scratch();
     const repo = await fx.repo("empty", { empty: true });

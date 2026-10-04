@@ -38,7 +38,13 @@ versioning.
   as well) and no branch, so a matching server joins them. Before, they
   reached events only, and the fates' real keys never matched the events'
   hidden ones. Commit shas still go: they are what attribution matches, so a
-  hidden public repo can still be found by its commits.
+  hidden public repo can still be found by its commits. A remote that names
+  a machine is no longer a key: `alice-macbook.local:/Users/alice/src/x.git`
+  keyed as `alice-macbook.local/users/alice/src/x`, and
+  `ssh://alice@192.168.1.20/home/alice/…` likewise. IP literals, LAN-only
+  names (`.local`, `.lan`, `.home.arpa`, `.localdomain`, `localhost`), home
+  paths (`~`) and scp's absolute paths off the forges now key by the root
+  sha, which every clone shares.
 - **One full re-send on upgrade, so the server can enrich what it holds.**
   Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
   the first sync after upgrading re-sends each surface's history once, and to
