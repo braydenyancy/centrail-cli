@@ -18,7 +18,8 @@ export type ShipStatusFacts = {
   // Resolved default branch name (e.g. "main"). Never empty — the CLI skips
   // the fate pass for a repo when it cannot resolve a default branch.
   defaultBranch: string;
-  // Recent commits (`git log --all --since=90 days`, capped): sha + ISO date.
+  // Recent commits (`git log --since=90 days` over every ref but the stash
+  // and notes, capped): sha + ISO date.
   shas: { sha: string; committedAt: string }[];
   // Shas that are ancestors of the default branch tip.
   ancestorShas: string[];

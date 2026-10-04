@@ -128,7 +128,17 @@ async function scanClaudeCodeLogs(opts) {
     for (const e of await scanProjectsDir(base, since))
       events.push(e);
   }
-  return collapseUsageEvents(foldSidechainReplays(events));
+  const folded = foldSidechainReplays(events);
+  if (!since)
+    return collapseUsageEvents(folded);
+  const inWindow = new Set(folded.filter((e) => e.occurredAt > since).map((e) => e.externalId));
+  const collapsed = collapseUsageEvents(folded);
+  if (!opts.wholeFiles)
+    return collapsed.filter((e) => inWindow.has(e.externalId));
+  for (const e of collapsed)
+    if (!inWindow.has(e.externalId))
+      e.metadata.context = true;
+  return collapsed;
 }
 function foldSidechainReplays(events) {
   const parentId = /* @__PURE__ */ new Map();
@@ -255,7 +265,7 @@ async function scanProjectsDir(basePath, since) {
         }
         turns.observe(raw);
         const parsed = parseAssistantEvent(raw, turns.current);
-        if (parsed && (!since || parsed.occurredAt > since)) {
+        if (parsed) {
           applyFallback(raw, parsed);
           events.push(parsed);
           for (const extra of extraIterations(raw, parsed))
@@ -639,9 +649,14 @@ async function scanCodexLogs(opts) {
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom)
       parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
-    for (const e of parsed)
-      if (!opts.since || e.occurredAt > opts.since)
-        events.push(e);
+    for (const e of parsed) {
+      if (opts.since && e.occurredAt <= opts.since) {
+        if (!opts.wholeFiles)
+          continue;
+        e.metadata.context = true;
+      }
+      events.push(e);
+    }
   }
   return suffixDuplicateExternalIds(events);
 }
@@ -1264,7 +1279,7 @@ import { stat as stat6 } from "node:fs/promises";
 // src/git.ts
 import { execFile, spawn } from "node:child_process";
 import { readFile as readFile5, stat as stat5 } from "node:fs/promises";
-import { basename as basename2, dirname } from "node:path";
+import { basename as basename2, dirname, join as join6 } from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var GIT_REDIRECT_VARS = [
@@ -1311,6 +1326,23 @@ async function nearestDirectory(path) {
     dir = parent;
   }
 }
+function deepestRoot(roots, path) {
+  let best = null;
+  for (const r of roots)
+    if ((path === r || path.startsWith(`${r}/`)) && (!best || r.length > best.length))
+      best = r;
+  return best;
+}
+async function nestedCheckout(root, dir) {
+  for (let d = dir; d !== root && d.startsWith(`${root}/`); d = dirname(d)) {
+    try {
+      await stat5(join6(d, ".git"));
+      return true;
+    } catch {
+    }
+  }
+  return false;
+}
 async function readMainCheckout(repoRoot) {
   try {
     const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
@@ -1323,11 +1355,14 @@ async function readMainCheckout(repoRoot) {
     return null;
   }
 }
+function revRange(ref) {
+  return ref === "--all" ? ["--exclude=refs/stash", "--exclude=refs/notes/*", "--all"] : [ref];
+}
 async function readRepoCommits(repoRoot, ref = "HEAD") {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", ref, "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
+      ["-C", repoRoot, "log", ...revRange(ref), "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
       { maxBuffer: 64 * 1024 * 1024 }
     );
     return parseGitLogNumstat(stdout);
@@ -1463,7 +1498,7 @@ async function listRecentShas(repoRoot, sinceDays = 90) {
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
+      ["-C", repoRoot, "log", ...revRange("--all"), `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
       { maxBuffer: 64 * 1024 * 1024 }
     );
     return parseGitLogNumstat(stdout).slice(0, RECENT_SHA_CAP).map((c) => ({
@@ -1583,13 +1618,14 @@ import { createHmac } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { readFile as readFile6 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname2, join as join6 } from "node:path";
+import { basename as basename3, dirname as dirname2, join as join7 } from "node:path";
 function remoteKey(url) {
   const raw = url.trim();
   if (!raw)
     return null;
   let host;
   let path;
+  let scp = false;
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(raw);
   if (scheme) {
     const proto = scheme[1].toLowerCase();
@@ -1609,10 +1645,15 @@ function remoteKey(url) {
       return null;
     host = m[1];
     path = m[2];
+    scp = true;
   }
   host = host.toLowerCase();
+  if (!isHostedName(host) || /^\/?~/.test(path))
+    return null;
+  if (scp && path.startsWith("/") && !LEADING_SLASH_FORGES.has(host))
+    return null;
   path = path.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "");
-  if (!host || !path || host === "localhost")
+  if (!host || !path)
     return null;
   if (host === "ssh.dev.azure.com") {
     const m = /^v3\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(path);
@@ -1631,6 +1672,15 @@ function remoteKey(url) {
   }
   const key = `${host}/${path}`.toLowerCase();
   return /^[a-z0-9.-]+\/[^\s]+$/.test(key) ? key : null;
+}
+var LEADING_SLASH_FORGES = /* @__PURE__ */ new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+var LAN_SUFFIXES = [".local", ".localhost", ".localdomain", ".lan", ".home.arpa"];
+function isHostedName(host) {
+  if (/^[0-9.]+$/.test(host) || host.includes(":") || host.startsWith("["))
+    return false;
+  if (host === "localhost")
+    return false;
+  return !LAN_SUFFIXES.some((s) => host.endsWith(s));
 }
 async function readRemoteKey(repoRoot) {
   let url = null;
@@ -1659,7 +1709,7 @@ async function readRootSha(repoRoot) {
 }
 async function listRoots(repoRoot, ref) {
   try {
-    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ref]);
+    const { stdout } = await gitExec(["-C", repoRoot, "rev-list", "--max-parents=0", ...revRange(ref)]);
     return stdout.split("\n").map((s) => s.trim()).filter((s) => /^[0-9a-f]{40,64}$/.test(s)).sort();
   } catch {
     return [];
@@ -1695,7 +1745,7 @@ async function staleWorktree(dir) {
   let d = dir;
   for (; ; ) {
     try {
-      const text = await readFile6(join6(d, ".git"), "utf-8");
+      const text = await readFile6(join7(d, ".git"), "utf-8");
       const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
       const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
       return wt ? { folder: d, main: wt[1] } : null;
@@ -1760,6 +1810,7 @@ async function readSidecar(path = SIDECAR_PATH) {
   }
   return out;
 }
+var SIDECAR_RETENTION_DAYS = 90;
 async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   let text;
   try {
@@ -1770,6 +1821,7 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   const keep = /* @__PURE__ */ new Map();
   const recent = [];
   const cutoff = now - 60 * 60 * 1e3;
+  const lastSeen = /* @__PURE__ */ new Map();
   for (const raw of text.split("\n")) {
     if (!raw.trim())
       continue;
@@ -1781,11 +1833,17 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
     }
     if (!isSidecarLine(line))
       continue;
-    if (new Date(line.ts).getTime() >= cutoff)
+    const at = new Date(line.ts).getTime();
+    lastSeen.set(line.sessionId, Math.max(lastSeen.get(line.sessionId) ?? -Infinity, at));
+    if (at >= cutoff)
       recent.push(raw);
     else
       keep.set(line.sessionId, raw);
   }
+  const expired = now - SIDECAR_RETENTION_DAYS * 24 * 60 * 60 * 1e3;
+  for (const [sessionId, at] of lastSeen)
+    if (at < expired)
+      keep.delete(sessionId);
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile2(tmp, [...keep.values(), ...recent].map((l) => `${l}
 `).join(""), { mode: 384 });
@@ -1834,27 +1892,41 @@ var IdentityResolver = class _IdentityResolver {
   }
   // The repo a touched path falls under: first the roots the Stop hook
   // recorded for the session (the folder may be gone), then live git on
-  // the path's directory. Null for a path in no repo.
+  // the path's directory. Null for a path in no repo. The most specific
+  // root wins: a known root answers only when no checkout nested inside it
+  // (a submodule) holds the path, so the answer never depends on which
+  // turn resolved what first.
   async identityForPath(path, sessionId) {
     const roots = sessionId ? this.sidecar.get(sessionId)?.roots : void 0;
-    if (roots) {
-      let best = null;
-      for (const root2 of Object.keys(roots)) {
-        if ((path === root2 || path.startsWith(`${root2}/`)) && (!best || root2.length > best.length))
-          best = root2;
-      }
-      if (best)
-        return roots[best];
-    }
-    for (const root2 of this.liveRoots) {
-      if (path === root2 || path.startsWith(`${root2}/`))
-        return this.identityForRoot(root2);
-    }
-    const dir = await nearestDirectory(path);
+    const recorded = roots ? deepestRoot(Object.keys(roots), path) : null;
+    if (recorded && await this.answers(recorded, path))
+      return roots[recorded];
+    const live = deepestRoot(this.liveRoots, path);
+    if (live && await this.answers(live, path))
+      return this.identityForRoot(live);
+    const dir = await this.dirFor(path);
     if (!dir)
       return null;
     const root = await this.rootFor(dir);
     return root ? this.identityForRoot(root) : null;
+  }
+  // Whether a known root holds `path` itself, rather than a checkout nested
+  // inside it. A path whose folder is gone climbs above the root: it holds.
+  async answers(root, path) {
+    const dir = await this.dirFor(path);
+    if (!dir)
+      return true;
+    const k = `${root}\0${dir}`;
+    let nested = this.nestedByDir.get(k);
+    if (nested === void 0)
+      this.nestedByDir.set(k, nested = await nestedCheckout(root, dir));
+    return !nested;
+  }
+  async dirFor(path) {
+    let dir = this.dirByPath.get(path);
+    if (dir === void 0)
+      this.dirByPath.set(path, dir = await nearestDirectory(path));
+    return dir;
   }
   // The live checkout root for this event's cwd, or null when the folder is
   // gone or not a repo. Attribution reads commits from here.
@@ -1932,6 +2004,8 @@ var IdentityResolver = class _IdentityResolver {
   }
   liveRoots = /* @__PURE__ */ new Set();
   liveRootByKey = /* @__PURE__ */ new Map();
+  dirByPath = /* @__PURE__ */ new Map();
+  nestedByDir = /* @__PURE__ */ new Map();
   async rootFor(cwd) {
     let root = this.rootByCwd.get(cwd);
     if (root === void 0) {
@@ -2286,7 +2360,7 @@ var FIELDS_SHOWN_ONCE = `
 import { spawn as spawn2 } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import { mkdir as mkdir3, open, readdir as readdir5, rm as rm2, stat as stat7 } from "node:fs/promises";
-import { dirname as dirname4, join as join7 } from "node:path";
+import { dirname as dirname4, join as join8 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
@@ -2353,15 +2427,15 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(mains).length > 0)
     line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join7(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join8(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl"))
     return [];
-  const dir = join7(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join8(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join7(dir, f));
+    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join8(dir, f));
   } catch {
     return [];
   }
@@ -2388,13 +2462,15 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
     const length = Math.min(size - offset, MAX_BYTES_PER_TURN);
     const buf = Buffer.alloc(length);
     const { bytesRead } = await fh.read(buf, 0, length, offset);
-    const text = buf.toString("utf-8", 0, bytesRead);
-    const complete = text.lastIndexOf("\n");
+    const complete = buf.subarray(0, bytesRead).lastIndexOf(10);
     if (complete < 0)
       return offset;
-    const dirs = /* @__PURE__ */ new Set();
+    const lines = [];
     let turnCwd = cwd;
-    for (const raw of text.slice(0, complete).split("\n")) {
+    for (let start = 0; start <= complete; ) {
+      const nl = buf.indexOf(10, start);
+      const raw = buf.toString("utf-8", start, nl);
+      start = nl + 1;
       if (!raw.includes('"tool_use"') && !raw.includes('"function_call"') && !raw.includes('"turn_context"'))
         continue;
       let line;
@@ -2414,30 +2490,32 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
         ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
       if (!ev)
         continue;
-      for (const path of [...ev.writes, ...ev.reads])
-        dirs.add(path);
+      lines.push({ paths: [...ev.writes, ...ev.reads], end: start });
     }
     let spawned = 0;
     const seen = /* @__PURE__ */ new Set();
-    for (const path of dirs) {
-      if (Object.keys(roots).some((r2) => path === r2 || path.startsWith(`${r2}/`)))
-        continue;
-      const dir = await nearestDirectory(path);
-      if (!dir || seen.has(dir))
-        continue;
-      seen.add(dir);
-      if (spawned++ >= MAX_DIRS_PER_TURN)
-        break;
-      const r = await resolveRepoRoot(dir);
-      if (!r)
-        continue;
-      const id = roots[r] ?? await repoIdentity(r);
-      if (!id)
-        continue;
-      await recordRoot(r, id, roots, mains);
-      const alias = logicalRoot(dir, r);
-      if (alias && !roots[alias])
-        roots[alias] = id;
+    for (let i = 0; i < lines.length; i++) {
+      for (const path of lines[i].paths) {
+        const dir = await nearestDirectory(path);
+        if (!dir || seen.has(dir))
+          continue;
+        seen.add(dir);
+        const known = deepestRoot(Object.keys(roots), path);
+        if (known && !await nestedCheckout(known, dir))
+          continue;
+        if (spawned++ >= MAX_DIRS_PER_TURN)
+          return offset + (i > 0 ? lines[i - 1].end : lines[i].end);
+        const r = await resolveRepoRoot(dir);
+        if (!r)
+          continue;
+        const id = roots[r] ?? await repoIdentity(r);
+        if (!id)
+          continue;
+        await recordRoot(r, id, roots, mains);
+        const alias = logicalRoot(dir, r);
+        if (alias && !roots[alias])
+          roots[alias] = id;
+      }
     }
     return offset + complete + 1;
   } finally {
@@ -2476,13 +2554,26 @@ async function maybeAutoSync(now, deps, claimPath) {
   const state = await read();
   if (!shouldAutoSync(state, now))
     return;
-  if (!await connected())
+  if (!await connected()) {
+    if (await claimAutoSync(claimPath, now))
+      await compactLocked(now, deps);
     return;
+  }
   if (!await claimAutoSync(claimPath, now))
     return;
   state.autoSyncAt = now.toISOString();
   await write(state);
   (deps.spawnSync ?? spawnDetachedSync)();
+}
+async function compactLocked(now, deps) {
+  const release = await acquireSyncLock(deps.lockPath ?? join8(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  if (!release)
+    return;
+  try {
+    await compactSidecar(deps.sidecarPath, now.getTime());
+  } finally {
+    await release();
+  }
 }
 async function claimAutoSync(claimPath, now) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -2522,14 +2613,14 @@ function spawnDetachedSync() {
 // src/commands/hooks-install.ts
 import { realpathSync as realpathSync3 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile8, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname5, join as join8 } from "node:path";
+import { dirname as dirname5, join as join9 } from "node:path";
 import { stat as stat8 } from "node:fs/promises";
 var HOOK_MARK = "hook stop";
 function claudeSettingsPath() {
-  return join8(claudeConfigDirs()[0], "settings.json");
+  return join9(claudeConfigDirs()[0], "settings.json");
 }
 function codexHooksPath() {
-  return join8(codexHomeDir(), "hooks.json");
+  return join9(codexHomeDir(), "hooks.json");
 }
 function hookCommand(node = process.execPath, script = process.argv[1]) {
   const abs = safeRealpath(script);
@@ -2850,8 +2941,9 @@ function identityMetadata(e, cfg, installId) {
   }
   if (e.metadata.sessionId)
     metadata.sessionId = e.metadata.sessionId;
-  if (e.metadata.gitBranch && !cfg.hideBranchNames)
-    metadata.gitBranch = e.metadata.gitBranch;
+  const branch = wireBranch(e.metadata.gitBranch, cfg);
+  if (branch)
+    metadata.gitBranch = branch;
   return metadata;
 }
 function wireIdentity(repo) {
@@ -2863,13 +2955,20 @@ function redactIdentity(repo, cfg, installId) {
   const digest = createHmac2("sha256", installId).update(repo.key).digest("hex").slice(0, 16);
   return { key: `hidden:${digest}`, label: "", source: repo.source };
 }
-function toWireFate(f, caps) {
+function wireRepoRef(repo, cfg, installId) {
+  const shown = redactIdentity(repo, cfg, installId);
+  return { name: shown.label || shown.key, key: shown.key };
+}
+function wireBranch(branch, cfg) {
+  return branch && !cfg.hideBranchNames ? branch : null;
+}
+function toWireFate(f, caps, cfg = { hideBranchNames: false }) {
   const repo = caps.fields.has("repo");
   const wire = {
     repoName: f.repoName,
     ...repo && f.repoKey ? { repoKey: f.repoKey } : {},
     commitSha: f.row.sha,
-    branch: f.row.branch,
+    branch: wireBranch(f.row.branch, cfg),
     fate: f.row.fate
   };
   if (repo) {
@@ -2942,7 +3041,7 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date(),
   const committedMs = new Map(shas.map((c) => [c.sha, Date.parse(c.committedAt)]));
   const candidates = prefixes.map((prefix) => {
     const since = Date.parse(prefix[0].at);
-    return ancestorShas.filter((sha) => (committedMs.get(sha) ?? -Infinity) >= since).slice(0, SQUASH_CANDIDATE_CAP);
+    return ancestorShas.filter((sha) => (committedMs.get(sha) ?? -Infinity) >= since).reverse().slice(0, SQUASH_CANDIDATE_CAP);
   });
   const own = withPatchIds ? shas.map((c) => c.sha) : [...new Set(candidates.flat())];
   const ownIds = await patchIds(repoRoot, own.map((sha) => ({ sha })));
@@ -2977,7 +3076,7 @@ function matchSquash(prefix, candidates, own, cumulative) {
   const byId = /* @__PURE__ */ new Map();
   for (const sha of candidates) {
     const id = own[sha];
-    if (id && !byId.has(id))
+    if (id)
       byId.set(id, sha);
   }
   for (let k = prefix.length; k >= 1; k--) {
@@ -2988,7 +3087,7 @@ function matchSquash(prefix, candidates, own, cumulative) {
   }
   return {};
 }
-async function runFatePass(auth, repos, declared = [], machineId, caps = { fields: new Set(machineId ? ["repo"] : []) }) {
+async function runFatePass(auth, repos, declared = [], machineId, caps = { fields: new Set(machineId ? ["repo"] : []) }, cfg = { hideBranchNames: false }) {
   let anyRepoPassed = false;
   const tally = { shipped: 0, inFlight: 0, unshipped: 0 };
   for (const { root: one, roots: many, name, key } of repos) {
@@ -3022,7 +3121,8 @@ async function runFatePass(auth, repos, declared = [], machineId, caps = { field
             patchId: facts.patchIds[row.sha],
             branchPatchId: ancestors.has(row.sha) ? void 0 : facts.branchPatchIds[row.sha]
           },
-          caps
+          caps,
+          cfg
         )
       );
     }
@@ -3155,9 +3255,9 @@ async function syncLocked(opts) {
       anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : void 0;
     const scanStartedAt = /* @__PURE__ */ new Date();
-    const scanned = await scanner.scan({ since });
+    const scanned = await scanner.scan({ since, wholeFiles: true });
     const candidates = scanned.filter(
-      (e) => e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
+      (e) => !e.metadata.context && e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
     );
     await placer.place(scanned);
     const events = candidates.filter((e) => eventInScope(e, config));
@@ -3266,7 +3366,8 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
       orphans.push(e);
       continue;
     }
-    bucket(root, "HEAD", repo.label, repo.key).events.push(e);
+    const shown = wireRepoRef(repo, config, installId);
+    bucket(root, "HEAD", shown.name, shown.key).events.push(e);
   }
   const rootByKey = /* @__PURE__ */ new Map();
   for (const b of buckets.values())
@@ -3274,15 +3375,16 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
       rootByKey.set(b.key, b.root);
   for (const e of orphans) {
     const repo = e.metadata.repo;
-    let root = rootByKey.get(repo.key);
+    const shown = wireRepoRef(repo, config, installId);
+    let root = rootByKey.get(shown.key);
     if (!root) {
       const found = await resolver.liveRootForKey(repo.key);
       if (!found)
         continue;
-      rootByKey.set(repo.key, root = found);
+      rootByKey.set(shown.key, root = found);
     }
     const branch = resolver.sidecarBranchFor(e);
-    bucket(root, branch ? `refs/heads/${branch}` : "--all", repo.label, repo.key).events.push(e);
+    bucket(root, branch ? `refs/heads/${branch}` : "--all", shown.name, shown.key).events.push(e);
   }
   if (buckets.size === 0)
     return;
@@ -3318,7 +3420,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
         ...identityAware ? { repoKey: key } : {},
         commitSha: m.sha,
         committedAt: m.committedAt.toISOString(),
-        branch: branchByExternalId.get(m.externalId) ?? null,
+        branch: wireBranch(branchByExternalId.get(m.externalId), config),
         linesAdded: m.linesAdded,
         linesDeleted: m.linesDeleted,
         filesChanged: m.filesChanged
@@ -3364,7 +3466,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
     else if (!entry.roots.includes(b.root))
       entry.roots.push(b.root);
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, caps);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, caps, config);
   if (tally) {
     console.log(`  \u21B3 ${formatShipStatusLine(tally)}`);
   }

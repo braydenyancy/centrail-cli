@@ -64,6 +64,10 @@ export type ParsedUsageEvent = {
     touched?: Evidence; // local only: files this request wrote and read
     fallback?: boolean; // local only: this line carries the fallback iteration; see collapse
     messageId?: string; // local only: for sidechain-replay folding
+    // local only: outside `since`, returned by a `wholeFiles` scan for its
+    // session's context (an earlier turn decides a later turn's sticky
+    // repo). The caller places it and does not send it.
+    context?: boolean;
     origin?: {
       host: string;
       platform: string;
@@ -159,6 +163,7 @@ export async function readClaudeCodeAccount(
 export async function scanClaudeCodeLogs(opts: {
   basePath?: string;
   since?: Date;
+  wholeFiles?: boolean;
 }): Promise<ParsedUsageEvent[]> {
   const since = opts.since;
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
@@ -169,7 +174,19 @@ export async function scanClaudeCodeLogs(opts: {
     // call takes, and the spread crashed a full scan at 177k lines.
     for (const e of await scanProjectsDir(base, since)) events.push(e);
   }
-  return collapseUsageEvents(foldSidechainReplays(events));
+  // `since` picks the files (by mtime); their lines are folded and collapsed
+  // whole, and only then filtered, so every id is the one a full scan
+  // gives: a /btw replay after `since` of a parent before it folds onto the
+  // parent instead of arriving as a second row. A response is in the window
+  // when any of its lines is — one that straddles `since` re-sends at its
+  // final count; the server dedupes the re-send.
+  const folded = foldSidechainReplays(events);
+  if (!since) return collapseUsageEvents(folded);
+  const inWindow = new Set(folded.filter((e) => e.occurredAt > since).map((e) => e.externalId));
+  const collapsed = collapseUsageEvents(folded);
+  if (!opts.wholeFiles) return collapsed.filter((e) => inWindow.has(e.externalId));
+  for (const e of collapsed) if (!inWindow.has(e.externalId)) e.metadata.context = true;
+  return collapsed;
 }
 
 // A /btw side question runs in a sidechain that replays parent messages
@@ -335,7 +352,7 @@ async function scanProjectsDir(
         }
         turns.observe(raw);
         const parsed = parseAssistantEvent(raw, turns.current);
-        if (parsed && (!since || parsed.occurredAt > since)) {
+        if (parsed) {
           applyFallback(raw, parsed);
           events.push(parsed);
           for (const extra of extraIterations(raw, parsed)) events.push(extra);

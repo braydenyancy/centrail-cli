@@ -19,6 +19,7 @@ import {
   type PrefixCommit,
   type RecentCommit,
 } from "./git.js";
+import type { Config } from "./config.js";
 import { versionHeaders } from "./version.js";
 import { toWireFate, type Capabilities, type WireFate } from "./wire.js";
 
@@ -107,11 +108,14 @@ export async function gatherShipStatusFacts(
   }
 
   // A squash commit postdates the work it squashes: its candidates are the
-  // default branch's commits since the prefix began, newest first, capped.
+  // default branch's commits since the prefix began, OLDEST first, capped —
+  // a set later commits never change, so a squash once found stays found.
+  // (The newest 200 lost it after 200 more commits, and the branch flipped
+  // back from shipped.)
   const committedMs = new Map(shas.map((c) => [c.sha, Date.parse(c.committedAt)]));
   const candidates = prefixes.map((prefix) => {
     const since = Date.parse(prefix[0].at);
-    return ancestorShas.filter((sha) => (committedMs.get(sha) ?? -Infinity) >= since).slice(0, SQUASH_CANDIDATE_CAP);
+    return ancestorShas.filter((sha) => (committedMs.get(sha) ?? -Infinity) >= since).reverse().slice(0, SQUASH_CANDIDATE_CAP);
   });
   const own = withPatchIds ? shas.map((c) => c.sha) : [...new Set(candidates.flat())];
   const ownIds = await patchIds(repoRoot, own.map((sha) => ({ sha })));
@@ -168,7 +172,7 @@ function matchSquash(
   const byId = new Map<string, string>();
   for (const sha of candidates) {
     const id = own[sha];
-    if (id && !byId.has(id)) byId.set(id, sha);
+    if (id) byId.set(id, sha); // oldest first: one patch landed twice maps to its latest landing
   }
   for (let k = prefix.length; k >= 1; k--) {
     const id = cumulative[prefix[k - 1].sha];
@@ -188,12 +192,15 @@ function matchSquash(
 // toWireFate from `caps` — absent, it is read from `machineId`: "repo" or
 // nothing. Without "repo" every row is the 0.5.1 shape — repo name, sha,
 // branch, fate — plus the patch ids when the server lists "patch-id".
+// `name` and `key` arrive as the wire carries them (wireRepoRef); toWireFate
+// drops the branch under hideBranchNames.
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
   repos: { root?: string; roots?: string[]; name: string; key?: string }[],
   declared: WireRepo[] = [],
   machineId?: string,
   caps: Capabilities = { fields: new Set(machineId ? ["repo"] : []) },
+  cfg: Pick<Config, "hideBranchNames"> = { hideBranchNames: false },
 ): Promise<FateTally | null> {
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
@@ -226,6 +233,7 @@ export async function runFatePass(
             branchPatchId: ancestors.has(row.sha) ? undefined : facts.branchPatchIds[row.sha],
           },
           caps,
+          cfg,
         ),
       );
     }

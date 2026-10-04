@@ -98,6 +98,32 @@ describe("remoteKey equivalence classes", () => {
     expect(remoteKey(url)).toBeNull();
   });
 
+  // A self-hosted remote names a machine and a folder on it, not a hosted
+  // repo: as a key it would put a hostname, a LAN address or a home path on
+  // the wire. These fall back to the root sha, which is the same for every
+  // clone anyway.
+  it.each([
+    ["mDNS host, absolute path", "alice-macbook.local:/Users/alice/src/acme-secret.git"],
+    ["mDNS host, ssh URL", "ssh://alice@alice-macbook.local/srv/git/proj.git"],
+    ["private IPv4, ssh URL", "ssh://alice@192.168.1.20/home/alice/repos/proj.git"],
+    ["private IPv4, scp", "git@10.0.0.5:team/repo.git"],
+    ["public IPv4", "git@203.0.113.7:acme/repo.git"],
+    ["IPv4 over https", "https://172.16.4.2:8443/team/repo.git"],
+    ["IPv6 literal", "ssh://git@[fd00::1]/srv/repo.git"],
+    ["localhost with a port", "ssh://git@localhost:2222/team/repo.git"],
+    ["a .localhost name", "https://git.localhost/team/repo.git"],
+    ["a router's LAN name", "nas.lan:repos/proj.git"],
+    ["a .home.arpa name", "git@pi.home.arpa:team/repo.git"],
+    ["a .localdomain name", "box.localdomain:team/repo.git"],
+    ["scp absolute path on a named server", "devbox.corp.example:/home/alice/repos/proj.git"],
+    ["scp home-relative path", "devbox.corp.example:~/repos/proj.git"],
+    ["scp another user's home", "git@devbox.corp.example:~alice/proj.git"],
+    ["ssh URL into a home", "ssh://alice@devbox.corp.example/~alice/proj.git"],
+    ["file URL", "file:///Users/alice/repos/acme-secret.git"],
+  ])("%s (%s) is not a key", (_, url) => {
+    expect(remoteKey(url)).toBeNull();
+  });
+
   it("a key never carries whitespace, credentials or a scheme", () => {
     for (const urls of Object.values(CLASSES)) {
       for (const u of urls) {

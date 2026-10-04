@@ -54,7 +54,8 @@ with exactly these keys (each absent when unknown):
 
 - `metadata.repo: { key, label, source, root? }` — `key` is `host/owner/repo`
   (canonical remote, lowercase, `.git` stripped), `sha:<root commit>` (no
-  remote), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
+  remote, or one that names a machine: an IP literal, a LAN-only name, a
+  home or absolute scp path), `dir:<hmac>` (not a repo), or `hidden:<hmac>` when the user set
   `hideRepoNames`; `label` is the folder basename (empty when hidden);
   `source` is `remote | root | folder`; `root` is the default branch's root
   commit sha, sent with remote and root keys so the server can propose
@@ -81,7 +82,9 @@ Without `"repo"` none of these are sent and the body is the 0.5.1 shape.
 Attribution and fate rows gain `repoKey` next to `repoName`; `repos[]` gains
 `key`. `repoName` stays the display label. Several checkouts of one repo
 carry one `key` and possibly different labels; the server picks one label
-per key. The fate-row additions below (commit facts, `mine`, `mergedAs`, the
+per key. The toggles apply here as on events: under `hideRepoNames` the key
+is the events' `hidden:<hmac>` and the name is that same key (never empty,
+never the folder); under `hideBranchNames` every row's `branch` is `null`. The fate-row additions below (commit facts, `mine`, `mergedAs`, the
 `facts` block) also go only to a server that lists `"repo"`; to any other a
 fate row is `{ repoName, commitSha, branch, fate }`.
 
@@ -112,12 +115,14 @@ from the Stop hook when the transcript says `HEAD`. Older servers ignore
 request to one event holding the per-field maximum (Claude Code re-stamps
 usage on every content block and `output_tokens` grows across them), at the
 timestamp of its first line. A sidechain replay that shares a request id
-never adds to the original. A server that previously stored the first line
-for a request should upsert `output_tokens = GREATEST(existing, incoming)` on
-conflict so the 24 h overlap re-send corrects rows inserted mid-stream.
-Events without an Anthropic `requestId` (gateways) arrive with
-`externalId = "msg:<message id>:<session id>"` — never the timestamp, which
-differs per content block of one response.
+never adds to the original, and a `/btw` replay under a new request id takes
+its parent's; an incremental scan folds whole files before it filters by
+time, so it emits the ids a full scan does. A server that previously stored
+the first line for a request should upsert `output_tokens = GREATEST(existing,
+incoming)` on conflict so the 24 h overlap re-send corrects rows inserted
+mid-stream. Events without an Anthropic `requestId` (gateways) arrive with
+`externalId = "msg:<message id>"` — never the timestamp, which differs per
+content block of one response.
 
 **One full re-send on upgrade (0.6.0).** Every scanner's revision is bumped
 (`SCANNERS[].revision`), so the first sync after upgrading re-sends each

@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { parseGitLogNumstat, type RepoCommit } from "@centrail/parsers";
 
@@ -78,6 +78,31 @@ export async function nearestDirectory(path: string): Promise<string | null> {
   }
 }
 
+// The longest of `roots` that `path` is at or under: the most specific
+// checkout that may hold it. Null when none does.
+export function deepestRoot(roots: Iterable<string>, path: string): string | null {
+  let best: string | null = null;
+  for (const r of roots) if ((path === r || path.startsWith(`${r}/`)) && (!best || r.length > best.length)) best = r;
+  return best;
+}
+
+// Whether a checkout nested inside `root` holds `dir` — a submodule, a repo
+// cloned inside another, a worktree placed inside its main checkout. Git's
+// discovery stops at the first folder with a `.git` entry, so a known root
+// answers for `dir` only when no folder below it on the way has one. Stats,
+// never a spawn: this is what lets a known root stand in for git.
+export async function nestedCheckout(root: string, dir: string): Promise<boolean> {
+  for (let d = dir; d !== root && d.startsWith(`${root}/`); d = dirname(d)) {
+    try {
+      await stat(join(d, ".git"));
+      return true;
+    } catch {
+      // no .git here: climb
+    }
+  }
+  return false;
+}
+
 // The main checkout of a linked worktree — the folder whose `.git` holds the
 // common dir — or null for a main checkout or a bare repo. Branches and
 // commits outlive worktrees; this path is how a dead worktree's events
@@ -98,6 +123,15 @@ export function repoName(repoRoot: string): string {
   return basename(repoRoot);
 }
 
+// "--all" as every ref that holds work. A stash's commits (WIP, index, and
+// with -u a root commit of the untracked files) and notes commits are
+// nobody's work: as fate rows, attribution targets or a repo's root they
+// would be wrong. An --exclude applies to the --all after it, so order
+// matters.
+export function revRange(ref: string): string[] {
+  return ref === "--all" ? ["--exclude=refs/stash", "--exclude=refs/notes/*", "--all"] : [ref];
+}
+
 // Commits reachable from `ref` with numstat — HEAD for a live checkout, a
 // branch ref for a session whose own worktree is gone (branches outlive
 // worktrees), or "--all" when nothing better is known. Empty for an empty
@@ -106,7 +140,7 @@ export async function readRepoCommits(repoRoot: string, ref = "HEAD"): Promise<R
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", ref, "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
+      ["-C", repoRoot, "log", ...revRange(ref), "--numstat", "--pretty=format:%x1e%H%x1f%cI", "--"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout);
@@ -270,7 +304,7 @@ export function patchIds(repoRoot: string, commits: { sha: string; base?: string
   });
 }
 
-// Recent commits across ALL refs with their facts — sha, committer date,
+// Recent commits across every work ref (revRange) with their facts — sha, committer date,
 // line counts — newest first, in ONE spawn, capped so a monorepo can't
 // flood the fate pass. The facts ride every fate row (§ 3.8) so the server
 // can match events to commits without a window, on any machine.
@@ -287,7 +321,7 @@ export async function listRecentShas(repoRoot: string, sinceDays = 90): Promise<
   try {
     const { stdout } = await exec(
       "git",
-      ["-C", repoRoot, "log", "--all", `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
+      ["-C", repoRoot, "log", ...revRange("--all"), `--since=${sinceDays} days ago`, "--numstat", "--pretty=format:%x1e%H%x1f%cI%x1f%ae"],
       { maxBuffer: 64 * 1024 * 1024 },
     );
     return parseGitLogNumstat(stdout)

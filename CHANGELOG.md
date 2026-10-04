@@ -33,7 +33,18 @@ versioning.
   prompt, code, diff and commit-message text and expects exactly the
   allowed keys back. Paths, hostnames, platform, client and account data
   never leave, whatever the server lists; `hideRepoNames` also withholds the
-  root sha.
+  root sha. Both toggles reach the attribute route too: `repos[]`,
+  attributions and fate rows carry the events' `hidden:` key (as their name
+  as well) and no branch, so a matching server joins them. Before, they
+  reached events only, and the fates' real keys never matched the events'
+  hidden ones. Commit shas still go: they are what attribution matches, so a
+  hidden public repo can still be found by its commits. A remote that names
+  a machine is no longer a key: `alice-macbook.local:/Users/alice/src/x.git`
+  keyed as `alice-macbook.local/users/alice/src/x`, and
+  `ssh://alice@192.168.1.20/home/alice/…` likewise. IP literals, LAN-only
+  names (`.local`, `.lan`, `.home.arpa`, `.localdomain`, `localhost`), home
+  paths (`~`) and scp's absolute paths off the forges now key by the root
+  sha, which every clone shares.
 - **Abandoned work stays abandoned: patch ids prove what a vanished commit
   became.** To a server that lists `"patch-id"`, each fate row carries
   `patchId` (`git patch-id --stable` of the commit's own diff; none for a
@@ -72,7 +83,16 @@ versioning.
   (`transcript_path` in the hook input); the placer runs at sync over the
   same evidence, so a `--full` rescan places identically after the worktree
   is gone. Ships `metadata.placement` next to `metadata.repo`; touched paths
-  stay on the machine.
+  stay on the machine. The most specific root wins: a turn that edits only a
+  submodule is the submodule's whether or not an earlier turn resolved the
+  superproject around it (the resolver and the hook took the first known
+  root that prefixed a path, so the answer depended on turn order). Sticky
+  reaches behind the watermark: an incremental sync reads changed files
+  whole and places their earlier turns as context (never sent), so a
+  session resumed a day later gives its text-only turn the repo `--full`
+  gives, not its folder. The bound: a file unchanged since the watermark is
+  not read, so a turn in one (a subagent transcript of that resumed
+  session) cannot be the sticky one.
 - **Five 0.6 claims fell to their own tests and are fixed.** The
   no-`requestId` fallback id carried the line's timestamp and split one
   gateway response into one event per content block (99.3% of multi-line
@@ -96,12 +116,19 @@ versioning.
   commits instead of leaving them on a ghost sha. Fate rows carry `mine`
   (author is this machine's git identity; the email never leaves) and the
   Stop hook's branch replaces the transcript's `HEAD`, so the server prefers
-  your own commits on the session's branch.
+  your own commits on the session's branch. A stash and a note are not
+  history: every `--all` skips `refs/stash` and `refs/notes/*`, so a
+  `git stash` no longer becomes unshipped fate rows dated now, and a
+  `stash -u`'s untracked-files root commit can no longer become a repo's
+  root key.
 - **Squash merges resolve, and "shipped" is judged against the remote.**
   A multi-commit branch squash-merged on GitHub, its local branch deleted, its
   stale `origin/<branch>` ref left behind: `git cherry` never saw it, so its
   commits read in flight and kept the events. Fate rows now carry `mergedAs`
-  from whole-branch-prefix patch-ids, and ancestry comes from `origin/main`
+  from whole-branch-prefix patch-ids (the branch's newest 50 commits against
+  the default branch's oldest 200 since the branch began, a set later
+  commits never change: the newest 200 lost a squash once 200 more commits
+  landed, and its branch flipped back from shipped), and ancestry comes from `origin/main`
   when it exists (a parked worktree's local `main` is stale by design). Two
   parallel sessions' racing hooks started four syncs; the throttle is now an
   atomic claim, one sync per interval whatever races.
@@ -122,7 +149,25 @@ versioning.
   history (provider `ccusage`), never as certified events.
 - **A year of transcripts no longer overflows the scanner.** `push(...perDir)`
   hit the call-stack limit at 177k lines on the reference machine.
-- Shared stand-in server for harness tests; 284 CLI and 157 parsers tests.
+- **An incremental sync emits the ids a full scan does.** A `/btw` replay
+  folds onto its parent's id only when both are in the scan, and the
+  scanner dropped lines before `since` first: a parent on 09-01 and its
+  replay on 09-03, synced incrementally on 09-03, became two rows. Files are
+  still chosen by mtime; their lines are now folded and collapsed whole and
+  filtered after, keeping any response with a line in the window.
+- **The hook reads each transcript line once.** Its per-session offset is
+  in bytes but was taken from a string index (UTF-16 units), so a turn with
+  "—" or "→" left it short and the next turn re-read the tail. It is now the
+  last newline's byte position.
+- **The sidecar stays small, connected or not.** Compaction kept the last
+  line of every session ever run, and only a sync compacted, so a machine
+  that never connected grew it forever; every hook reads it whole (2 ms at
+  1k sessions, 47 ms at 20k, parse alone). A session silent past the 90-day fate
+  window is now dropped, and while not connected the hook compacts on the
+  auto-sync throttle, under the sync lock. A turn past the 64-directory cap
+  recorded 64 roots and moved its offset past the rest; it now stops before
+  the line it could not finish, and the next turn resumes there.
+- Shared stand-in server for harness tests; 319 CLI and 160 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,

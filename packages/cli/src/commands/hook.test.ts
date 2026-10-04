@@ -81,6 +81,22 @@ describe("runStopHook", () => {
     expect(st.get().autoSyncAt).toBeUndefined();
   });
 
+  it("while not connected the hook compacts the sidecar itself: no sync runs to do it", async () => {
+    fx = await scratch();
+    const { appendSidecar } = await import("../sidecar.js");
+    const sidecarPath = join(fx.root, "s.jsonl");
+    const t0 = new Date("2026-10-01T00:00:00Z");
+    const old = new Date(t0.getTime() - 120 * 24 * 60 * 60 * 1000).toISOString();
+    for (const id of ["a", "b", "c"]) {
+      await appendSidecar({ v: 1, ts: old, surface: "claude-code", sessionId: id, cwd: fx.root, repo: null, root: null, branch: null, head: null }, sidecarPath);
+    }
+    let spawns = 0;
+    const deps = { sidecarPath, spawnSync: () => void spawns++, connected: async () => false, now: () => t0, ...memState() };
+    await runStopHook(JSON.stringify({ session_id: "s", cwd: fx.root }), "claude-code", deps);
+    expect([...(await readSidecar(sidecarPath)).keys()]).toEqual(["s"]);
+    expect(spawns).toBe(0);
+  });
+
   it("ignores malformed or incomplete input without throwing", async () => {
     fx = await scratch();
     const deps = { sidecarPath: join(fx.root, "s.jsonl"), spawnSync: () => {}, connected: async () => true, ...memState() };
@@ -174,6 +190,67 @@ describe("runStopHook", () => {
     const l4 = (await fire())!;
     expect(l4.offset).toBeGreaterThan(0);
     expect((await readSidecar(sidecarPath)).get("s")?.roots).toEqual(l4.roots);
+  });
+
+  it("the offset is in bytes: a transcript with multi-byte text (— →) is read once, never re-read from short of where the last turn stopped", async () => {
+    fx = await scratch();
+    const { writeFile, appendFile, stat } = await import("node:fs/promises");
+    const a = await fx.repo("a", { remote: "https://github.com/acme/a.git" });
+    const transcript = join(fx.root, "t.jsonl");
+    const edit = (file: string) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "x", name: "Edit", input: { file_path: join(a, file), old_string: "a — b", new_string: "a → b — c → d" } }] } })}\n`;
+    const deps = { sidecarPath: join(fx.root, "sessions.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState() };
+    const fire = async () => (await runStopHook(JSON.stringify({ session_id: "s", cwd: fx.root, transcript_path: transcript }), "claude-code", deps))!;
+    await writeFile(transcript, edit("x.ts") + '{"type":"assistant","partial — →');
+    expect((await fire()).offset).toBe(Buffer.byteLength(edit("x.ts")));
+    await writeFile(transcript, edit("x.ts") + edit("y.ts"));
+    expect((await fire()).offset).toBe((await stat(transcript)).size);
+    await appendFile(transcript, edit("z.ts"));
+    expect((await fire()).offset).toBe((await stat(transcript)).size);
+  });
+
+  it("a turn past the 64-directory cap resumes where it stopped: the next turn resolves the rest, nothing is skipped", async () => {
+    fx = await scratch();
+    const { writeFile, mkdir, stat } = await import("node:fs/promises");
+    const b = await fx.repo("b", { remote: "https://github.com/acme/b.git" });
+    const transcript = join(fx.root, "t.jsonl");
+    const edit = (file: string) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "x", name: "Edit", input: { file_path: file } }] } })}\n`;
+    let text = "";
+    for (let i = 0; i < 70; i++) {
+      await mkdir(join(fx.root, "plain", `d${i}`), { recursive: true }); // not repos: each costs a spawn
+      text += edit(join(fx.root, "plain", `d${i}`, "x.ts"));
+    }
+    await writeFile(transcript, text + edit(join(b, "y.ts")));
+    const deps = { sidecarPath: join(fx.root, "sessions.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState() };
+    const fire = async () => (await runStopHook(JSON.stringify({ session_id: "s", cwd: fx.root, transcript_path: transcript }), "claude-code", deps))!;
+    const first = await fire();
+    expect(first.offset).toBe(Buffer.byteLength(text.split("\n").slice(0, 64).join("\n") + "\n")); // the 64 lines it resolved
+    expect(first.roots).toBeUndefined();
+    const second = await fire();
+    expect(Object.values(second.roots ?? {}).map((r) => r.key)).toEqual(["github.com/acme/b"]);
+    expect(second.offset).toBe((await stat(transcript)).size);
+  });
+
+  it("a submodule's files record the submodule's root, though the superproject around it was recorded first", async () => {
+    fx = await scratch();
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const ws = join(fx.root, "ws");
+    await mkdir(ws);
+    const a = await fx.repo("ws/a", { remote: "https://github.com/acme/a.git" });
+    const lib = await fx.repo("lib-src");
+    await fx.git(a, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib");
+    const sub = join(a, "vendor", "lib");
+    await fx.git(sub, "remote", "set-url", "origin", "https://github.com/acme/lib.git");
+    const transcript = join(fx.root, "t.jsonl");
+    const tool = (input: Record<string, unknown>) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "x", name: "Edit", input }] } })}\n`;
+    await writeFile(transcript, tool({ file_path: join(a, "x.ts") }) + tool({ file_path: join(sub, "y.ts") }));
+    const line = (await runStopHook(JSON.stringify({ session_id: "s", cwd: ws, transcript_path: transcript }), "claude-code", {
+      sidecarPath: join(fx.root, "sessions.jsonl"), spawnSync: () => {}, connected: async () => false, ...memState(),
+    }))!;
+    expect(line.roots?.[a]?.key).toBe("github.com/acme/a");
+    expect(line.roots?.[sub]?.key).toBe("github.com/acme/lib");
   });
 
   it("without a transcript_path (another harness, an older Claude Code) there is no offset; the cwd root is still recorded, with its main checkout when it is a worktree", async () => {
