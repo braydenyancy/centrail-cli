@@ -39,8 +39,21 @@ export function toWireUsageEvent(event: ParsedUsageEvent): WireUsageEvent {
 // What the deployed server accepts beyond the 0.5.1 allowlist. Read once per
 // sync from /api/cli/capabilities. Server first, CLI second, tag last
 // (CONTRACT.md § Release ordering); an unreachable or older server reads as
-// "nothing extra", which is exactly the 0.5.1 wire.
+// "nothing extra", which is exactly the 0.5.1 wire. The wire policy never
+// reads this directly: it gets consentedCapabilities.
 export type Capabilities = { fields: Set<string> };
+
+// What the wire policy may use: the server's list once the scope question
+// has been answered (decision § 3.7), nothing before it. An install that
+// synced under 0.5.x has never seen the question, and until it answers every
+// sync sends exactly what 0.5.1 sent, on every route — events, attributions,
+// fate rows — as a 0.6 install talking to an older server does. Per-event
+// identity (repo key, session, branch), repo keys and commit facts on the
+// attribute route wait for the answer; so does server-side matching
+// ("match"), which joins on the repo key.
+export function consentedCapabilities(served: Capabilities, cfg: Pick<Config, "scopeDecidedAt">): Capabilities {
+  return cfg.scopeDecidedAt ? served : { fields: new Set() };
+}
 
 // `known` is what the server advertised last time. A server that cannot be
 // asked (down, flaky, a 5xx on this one route) reads as what it said last,
@@ -89,8 +102,10 @@ export type WireEvent = WireUsageEvent & WireUsageExtras & { metadata?: WireEven
 
 // The field policy, applied in one place so `centrail inspect --last` shows
 // exactly what this function produced. Every field is named: nothing on the
-// parsed event reaches the wire by being spread.
-//   - every server: the 0.5.1 allowlist (toWireUsageEvent)
+// parsed event reaches the wire by being spread. `caps` is what
+// consentedCapabilities returned, never the server's raw list.
+//   - every server, and every install whose scope is unanswered: the 0.5.1
+//     allowlist (toWireUsageEvent)
 //   - a server that lists "repo": repo identity with its placement tag
 //     (§ 3.9, the disclaimer next to it), session id, branch, and a random
 //     per-install id

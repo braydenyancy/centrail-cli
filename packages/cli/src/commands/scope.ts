@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { SCANNERS, type ParsedUsageEvent } from "@centrail/parsers";
-import { ensureInstallId, readConfig, updateConfig, writeConfig, type Config } from "../config.js";
+import { ensureInstallId, readConfig, readLastSync, updateConfig, writeConfig, type Config } from "../config.js";
 import { IdentityResolver } from "../resolver.js";
 import { parseSelection, renderRepoRows, summarizeRepos, surfaceEnabled, type RepoRow } from "../scope.js";
 
@@ -11,7 +11,19 @@ import { parseSelection, renderRepoRows, summarizeRepos, surfaceEnabled, type Re
 //
 // Interactive when stdin is a terminal (or when run as `setup` explicitly);
 // headless `connect` prints the list, defaults to all, and says how to change
-// it — the list was shown before anything left, which is the point.
+// it — the list was shown before anything left, which is the point. An
+// install that synced under 0.5.x is asked by its first `sync` in a terminal;
+// until then it sends only what 0.5.1 sent (wire.ts consentedCapabilities).
+
+// Said wherever people look while the question is unanswered: `repos`,
+// `inspect --last`, a sync that cannot ask.
+export const SCOPE_UNANSWERED = "Scope not answered: repo names held back; run `centrail setup`.";
+
+// A sync asks only when someone is there to answer and to read the list: a
+// hook starts it with no terminal at all, and a pipe is not a person.
+export function isInteractiveTerminal(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
 
 export async function discoverRepos(): Promise<RepoRow[]> {
   const installId = await ensureInstallId();
@@ -29,14 +41,17 @@ export async function discoverRepos(): Promise<RepoRow[]> {
 }
 
 export async function runSetup(opts: { interactive: boolean }): Promise<void> {
-  const cfg = await readConfig();
   console.log("  Scanning local agent logs…");
   const rows = await discoverRepos();
+  // Read after discovery, which mints the install id on a first run: a copy
+  // read before it would write the id back as null, and the sync would key
+  // folders under a new one — so a folder excluded here would still ship.
+  const cfg = await readConfig();
   printScope(rows, cfg);
 
   if (rows.length === 0 || !opts.interactive) {
     if (!cfg.scopeDecidedAt) {
-      cfg.scopeDecidedAt = new Date().toISOString();
+      recordAnswer(cfg);
       await writeConfig(cfg);
     }
     console.log("  Change any time: `centrail setup`, `centrail exclude <repo>`, `centrail repos`.");
@@ -76,16 +91,35 @@ export async function runSetup(opts: { interactive: boolean }): Promise<void> {
   } finally {
     rl.close();
   }
-  cfg.scopeDecidedAt = new Date().toISOString();
+  recordAnswer(cfg);
   await writeConfig(cfg);
   console.log("");
   printScope(rows, cfg);
   console.log("  Saved. Change any time: `centrail exclude <repo>`, `centrail include <repo>`, `centrail repos`.");
 }
 
+// The first answer also re-sends the history once (the widened-scope rule,
+// pendingBackfill): until now every event left with usage numbers only, so
+// the identity the answer allows is missing from everything already sent.
+// The server fills it into the rows it holds and keeps the larger count, so
+// nothing doubles. A fresh install has no history to re-send; its first sync
+// is a full one anyway.
+function recordAnswer(cfg: Config): void {
+  if (!cfg.scopeDecidedAt) cfg.pendingBackfill = true;
+  cfg.scopeDecidedAt = new Date().toISOString();
+}
+
 export async function runRepos(): Promise<void> {
   const cfg = await readConfig();
   printScope(await discoverRepos(), cfg);
+  if (!cfg.scopeDecidedAt) console.log(`  ${SCOPE_UNANSWERED}`);
+}
+
+// `centrail inspect --last`: the last ingest body exactly as it left. The
+// note goes to stderr, so stdout stays that body and nothing else.
+export async function runInspect(): Promise<void> {
+  console.log((await readLastSync()) ?? "No sync has run on this machine yet.");
+  if (!(await readConfig()).scopeDecidedAt) console.error(SCOPE_UNANSWERED);
 }
 
 function printScope(rows: RepoRow[], cfg: Config): void {

@@ -1,8 +1,9 @@
 // An in-process stand-in for centrail.org, for harness tests that drive the
-// real `runSync` / `runStopHook`. It models exactly the server behaviour the
-// CLI relies on and nothing else: one row per externalId, per-field growth
-// on re-send, `inserted` from what landed, capabilities `fields`, and it
-// records every attribute body (repos, attributions, fates) it receives.
+// real `runSync` / `runStopHook` / `runConnect`. It models exactly the server
+// behaviour the CLI relies on and nothing else: one row per externalId,
+// per-field growth and identity fill on re-send, `inserted` from what landed,
+// capabilities `fields`, pairing that approves at once, and it records every
+// attribute body (repos, attributions, fates) it receives.
 import { createServer, type Server } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +24,22 @@ export type AttributeBody = {
 };
 
 const GROW = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"] as const;
+
+// The server's identity fill (centrail src/lib/usage/ingest/ingest.ts,
+// metadataGrowth): a re-sent copy gives a stored row the identity it lacks,
+// never over a value it has. A row a 0.5.1 CLI sent has no metadata at all.
+function identityFill(stored: Row["metadata"] | undefined, incoming: Row["metadata"] | undefined): Row["metadata"] | null {
+  if (!incoming) return null;
+  const next = { ...(stored ?? {}) };
+  if (next.repo === undefined && incoming.repo !== undefined) {
+    next.repo = incoming.repo;
+    if (incoming.placement !== undefined) next.placement = incoming.placement;
+  }
+  for (const k of ["sessionId", "gitBranch", "origin"]) {
+    if (next[k] === undefined && incoming[k] !== undefined) next[k] = incoming[k];
+  }
+  return JSON.stringify(next) === JSON.stringify(stored ?? {}) ? null : next;
+}
 
 export class StandIn {
   rows = new Map<string, Row>();
@@ -63,6 +80,14 @@ export class StandIn {
           res.end(JSON.stringify({ wireVersions: ["1"], surfaces: ["claude-code", "codex", "copilot-cli"], fields: this.fields }));
           return;
         }
+        if (req.url === "/api/cli/pair") {
+          res.end(JSON.stringify({ code: "TEST-CODE", pollToken: "poll", verificationUrl: `${this.url}/pair`, interval: 0, expiresIn: 30 }));
+          return;
+        }
+        if (req.url === "/api/cli/pair/poll") {
+          res.end(JSON.stringify({ status: "approved", token: "t" }));
+          return;
+        }
         const payload = JSON.parse(body) as Record<string, unknown>;
         if (req.url === "/api/cli/ingest") {
           this.ingestCalls++;
@@ -82,6 +107,8 @@ export class StandIn {
               inserted++;
             } else {
               for (const f of GROW) prev[f] = Math.max(prev[f], e[f]); // the server's growth upsert
+              const filled = identityFill(prev.metadata, e.metadata);
+              if (filled) prev.metadata = filled;
               skipped++;
             }
           }
