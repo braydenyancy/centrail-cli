@@ -157,6 +157,31 @@ its attributions to `mergedAs`, and rolls it up under that commit. "Shipped"
 is judged against `origin/<default>` when the checkout tracks one, so a
 worktree parked detached at `origin/main` reads correctly.
 
+**Patch ids, and `"patch-id"` (0.6.0, decision § 3.10).** When `fields`
+contains `"patch-id"`, a fate row may carry two content hashes, each
+`git patch-id --stable` (40 hex), computed with pinned diff options (no
+rename detection, myers, quoted paths) so two machines agree:
+
+- `patchId` — the commit's own diff against its first parent. Absent for a
+  merge commit (its first-parent diff is the merged side's work, which
+  those commits already carry: matching on it would let the merge stand in
+  for work it only brought in) and for a root commit (no parent: its "diff"
+  is the whole initial tree, which unrelated scaffolds share).
+- `branchPatchId` — the cumulative diff from the commit's merge base with
+  the default branch (the ref "shipped" is judged against) up to the
+  commit: what a squash of the branch **up to this commit** carries, so a
+  squash of any prefix is matchable. Each commit's own merge base: after a
+  branch merges the default branch in, the commits before that merge keep
+  the older base. Absent for commits on the default branch, and past the
+  newest 50 commits of a branch.
+
+A vanished sha's events may then move to a live commit only on proof: its
+`patchId` equals the live commit's (a rebase, a cherry-pick, a reworded
+amend), or its `branchPatchId` equals a default-branch commit's
+`patchId` (a squash merge, even with the branch deleted). Neither field
+reveals code; they are sent with or without `"repo"`, once the scope question
+is answered. Without `"patch-id"` fate rows are exactly as above.
+
 **Usage extras (0.6.0).** When `fields` contains `"usage-extras"`, an event may
 carry top-level `speed` (Claude's `usage.speed`, e.g. `"standard"` or `"fast"`)
 and `webSearchRequests` (a positive integer from
@@ -215,7 +240,9 @@ staging deployment; `CENTRAIL_CONTRACT_ATTEMPTS` bounds the retry loop.
 ## Wire samples
 
 `wire-samples/ingest-0.6.json` is a real ingest body captured from the CLI
-bundle against a server advertising `fields: ["repo", "match"]`, and
-`attribute-0.6.json` the fates calls of the same sync.
+bundle against a server advertising `fields: ["repo", "match", "patch-id"]`,
+and `attribute-0.6.json` the fates calls of the same sync: the root commit
+with no patch id, a default-branch commit with `patchId` only, and the
+worktree branch's commit with `patchId` and `branchPatchId`.
 The server repo carries a copy under its wire tests and parses it; when the
 shape changes, regenerate this file from a real sync and update both.

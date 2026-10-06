@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ParsedUsageEvent } from "@centrail/parsers";
 import type { Config } from "./config.js";
-import { toWireEvent, toWireUsageEvent, wireRepoRef } from "./wire.js";
+import { toWireEvent, toWireFate, toWireUsageEvent, wireRepoRef, type LocalFate } from "./wire.js";
 
 describe("toWireUsageEvent", () => {
   it("uploads only the explicit usage allowlist", () => {
@@ -304,5 +304,58 @@ describe("the wire allowlist", () => {
     const wire = toWireEvent(stuffed(), { fields: new Set(["repo"]) }, { ...cfg, hideRepoNames: true }, "i");
     expect(Object.keys(wire.metadata!.repo!).sort()).toEqual(["key", "label", "source"]);
     expect(JSON.stringify(wire)).not.toContain(ROOT);
+  });
+});
+
+// The fate-row allowlist, pinned the same way. A fate stuffed with
+// everything the fate pass holds locally — the author's address, paths,
+// the diff and message, fields no gatherer has today — must come out as
+// exactly the named keys for each capability set. Old servers keep exactly
+// today's rows: the 0.5.1 four, or those plus the "repo" facts.
+describe("the fate-row allowlist", () => {
+  const SHA = "1111111111111111111111111111111111111111";
+  const SQUASH = "2222222222222222222222222222222222222222";
+  const PATCH = "3333333333333333333333333333333333333333";
+  const BRANCH_PATCH = "4444444444444444444444444444444444444444";
+  const SECRETS = ["jane@acme.com", "/Users/jane", "janes-mbp", "DIFF-TEXT", "COMMIT-MESSAGE", "refs/heads/feature/x"];
+  const stuffedFate = (): LocalFate =>
+    ({
+      repoName: "repo",
+      repoKey: "github.com/acme/repo",
+      row: { sha: SHA, branch: "feature/x", fate: "shipped", mergedAs: SQUASH, cwd: "/Users/jane/work/repo", message: "COMMIT-MESSAGE" },
+      commit: {
+        sha: SHA, committedAt: "2026-09-30T12:00:00.000Z", linesAdded: 3, linesDeleted: 1, filesChanged: 2,
+        authorEmail: "jane@acme.com", diff: "DIFF-TEXT", subject: "COMMIT-MESSAGE", host: "janes-mbp",
+      },
+      mine: true,
+      patchId: PATCH,
+      branchPatchId: BRANCH_PATCH,
+      root: "/Users/jane/work/repo",
+      tipRef: "refs/heads/feature/x",
+    }) as unknown as LocalFate;
+
+  const BASE_KEYS = ["repoName", "commitSha", "branch", "fate"];
+  const REPO_KEYS = ["repoKey", "mergedAs", "committedAt", "linesAdded", "linesDeleted", "filesChanged", "mine"];
+  const PATCH_KEYS = ["patchId", "branchPatchId"];
+
+  it.each([
+    ["lists nothing (0.5.1-era)", [], BASE_KEYS],
+    ["lists \"repo\" and \"match\" (today's 0.6 server)", ["repo", "match"], [...BASE_KEYS, ...REPO_KEYS]],
+    ["lists only \"patch-id\"", ["patch-id"], [...BASE_KEYS, ...PATCH_KEYS]],
+    ["lists every field", ["repo", "match", "usage-extras", "patch-id"], [...BASE_KEYS, ...REPO_KEYS, ...PATCH_KEYS]],
+  ])("a server that %s gets exactly the allowed keys, nothing local", (_, fields, allowed) => {
+    const wire = toWireFate(stuffedFate(), { fields: new Set(fields) });
+    expect(Object.keys(wire).sort()).toEqual([...allowed].sort());
+    const json = JSON.stringify(wire);
+    for (const secret of SECRETS) expect(json).not.toContain(secret);
+    expect(wire).toMatchObject({ repoName: "repo", commitSha: SHA, branch: "feature/x", fate: "shipped" });
+    if (fields.includes("patch-id")) expect(wire).toMatchObject({ patchId: PATCH, branchPatchId: BRANCH_PATCH });
+  });
+
+  it("a fate without patch ids (a merge or root commit, a commit on the default branch) carries no patch keys, even to a \"patch-id\" server", () => {
+    const f = { ...stuffedFate(), patchId: undefined, branchPatchId: undefined };
+    const keys = Object.keys(toWireFate(f, { fields: new Set(["repo", "patch-id"]) }));
+    expect(keys).not.toContain("patchId");
+    expect(keys).not.toContain("branchPatchId");
   });
 });

@@ -67,6 +67,29 @@ versioning.
   segment `home`, `Users` or `root` off the forges, in ssh, scp and https
   alike) and scp's absolute paths off the forges now key by the root sha,
   which every clone shares.
+- **Abandoned work stays abandoned: patch ids prove what a vanished commit
+  became.** To a server that lists `"patch-id"`, each fate row carries
+  `patchId` (`git patch-id --stable` of the commit's own diff; none for a
+  merge or root commit) and `branchPatchId` (of the cumulative diff from its
+  merge base with the default branch: what a squash of the branch up to that
+  commit carries, so a squash of any prefix matches; none on the default
+  branch). The server moves a vanished sha's events only on that proof, never
+  by time. Content hashes, computed with pinned diff options so machines
+  agree; they reveal no code. Old servers, and installs that have not
+  answered the scope question, get exactly today's rows. No
+  attributes file is read and the diff is `--text`: a `*.js -diff` in a
+  global, system or in-repo attributes file printed "Binary files differ"
+  and changed the id, so two machines disagreed on one commit.
+- **Squash detection reads the same ids, batched.** Every commit's patch id
+  comes from one `git diff-tree --stdin` piped into one `git patch-id`, so
+  the fate pass no longer spawns per squash candidate or per branch prefix:
+  on the centrail repo (602 recent commits, 32 refs) 444 git spawns and
+  2.7 s became 88 and 1.1 s (1.4 s with every patch id), with the same
+  squash matches. Two misses fixed on the way: a branch that renamed a file
+  never matched its squash (the prefix diff detected the rename, the
+  candidate's did not), and a branch that merged the default branch in took
+  its pre-merge prefixes from the wrong merge base. A local branch and its
+  `origin/` twin at one tip are asked once.
 - **One full re-send on upgrade, so the server can enrich what it holds.**
   Every scanner revision is bumped (claude-code 3, copilot-cli 2, codex 2):
   the first sync after upgrading re-sends each surface's history once, and,
@@ -171,7 +194,7 @@ versioning.
   auto-sync throttle, under the sync lock. A turn past the 64-directory cap
   recorded 64 roots and moved its offset past the rest; it now stops before
   the line it could not finish, and the next turn resumes there.
-- Shared stand-in server for harness tests; 342 CLI and 160 parsers tests.
+- Shared stand-in server for harness tests; 358 CLI and 160 parsers tests.
 
 ### 0.5.1 — collection and privacy hotfix
 - **Usage upload now has an explicit privacy allowlist.** Absolute paths,

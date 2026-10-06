@@ -1422,53 +1422,76 @@ async function resolveAncestryRef(repoRoot, defaultBranch) {
 }
 var SQUASH_CANDIDATE_CAP = 200;
 var SQUASH_PREFIX_CAP = 50;
-async function squashedShas(repoRoot, defaultRef, tipRef) {
+async function branchPrefixes(repoRoot, defaultRef, tipRef) {
   try {
-    const { stdout: baseOut } = await exec("git", ["-C", repoRoot, "merge-base", defaultRef, tipRef]);
-    const base = baseOut.trim();
+    const mergeBase = async (ref) => (await exec("git", ["-C", repoRoot, "merge-base", defaultRef, ref])).stdout.trim();
+    const base = await mergeBase(tipRef);
     if (!base)
-      return {};
-    const { stdout: branchOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--max-count=${SQUASH_PREFIX_CAP}`, "--pretty=format:%H%x1f%cI", `${base}..${tipRef}`]);
-    const branch = branchOut.split("\n").filter((l) => !l.startsWith("commit ") && l.includes("")).map((l) => l.split("")).map(([sha, iso]) => ({ sha: sha.trim(), at: iso.trim() }));
-    if (branch.length === 0)
-      return {};
-    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--since=${branch[0].at}`, `${base}..${defaultRef}`], { maxBuffer: FACT_BUFFER });
-    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, SQUASH_CANDIDATE_CAP);
-    if (candidates.length === 0)
-      return {};
-    const byPatchId = /* @__PURE__ */ new Map();
-    for (const sha of candidates) {
-      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff-tree", "-p", "--root", sha], { maxBuffer: FACT_BUFFER });
-      const id = await patchId(repoRoot, diff);
-      if (id)
-        byPatchId.set(id, sha);
+      return [];
+    const { stdout } = await exec(
+      "git",
+      ["-C", repoRoot, "rev-list", "--reverse", `--max-count=${SQUASH_PREFIX_CAP}`, "--format=%H%x1f%cI%x1f%P", `${base}..${tipRef}`],
+      { maxBuffer: FACT_BUFFER }
+    );
+    const range = stdout.split("\n").filter((l) => l.includes("")).map((l) => l.split("").map((x) => x.trim())).map(([sha, at, parents]) => ({ sha, at, merge: parents.split(" ").length > 1 }));
+    if (!range.some((c) => c.merge))
+      return range.map(({ sha, at }) => ({ sha, at, base }));
+    const { stdout: pathOut } = await exec(
+      "git",
+      ["-C", repoRoot, "rev-list", "--ancestry-path", `${base}..${tipRef}`],
+      { maxBuffer: FACT_BUFFER }
+    );
+    const onPath = new Set(pathOut.split("\n").map((l) => l.trim()).filter(Boolean));
+    const out = [];
+    for (const { sha, at } of range) {
+      const own = onPath.has(sha) ? base : await mergeBase(sha);
+      if (own)
+        out.push({ sha, at, base: own });
     }
-    for (let k = branch.length; k >= 1; k--) {
-      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff", base, branch[k - 1].sha], { maxBuffer: FACT_BUFFER });
-      if (!diff.trim())
-        continue;
-      const id = await patchId(repoRoot, diff);
-      const into = id ? byPatchId.get(id) : void 0;
-      if (!into)
-        continue;
-      const out = {};
-      for (const b of branch.slice(0, k))
-        out[b.sha] = into;
-      return out;
-    }
-    return {};
+    return out;
   } catch {
-    return {};
+    return [];
   }
 }
-function patchId(repoRoot, diff) {
+function patchIds(repoRoot, commits) {
+  if (commits.length === 0)
+    return Promise.resolve({});
   return new Promise((resolve) => {
-    const child = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], { env: gitEnv() });
-    let out = "";
-    child.stdout.on("data", (d) => out += d);
-    child.on("error", () => resolve(null));
-    child.on("close", () => resolve(out.trim().split(/\s+/)[0] || null));
-    child.stdin.end(diff);
+    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] };
+    const diff = spawn(
+      "git",
+      ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
+      opts
+    );
+    const ids = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], opts);
+    let text = "";
+    let ok = true;
+    let open2 = 2;
+    const done = (code) => {
+      if (code !== 0)
+        ok = false;
+      if (--open2 > 0)
+        return;
+      const out = {};
+      if (ok) {
+        for (const line of text.split("\n")) {
+          const [id, sha] = line.trim().split(/\s+/);
+          if (id && sha)
+            out[sha] = id;
+        }
+      }
+      resolve(out);
+    };
+    for (const child of [diff, ids]) {
+      let settled = false;
+      const settle = (code) => void (settled || (settled = true, done(code)));
+      child.on("error", () => settle(null));
+      child.on("close", settle);
+      child.stdin.on("error", () => ok = false);
+    }
+    diff.stdout.pipe(ids.stdin);
+    ids.stdout.on("data", (d) => text += d);
+    diff.stdin.end(commits.map((c) => c.base ? `${c.sha} ${c.base}` : c.sha).join("\n") + "\n");
   });
 }
 async function listRecentShas(repoRoot, sinceDays = 90) {
@@ -2344,7 +2367,8 @@ var FIELDS_SHOWN_ONCE = `
   What leaves this machine on each sync \u2014 and nothing else:
     tokens per model, timestamps, the agent and CLI version, session id,
     repo identity (host/owner/repo or a root-commit hash), folder name,
-    branch, commit shas and line counts, a random per-install id.
+    branch, commit shas, line counts and change hashes (git patch-id),
+    a random per-install id.
   Never: source, prompts, completions, secrets, paths, hostname, platform,
   account details.
   Verify any time:  npx centrail inspect --last
@@ -2962,12 +2986,39 @@ function wireRepoRef(repo, cfg, installId) {
 function wireBranch(branch, cfg) {
   return branch && !cfg.hideBranchNames ? branch : null;
 }
+function toWireFate(f, caps, cfg = { hideBranchNames: false }) {
+  const repo = caps.fields.has("repo");
+  const wire = {
+    repoName: f.repoName,
+    ...repo && f.repoKey ? { repoKey: f.repoKey } : {},
+    commitSha: f.row.sha,
+    branch: wireBranch(f.row.branch, cfg),
+    fate: f.row.fate
+  };
+  if (repo) {
+    if (f.row.mergedAs)
+      wire.mergedAs = f.row.mergedAs;
+    wire.committedAt = f.commit?.committedAt ?? "";
+    wire.linesAdded = f.commit?.linesAdded ?? 0;
+    wire.linesDeleted = f.commit?.linesDeleted ?? 0;
+    wire.filesChanged = f.commit?.filesChanged ?? 0;
+    if (f.mine !== void 0)
+      wire.mine = f.mine;
+  }
+  if (caps.fields.has("patch-id")) {
+    if (f.patchId)
+      wire.patchId = f.patchId;
+    if (f.branchPatchId)
+      wire.branchPatchId = f.branchPatchId;
+  }
+  return wire;
+}
 
 // src/ship-status.ts
 var FATE_CHUNK = 2e3;
 var WINDOW_DAYS = 90;
 var DAY_MS2 = 24 * 60 * 60 * 1e3;
-async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date()) {
+async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date(), withPatchIds = false) {
   const defaultBranch = await resolveDefaultBranch(repoRoot);
   if (!defaultBranch)
     return null;
@@ -2997,16 +3048,40 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
     if (unmerged && !isDefaultRef(tip.name))
       cherryCandidates.push(tip);
   }
+  const tips = /* @__PURE__ */ new Map();
+  for (const tip of cherryCandidates)
+    if (!tips.has(tip.sha))
+      tips.set(tip.sha, tip);
   const cherrySet = /* @__PURE__ */ new Set();
-  const squashedInto = {};
-  for (const tip of cherryCandidates) {
+  const prefixes = [];
+  for (const tip of tips.values()) {
     for (const sha of await cherryEquivalentShas(repoRoot, defaultBranch, tip.name)) {
       cherrySet.add(sha);
     }
-    for (const [sha, into] of Object.entries(await squashedShas(repoRoot, ancestryRef, tip.ref))) {
+    const prefix = await branchPrefixes(repoRoot, ancestryRef, tip.ref);
+    if (prefix.length > 0)
+      prefixes.push(prefix);
+  }
+  const committedMs = new Map(shas.map((c) => [c.sha, Date.parse(c.committedAt)]));
+  const candidates = prefixes.map((prefix) => {
+    const since = Date.parse(prefix[0].at);
+    return ancestorShas.filter((sha) => (committedMs.get(sha) ?? -Infinity) >= since).reverse().slice(0, SQUASH_CANDIDATE_CAP);
+  });
+  const own = withPatchIds ? shas.map((c) => c.sha) : [...new Set(candidates.flat())];
+  const ownIds = await patchIds(repoRoot, own.map((sha) => ({ sha })));
+  const cumulative = new Map(prefixes.flat().map((c) => [c.sha, c.base]));
+  const prefixIds = await patchIds(repoRoot, [...cumulative].map(([sha, base]) => ({ sha, base })));
+  const squashedInto = {};
+  prefixes.forEach((prefix, i) => {
+    for (const [sha, into] of Object.entries(matchSquash(prefix, candidates[i], ownIds, prefixIds))) {
       if (recent.has(sha))
         squashedInto[sha] = into;
     }
+  });
+  const branchPatchIds = {};
+  for (const [sha, id] of Object.entries(prefixIds)) {
+    if (recent.has(sha) && !ancestors.has(sha))
+      branchPatchIds[sha] = id;
   }
   return {
     defaultBranch,
@@ -3016,21 +3091,39 @@ async function gatherShipStatusFacts(repoRoot, now = /* @__PURE__ */ new Date())
     squashedInto,
     branchesBySha,
     branchTipDates,
-    now: now.toISOString()
+    now: now.toISOString(),
+    patchIds: withPatchIds ? ownIds : {},
+    branchPatchIds
   };
 }
-async function runFatePass(auth, repos, declared = [], machineId, cfg = { hideBranchNames: false }) {
+function matchSquash(prefix, candidates, own, cumulative) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const sha of candidates) {
+    const id = own[sha];
+    if (id)
+      byId.set(id, sha);
+  }
+  for (let k = prefix.length; k >= 1; k--) {
+    const id = cumulative[prefix[k - 1].sha];
+    const into = id ? byId.get(id) : void 0;
+    if (into)
+      return Object.fromEntries(prefix.slice(0, k).map((c) => [c.sha, into]));
+  }
+  return {};
+}
+async function runFatePass(auth, repos, declared = [], machineId, caps = { fields: new Set(machineId ? ["repo"] : []) }, cfg = { hideBranchNames: false }) {
   let anyRepoPassed = false;
   const tally = { shipped: 0, inFlight: 0, unshipped: 0 };
   for (const { root: one, roots: many, name, key } of repos) {
     const roots = many ?? (one ? [one] : []);
-    const facts = await gatherShipStatusFactsForRoots(roots);
+    const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"));
     if (!facts)
       continue;
     anyRepoPassed = true;
     const root = roots[0];
     const email = await readUserEmail(root);
     const bySha = new Map(facts.shas.map((c) => [c.sha, c]));
+    const ancestors = new Set(facts.ancestorShas);
     const rows = computeCommitFates(facts);
     const fates = [];
     for (const row of rows) {
@@ -3040,26 +3133,22 @@ async function runFatePass(auth, repos, declared = [], machineId, cfg = { hideBr
         tally.inFlight++;
       else
         tally.unshipped++;
-      const branch = wireBranch(row.branch, cfg);
-      if (!machineId) {
-        fates.push({ repoName: name, commitSha: row.sha, branch, fate: row.fate });
-        continue;
-      }
-      const c = bySha.get(row.sha);
-      const mine = email && c?.authorEmail ? c.authorEmail === email : void 0;
-      fates.push({
-        repoName: name,
-        ...key ? { repoKey: key } : {},
-        commitSha: row.sha,
-        branch,
-        fate: row.fate,
-        ...row.mergedAs ? { mergedAs: row.mergedAs } : {},
-        committedAt: c?.committedAt ?? "",
-        linesAdded: c?.linesAdded ?? 0,
-        linesDeleted: c?.linesDeleted ?? 0,
-        filesChanged: c?.filesChanged ?? 0,
-        ...mine === void 0 ? {} : { mine }
-      });
+      const commit = bySha.get(row.sha);
+      fates.push(
+        toWireFate(
+          {
+            repoName: name,
+            repoKey: key,
+            row,
+            commit,
+            mine: email && commit?.authorEmail ? commit.authorEmail === email : void 0,
+            patchId: facts.patchIds[row.sha],
+            branchPatchId: ancestors.has(row.sha) ? void 0 : facts.branchPatchIds[row.sha]
+          },
+          caps,
+          cfg
+        )
+      );
     }
     const own = declared.filter((r) => key && r.key === key || r.name === name);
     await pushFates(auth, fates, own, machineId ? { machineId, complete: facts.complete } : void 0);
@@ -3068,10 +3157,10 @@ async function runFatePass(auth, repos, declared = [], machineId, cfg = { hideBr
     return null;
   return tally;
 }
-async function gatherShipStatusFactsForRoots(roots) {
+async function gatherShipStatusFactsForRoots(roots, withPatchIds = false) {
   let merged = null;
   for (const root of roots) {
-    const f = await gatherShipStatusFacts(root);
+    const f = await gatherShipStatusFacts(root, /* @__PURE__ */ new Date(), withPatchIds);
     if (!f)
       continue;
     const complete = f.shas.length < RECENT_SHA_CAP;
@@ -3086,6 +3175,8 @@ async function gatherShipStatusFactsForRoots(roots) {
     merged.ancestorShas = [.../* @__PURE__ */ new Set([...merged.ancestorShas, ...f.ancestorShas])];
     merged.cherryEquivalentShas = [.../* @__PURE__ */ new Set([...merged.cherryEquivalentShas, ...f.cherryEquivalentShas])];
     merged.squashedInto = { ...merged.squashedInto ?? {}, ...f.squashedInto ?? {} };
+    merged.patchIds = { ...merged.patchIds, ...f.patchIds };
+    merged.branchPatchIds = { ...merged.branchPatchIds, ...f.branchPatchIds };
     for (const [sha, branches] of Object.entries(f.branchesBySha)) {
       merged.branchesBySha[sha] = [.../* @__PURE__ */ new Set([...merged.branchesBySha[sha] ?? [], ...branches])];
     }
@@ -3405,7 +3496,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
     else if (!entry.roots.includes(b.root))
       entry.roots.push(b.root);
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, config);
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, caps, config);
   if (tally) {
     console.log(`  \u21B3 ${formatShipStatusLine(tally)}`);
   }

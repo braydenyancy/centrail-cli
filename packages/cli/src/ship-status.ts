@@ -4,43 +4,26 @@ import {
   type ShipStatusFacts,
 } from "@centrail/parsers";
 import {
+  branchPrefixes,
   cherryEquivalentShas,
   listBranchTips,
   listReachableShas,
   listRecentShas,
+  patchIds,
   readUserEmail,
   RECENT_SHA_CAP,
   resolveAncestryRef,
-  squashedShas,
   resolveDefaultBranch,
+  SQUASH_CANDIDATE_CAP,
   type BranchTip,
+  type PrefixCommit,
   type RecentCommit,
 } from "./git.js";
 import type { Config } from "./config.js";
 import { versionHeaders } from "./version.js";
-import { wireBranch } from "./wire.js";
+import { toWireFate, type Capabilities, type WireFate } from "./wire.js";
 
-// Wire row for the optional `fates` section of POST /api/cli/attribute.
-// The first four fields are the 0.5.1 row; the rest go only to a server
-// that lists "repo" (§ 3.10). Every field named; no row is ever spread.
-export type WireFate = {
-  repoName: string;
-  repoKey?: string;
-  commitSha: string;
-  branch: string | null;
-  fate: "shipped" | "in_flight" | "unshipped";
-  // The commit's facts (§ 3.8): a server that advertises "match" attributes
-  // this user's still-unattributed events of `repoKey` to these commits.
-  committedAt?: string;
-  linesAdded?: number;
-  linesDeleted?: number;
-  filesChanged?: number;
-  mergedAs?: string; // squashed into this default-branch commit (§ ship status)
-  // The commit's author is this machine's git identity. Absent when either
-  // side is unknown. The server prefers own commits when several fit; a
-  // teammate's commit never absorbs this user's tokens by time alone.
-  mine?: boolean;
-};
+export type { WireFate } from "./wire.js";
 
 // What one fates call says about itself: which machine reported and whether
 // the set is every recent commit of the repo (under the sha cap). From a
@@ -68,10 +51,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // the default branch gives ancestry. A branch whose tip is older than the
 // window cannot contain a commit inside it, so stale branches cost nothing.
 // (Was `branch --contains` + `merge-base` per sha: ~4,000 spawns per repo.)
+// Patch ids ride the same budget: two spawns per repo for own ids (every
+// recent commit's when the server lists "patch-id", else only the squash
+// candidates'), two for every branch prefix's cumulative id. Squash
+// detection reads both, so it never spawns per candidate or per prefix.
 export async function gatherShipStatusFacts(
   repoRoot: string,
   now: Date = new Date(),
-): Promise<(ShipStatusFacts & { shas: RecentCommit[] }) | null> {
+  withPatchIds = false,
+): Promise<GatheredFacts | null> {
   const defaultBranch = await resolveDefaultBranch(repoRoot);
   if (!defaultBranch) return null;
 
@@ -106,15 +94,43 @@ export async function gatherShipStatusFacts(
     if (unmerged && !isDefaultRef(tip.name)) cherryCandidates.push(tip);
   }
 
+  // One tip sha, one answer: a pushed branch and its origin/ twin share it.
+  const tips = new Map<string, BranchTip>();
+  for (const tip of cherryCandidates) if (!tips.has(tip.sha)) tips.set(tip.sha, tip);
   const cherrySet = new Set<string>();
-  const squashedInto: Record<string, string> = {};
-  for (const tip of cherryCandidates) {
+  const prefixes: PrefixCommit[][] = [];
+  for (const tip of tips.values()) {
     for (const sha of await cherryEquivalentShas(repoRoot, defaultBranch, tip.name)) {
       cherrySet.add(sha);
     }
-    for (const [sha, into] of Object.entries(await squashedShas(repoRoot, ancestryRef, tip.ref))) {
+    const prefix = await branchPrefixes(repoRoot, ancestryRef, tip.ref);
+    if (prefix.length > 0) prefixes.push(prefix);
+  }
+
+  // A squash commit postdates the work it squashes: its candidates are the
+  // default branch's commits since the prefix began, OLDEST first, capped —
+  // a set later commits never change, so a squash once found stays found.
+  // (The newest 200 lost it after 200 more commits, and the branch flipped
+  // back from shipped.)
+  const committedMs = new Map(shas.map((c) => [c.sha, Date.parse(c.committedAt)]));
+  const candidates = prefixes.map((prefix) => {
+    const since = Date.parse(prefix[0].at);
+    return ancestorShas.filter((sha) => (committedMs.get(sha) ?? -Infinity) >= since).reverse().slice(0, SQUASH_CANDIDATE_CAP);
+  });
+  const own = withPatchIds ? shas.map((c) => c.sha) : [...new Set(candidates.flat())];
+  const ownIds = await patchIds(repoRoot, own.map((sha) => ({ sha })));
+  const cumulative = new Map(prefixes.flat().map((c) => [c.sha, c.base]));
+  const prefixIds = await patchIds(repoRoot, [...cumulative].map(([sha, base]) => ({ sha, base })));
+
+  const squashedInto: Record<string, string> = {};
+  prefixes.forEach((prefix, i) => {
+    for (const [sha, into] of Object.entries(matchSquash(prefix, candidates[i], ownIds, prefixIds))) {
       if (recent.has(sha)) squashedInto[sha] = into;
     }
+  });
+  const branchPatchIds: Record<string, string> = {};
+  for (const [sha, id] of Object.entries(prefixIds)) {
+    if (recent.has(sha) && !ancestors.has(sha)) branchPatchIds[sha] = id;
   }
 
   return {
@@ -126,7 +142,44 @@ export async function gatherShipStatusFacts(
     branchesBySha,
     branchTipDates,
     now: now.toISOString(),
+    patchIds: withPatchIds ? ownIds : {},
+    branchPatchIds,
   };
+}
+
+// The facts plus the patch ids (§ 3.10), which decide no fate and only ride
+// the wire: `patchIds` holds every recent commit's own id when asked for
+// (a merge or root commit has none), `branchPatchIds` the cumulative id of
+// each commit off the default branch, within the prefix cap.
+export type GatheredFacts = ShipStatusFacts & {
+  shas: RecentCommit[];
+  patchIds: Record<string, string>;
+  branchPatchIds: Record<string, string>;
+};
+
+// The default-branch commit a branch prefix landed as. A squash merge
+// leaves the branch's commits off the default branch with no ancestor
+// there, and `git cherry` compares one commit at a time, so a multi-commit
+// branch never matches; the branch's cumulative patch does. Longest prefix
+// first: a branch squashed twice maps to its latest squash, and work that
+// continued after the squash stays unmapped.
+function matchSquash(
+  prefix: PrefixCommit[],
+  candidates: string[],
+  own: Record<string, string>,
+  cumulative: Record<string, string>,
+): Record<string, string> {
+  const byId = new Map<string, string>();
+  for (const sha of candidates) {
+    const id = own[sha];
+    if (id) byId.set(id, sha); // oldest first: one patch landed twice maps to its latest landing
+  }
+  for (let k = prefix.length; k >= 1; k--) {
+    const id = cumulative[prefix[k - 1].sha];
+    const into = id ? byId.get(id) : undefined;
+    if (into) return Object.fromEntries(prefix.slice(0, k).map((c) => [c.sha, into]));
+  }
+  return {};
 }
 
 // Fate pass over the repos the attribution push already resolved. Returns the
@@ -135,16 +188,18 @@ export async function gatherShipStatusFacts(
 // like attribution: failures warn, never throw.
 //
 // `machineId` (the random install id) is given only for a server that lists
-// "repo": the commit facts, `mine`, `mergedAs` and the `facts` block ride
-// with it (§ 3.10). Without it every row is the 0.5.1 shape — repo name,
-// sha, branch, fate — and nothing else. `name` and `key` arrive as the
-// wire carries them (wireRepoRef); the branch is dropped here under
-// hideBranchNames.
+// "repo", and the `facts` block rides with it (§ 3.10). Each row is shaped by
+// toWireFate from `caps` — absent, it is read from `machineId`: "repo" or
+// nothing. Without "repo" every row is the 0.5.1 shape — repo name, sha,
+// branch, fate — plus the patch ids when the server lists "patch-id".
+// `name` and `key` arrive as the wire carries them (wireRepoRef); toWireFate
+// drops the branch under hideBranchNames.
 export async function runFatePass(
   auth: { baseUrl: string; token: string },
   repos: { root?: string; roots?: string[]; name: string; key?: string }[],
   declared: WireRepo[] = [],
   machineId?: string,
+  caps: Capabilities = { fields: new Set(machineId ? ["repo"] : []) },
   cfg: Pick<Config, "hideBranchNames"> = { hideBranchNames: false },
 ): Promise<FateTally | null> {
   let anyRepoPassed = false;
@@ -152,38 +207,35 @@ export async function runFatePass(
 
   for (const { root: one, roots: many, name, key } of repos) {
     const roots = many ?? (one ? [one] : []);
-    const facts = await gatherShipStatusFactsForRoots(roots);
+    const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"));
     if (!facts) continue; // no resolvable default branch — skip, never guess
     anyRepoPassed = true;
     const root = roots[0];
     const email = await readUserEmail(root);
     const bySha = new Map<string, RecentCommit>((facts.shas as RecentCommit[]).map((c) => [c.sha, c]));
+    const ancestors = new Set(facts.ancestorShas);
     const rows: CommitFateRow[] = computeCommitFates(facts);
     const fates: WireFate[] = [];
     for (const row of rows) {
       if (row.fate === "shipped") tally.shipped++;
       else if (row.fate === "in_flight") tally.inFlight++;
       else tally.unshipped++;
-      const branch = wireBranch(row.branch, cfg);
-      if (!machineId) {
-        fates.push({ repoName: name, commitSha: row.sha, branch, fate: row.fate });
-        continue;
-      }
-      const c = bySha.get(row.sha);
-      const mine = email && c?.authorEmail ? c.authorEmail === email : undefined;
-      fates.push({
-        repoName: name,
-        ...(key ? { repoKey: key } : {}),
-        commitSha: row.sha,
-        branch,
-        fate: row.fate,
-        ...(row.mergedAs ? { mergedAs: row.mergedAs } : {}),
-        committedAt: c?.committedAt ?? "",
-        linesAdded: c?.linesAdded ?? 0,
-        linesDeleted: c?.linesDeleted ?? 0,
-        filesChanged: c?.filesChanged ?? 0,
-        ...(mine === undefined ? {} : { mine }),
-      });
+      const commit = bySha.get(row.sha);
+      fates.push(
+        toWireFate(
+          {
+            repoName: name,
+            repoKey: key,
+            row,
+            commit,
+            mine: email && commit?.authorEmail ? commit.authorEmail === email : undefined,
+            patchId: facts.patchIds[row.sha],
+            branchPatchId: ancestors.has(row.sha) ? undefined : facts.branchPatchIds[row.sha],
+          },
+          caps,
+          cfg,
+        ),
+      );
     }
     // One call per repo, declaring only that repo, so the server sees a
     // whole set at once. `complete` is false at the sha cap: an incomplete
@@ -195,15 +247,15 @@ export async function runFatePass(
   return tally;
 }
 
-type MergedFacts = ShipStatusFacts & { shas: RecentCommit[]; complete: boolean };
+type MergedFacts = GatheredFacts & { complete: boolean };
 
 // Facts for every live checkout of one identity, unioned: a sha alive in
 // any clone is alive; containment, ancestry, cherry and squash facts add up.
 // Incomplete when any clone hit the sha cap.
-export async function gatherShipStatusFactsForRoots(roots: string[]): Promise<MergedFacts | null> {
+export async function gatherShipStatusFactsForRoots(roots: string[], withPatchIds = false): Promise<MergedFacts | null> {
   let merged: MergedFacts | null = null;
   for (const root of roots) {
-    const f = await gatherShipStatusFacts(root);
+    const f = await gatherShipStatusFacts(root, new Date(), withPatchIds);
     if (!f) continue;
     const complete = f.shas.length < RECENT_SHA_CAP;
     if (!merged) {
@@ -215,6 +267,8 @@ export async function gatherShipStatusFactsForRoots(roots: string[]): Promise<Me
     merged.ancestorShas = [...new Set([...merged.ancestorShas, ...f.ancestorShas])];
     merged.cherryEquivalentShas = [...new Set([...merged.cherryEquivalentShas, ...f.cherryEquivalentShas])];
     merged.squashedInto = { ...(merged.squashedInto ?? {}), ...(f.squashedInto ?? {}) };
+    merged.patchIds = { ...merged.patchIds, ...f.patchIds }; // a content hash: equal in every clone
+    merged.branchPatchIds = { ...merged.branchPatchIds, ...f.branchPatchIds };
     for (const [sha, branches] of Object.entries(f.branchesBySha)) {
       merged.branchesBySha[sha] = [...new Set([...(merged.branchesBySha[sha] ?? []), ...branches])];
     }

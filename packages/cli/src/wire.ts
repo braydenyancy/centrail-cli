@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
-import type { ParsedUsageEvent, Placement, RepoIdentity } from "@centrail/parsers";
+import type { CommitFateRow, ParsedUsageEvent, Placement, RepoIdentity } from "@centrail/parsers";
 import type { Config } from "./config.js";
+import type { RecentCommit } from "./git.js";
 import { versionHeaders } from "./version.js";
 
 // The parser event contains local-only context used for Git attribution.
@@ -172,4 +173,77 @@ export function wireRepoRef(repo: RepoIdentity, cfg: Config, installId: string):
 // hideBranchNames.
 export function wireBranch(branch: string | null | undefined, cfg: Pick<Config, "hideBranchNames">): string | null {
   return branch && !cfg.hideBranchNames ? branch : null;
+}
+
+// Wire row for the optional `fates` section of POST /api/cli/attribute.
+// The first four fields are the 0.5.1 row; the rest go only to a server
+// that lists the field's capability. Every field named; no row is spread.
+export type WireFate = {
+  repoName: string;
+  repoKey?: string;
+  commitSha: string;
+  branch: string | null;
+  fate: "shipped" | "in_flight" | "unshipped";
+  // "repo" — the commit's facts (§ 3.8): a server that advertises "match"
+  // attributes this user's still-unattributed events of `repoKey` to these
+  // commits.
+  mergedAs?: string; // squashed into this default-branch commit (§ ship status)
+  committedAt?: string;
+  linesAdded?: number;
+  linesDeleted?: number;
+  filesChanged?: number;
+  // The commit's author is this machine's git identity. Absent when either
+  // side is unknown. The server prefers own commits when several fit; a
+  // teammate's commit never absorbs this user's tokens by time alone.
+  mine?: boolean;
+  // "patch-id" — what proves a vanished sha equivalent to a live one
+  // (§ 3.10, abandoned work): `git patch-id --stable` of the commit's own
+  // diff against its first parent (absent for a merge or root commit), and
+  // of the cumulative diff from its merge base with the default branch up
+  // to it — what a squash of the branch up to this commit carries (absent
+  // on the default branch). Content hashes: they reveal no code.
+  patchId?: string;
+  branchPatchId?: string;
+};
+
+// Everything the fate pass knows about one commit. Only what toWireFate
+// names leaves; the author's address in `commit` never does.
+export type LocalFate = {
+  repoName: string;
+  repoKey?: string;
+  row: CommitFateRow;
+  commit?: RecentCommit;
+  mine?: boolean;
+  patchId?: string;
+  branchPatchId?: string;
+};
+
+// The fate-row policy, in the same one place as the event policy:
+//   - every server: { repoName, commitSha, branch, fate } (0.5.1)
+//   - "repo": repoKey, mergedAs, commit time, line/file counts, mine
+//   - "patch-id": patchId, branchPatchId
+//   - hideBranchNames: `branch` is null; `repoName` and `repoKey` arrive
+//     as wireRepoRef shaped them
+export function toWireFate(f: LocalFate, caps: Capabilities, cfg: Pick<Config, "hideBranchNames"> = { hideBranchNames: false }): WireFate {
+  const repo = caps.fields.has("repo");
+  const wire: WireFate = {
+    repoName: f.repoName,
+    ...(repo && f.repoKey ? { repoKey: f.repoKey } : {}),
+    commitSha: f.row.sha,
+    branch: wireBranch(f.row.branch, cfg),
+    fate: f.row.fate,
+  };
+  if (repo) {
+    if (f.row.mergedAs) wire.mergedAs = f.row.mergedAs;
+    wire.committedAt = f.commit?.committedAt ?? "";
+    wire.linesAdded = f.commit?.linesAdded ?? 0;
+    wire.linesDeleted = f.commit?.linesDeleted ?? 0;
+    wire.filesChanged = f.commit?.filesChanged ?? 0;
+    if (f.mine !== undefined) wire.mine = f.mine;
+  }
+  if (caps.fields.has("patch-id")) {
+    if (f.patchId) wire.patchId = f.patchId;
+    if (f.branchPatchId) wire.branchPatchId = f.branchPatchId;
+  }
+  return wire;
 }

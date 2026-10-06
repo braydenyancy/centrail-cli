@@ -113,13 +113,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 // Shown once, at pairing: the complete list of what sync sends. Kept in step
-// with toWireEvent (wire.ts) — that function is the policy, this is its
+// with toWireEvent and toWireFate (wire.ts) — they are the policy, this is its
 // summary. `centrail inspect --last` prints the real payload any time.
 const FIELDS_SHOWN_ONCE = `
   What leaves this machine on each sync — and nothing else:
     tokens per model, timestamps, the agent and CLI version, session id,
     repo identity (host/owner/repo or a root-commit hash), folder name,
-    branch, commit shas and line counts, a random per-install id.
+    branch, commit shas, line counts and change hashes (git patch-id),
+    a random per-install id.
   Never: source, prompts, completions, secrets, paths, hostname, platform,
   account details.
   Verify any time:  npx centrail inspect --last

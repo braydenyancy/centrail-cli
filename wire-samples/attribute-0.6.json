@@ -13,22 +13,23 @@
       {
         "repoName": "a",
         "repoKey": "github.com/acme/a",
-        "commitSha": "a78387984ef5bad83d98d76da0e69245acbb958e",
+        "commitSha": "314804fba67ef0d9bb47eb62c06ac66cfdf46eec",
         "branch": "main",
         "fate": "shipped",
-        "committedAt": "2026-10-02T05:07:20.000Z",
+        "committedAt": "2026-10-02T07:17:26.000Z",
         "linesAdded": 1,
         "linesDeleted": 0,
         "filesChanged": 1,
-        "mine": true
+        "mine": true,
+        "patchId": "5fbcc3e7625125fe7b462908d15d9b39a26b097e"
       },
       {
         "repoName": "a",
         "repoKey": "github.com/acme/a",
-        "commitSha": "9db3d2af4e51835c7aeccd71866882a0fc5040e9",
+        "commitSha": "30c370eadecd60b0b3d048deab1b92cc534c0202",
         "branch": "main",
         "fate": "shipped",
-        "committedAt": "2026-10-02T05:07:19.000Z",
+        "committedAt": "2026-10-02T07:17:26.000Z",
         "linesAdded": 1,
         "linesDeleted": 0,
         "filesChanged": 1,
@@ -36,7 +37,7 @@
       }
     ],
     "facts": {
-      "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a",
+      "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a",
       "complete": true
     }
   },
@@ -54,11 +55,11 @@
       {
         "repoName": "b-wt",
         "repoKey": "github.com/acme/b",
-        "commitSha": "25b3c34418a5ad754838bb6646f5e82468a16cbe",
-        "branch": "wt",
-        "fate": "in_flight",
-        "committedAt": "2026-10-02T05:07:20.000Z",
-        "linesAdded": 2,
+        "commitSha": "30c370eadecd60b0b3d048deab1b92cc534c0202",
+        "branch": "main",
+        "fate": "shipped",
+        "committedAt": "2026-10-02T07:17:26.000Z",
+        "linesAdded": 1,
         "linesDeleted": 0,
         "filesChanged": 1,
         "mine": true
@@ -66,18 +67,20 @@
       {
         "repoName": "b-wt",
         "repoKey": "github.com/acme/b",
-        "commitSha": "9db3d2af4e51835c7aeccd71866882a0fc5040e9",
-        "branch": "main",
-        "fate": "shipped",
-        "committedAt": "2026-10-02T05:07:19.000Z",
-        "linesAdded": 1,
+        "commitSha": "7c0ea1c7fcbf64285f5167b494a13b5a26117111",
+        "branch": "wt",
+        "fate": "in_flight",
+        "committedAt": "2026-10-02T07:17:26.000Z",
+        "linesAdded": 2,
         "linesDeleted": 0,
         "filesChanged": 1,
-        "mine": true
+        "mine": true,
+        "patchId": "156d245b7bef5338ce37abdaa9346039ae01b30f",
+        "branchPatchId": "156d245b7bef5338ce37abdaa9346039ae01b30f"
       }
     ],
     "facts": {
-      "machineId": "312ae6bd-945d-4644-810c-bb8a4266e29a",
+      "machineId": "c448f026-f3f5-47d2-aa75-d550d5ac446a",
       "complete": true
     }
   }

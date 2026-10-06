@@ -34,7 +34,9 @@ chosen which repos sync, they add the repo identity (`github.com/owner/repo`
 or a root-commit hash, its root commit and the folder name), the session id,
 the branch, and a random per-install id.
 Git attribution contains the repo name, branch, commit SHA, commit time and
-aggregate line/file counts. Absolute paths, hostnames, platform details,
+aggregate line/file counts, and to a server that accepts them a content hash
+of each commit's change (`git patch-id`) that proves a rebased or squashed
+commit is the same work without revealing it. Absolute paths, hostnames, platform details,
 provider-account details, prompts, completions, diffs, commit messages and
 source code are never uploaded; `npx centrail inspect --last` prints the
 real payload. The full guarantee is documented at [Local token

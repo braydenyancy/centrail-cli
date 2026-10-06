@@ -51,7 +51,10 @@ allowlist (`packages/cli/src/wire.ts`); nothing else leaves:
   web-search request counts
 - git attribution: repo name or identity, branch, commit SHAs, commit times,
   aggregate line/file counts, whether you authored the commit (your email
-  stays local), and the squash commit it landed as
+  stays local), and the squash commit it landed as; to a server that accepts
+  them, a content hash of each commit's change and of its branch so far
+  (`git patch-id`), which proves a rebased or squashed commit is the same
+  work and reveals none of it
 - for a folder that is not a repo: a keyed hash of the path plus the folder name
 
 Never: absolute paths, hostnames, platform details, provider-account details,

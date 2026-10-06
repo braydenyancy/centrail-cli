@@ -100,34 +100,3 @@ describe("stash and notes are not history", () => {
     expect(await repoIdentity(repo)).toMatchObject({ key: `sha:${head}`, source: "root", root: head });
   });
 });
-
-describe("squashedShas against real repos", () => {
-  it("maps every commit of a squash-merged branch to the squash commit; an unmerged branch maps nothing; commits after the squash stay unmapped", async () => {
-    const { squashedShas } = await import("./git.js");
-    const { writeFile } = await import("node:fs/promises");
-    fx = await scratch();
-    const repo = await fx.repo("sq");
-    const commit = async (file: string) => {
-      await writeFile(join(repo, file), `${file}\n`);
-      await fx.git(repo, "add", file);
-      await fx.git(repo, "commit", "-q", "-m", file);
-      return fx.git(repo, "rev-parse", "HEAD");
-    };
-    await fx.git(repo, "checkout", "-q", "-b", "feat");
-    const b1 = await commit("f1");
-    const b2 = await commit("f2");
-    await fx.git(repo, "checkout", "-q", "main");
-    await fx.git(repo, "merge", "--squash", "-q", "feat");
-    await fx.git(repo, "commit", "-q", "-m", "feat squashed");
-    const squash = await fx.git(repo, "rev-parse", "HEAD");
-    await commit("unrelated"); // main moves on
-    await fx.git(repo, "checkout", "-q", "feat");
-    const b3 = await commit("f3"); // work after the squash, not merged
-    await fx.git(repo, "checkout", "-q", "-b", "other", "main");
-    await commit("o1");
-    expect(await squashedShas(repo, "refs/heads/main", "refs/heads/feat")).toEqual({ [b1]: squash, [b2]: squash });
-    expect(await squashedShas(repo, "refs/heads/main", "refs/heads/other")).toEqual({});
-    expect(b3).not.toBe(squash);
-  });
-});
-

@@ -207,71 +207,104 @@ export async function resolveAncestryRef(repoRoot: string, defaultBranch: string
   }
 }
 
-const SQUASH_CANDIDATE_CAP = 200;
-const SQUASH_PREFIX_CAP = 50;
+export const SQUASH_CANDIDATE_CAP = 200;
+export const SQUASH_PREFIX_CAP = 50;
 
-// A squash merge leaves the branch's commits off the default branch with
-// no ancestor there, and `git cherry` compares one commit at a time, so a
-// multi-commit branch never matches. The branch's patch since its merge
-// base does: compare the patch-id of each PREFIX of the branch (work may
-// have continued on it after the merge) with each default-branch commit
-// committed since the branch began. The commits of the matching prefix map
-// to that squash commit. Empty when nothing matches, the branch is already
-// merged, or git fails. Bounded: the branch's newest 50 commits as
-// prefixes, and the default branch's OLDEST 200 commits since the branch
-// began as candidates — a set later commits never change, so a squash once
-// found stays found. (The newest 200 lost it after 200 more commits, and
-// the branch flipped back from shipped.)
-export async function squashedShas(repoRoot: string, defaultRef: string, tipRef: string): Promise<Record<string, string>> {
+// One commit of a branch's unmerged range, with the merge base its prefix
+// patch is taken from.
+export type PrefixCommit = { sha: string; at: string; base: string };
+
+// The newest SQUASH_PREFIX_CAP commits of `tipRef` not on the default
+// branch, oldest first, each with the commit its cumulative patch starts
+// from: its own merge base with `defaultRef`, which is what a squash of the
+// branch up to that commit carries. One merge base serves the whole range
+// unless the range holds a merge — a branch that merged the default branch
+// in ("Update branch") moved its base, and the commits before that merge
+// keep the older one, found per commit. Empty when the branch is merged,
+// unrelated, or git fails.
+export async function branchPrefixes(repoRoot: string, defaultRef: string, tipRef: string): Promise<PrefixCommit[]> {
   try {
-    const { stdout: baseOut } = await exec("git", ["-C", repoRoot, "merge-base", defaultRef, tipRef]);
-    const base = baseOut.trim();
-    if (!base) return {};
-    const { stdout: branchOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--max-count=${SQUASH_PREFIX_CAP}`, "--pretty=format:%H%x1f%cI", `${base}..${tipRef}`]);
-    const branch = branchOut
+    const mergeBase = async (ref: string) =>
+      (await exec("git", ["-C", repoRoot, "merge-base", defaultRef, ref])).stdout.trim();
+    const base = await mergeBase(tipRef);
+    if (!base) return [];
+    const { stdout } = await exec(
+      "git",
+      ["-C", repoRoot, "rev-list", "--reverse", `--max-count=${SQUASH_PREFIX_CAP}`, "--format=%H%x1f%cI%x1f%P", `${base}..${tipRef}`],
+      { maxBuffer: FACT_BUFFER },
+    );
+    const range = stdout
       .split("\n")
-      .filter((l) => !l.startsWith("commit ") && l.includes("\x1f"))
-      .map((l) => l.split("\x1f"))
-      .map(([sha, iso]) => ({ sha: sha.trim(), at: iso.trim() }));
-    if (branch.length === 0) return {};
-    // A squash commit postdates the work it squashes. (`--max-count` would
-    // apply before `--reverse`, keeping the newest, hence the slice.)
-    const { stdout: candOut } = await exec("git", ["-C", repoRoot, "rev-list", "--reverse", `--since=${branch[0].at}`, `${base}..${defaultRef}`], { maxBuffer: FACT_BUFFER });
-    const candidates = candOut.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, SQUASH_CANDIDATE_CAP);
-    if (candidates.length === 0) return {};
-    const byPatchId = new Map<string, string>();
-    for (const sha of candidates) {
-      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff-tree", "-p", "--root", sha], { maxBuffer: FACT_BUFFER });
-      const id = await patchId(repoRoot, diff);
-      if (id) byPatchId.set(id, sha); // oldest first: one patch landed twice maps to its latest landing
+      .filter((l) => l.includes("\x1f"))
+      .map((l) => l.split("\x1f").map((x) => x.trim()))
+      .map(([sha, at, parents]) => ({ sha, at, merge: parents.split(" ").length > 1 }));
+    if (!range.some((c) => c.merge)) return range.map(({ sha, at }) => ({ sha, at, base }));
+    // Only descendants of `base` share it; the rest predate the merge.
+    const { stdout: pathOut } = await exec(
+      "git",
+      ["-C", repoRoot, "rev-list", "--ancestry-path", `${base}..${tipRef}`],
+      { maxBuffer: FACT_BUFFER },
+    );
+    const onPath = new Set(pathOut.split("\n").map((l) => l.trim()).filter(Boolean));
+    const out: PrefixCommit[] = [];
+    for (const { sha, at } of range) {
+      const own = onPath.has(sha) ? base : await mergeBase(sha);
+      if (own) out.push({ sha, at, base: own });
     }
-    // Longest prefix first: a branch squashed twice maps to its latest squash.
-    for (let k = branch.length; k >= 1; k--) {
-      const { stdout: diff } = await exec("git", ["-C", repoRoot, "diff", base, branch[k - 1].sha], { maxBuffer: FACT_BUFFER });
-      if (!diff.trim()) continue;
-      const id = await patchId(repoRoot, diff);
-      const into = id ? byPatchId.get(id) : undefined;
-      if (!into) continue;
-      const out: Record<string, string> = {};
-      for (const b of branch.slice(0, k)) out[b.sha] = into;
-      return out;
-    }
-    return {};
+    return out;
   } catch {
-    return {};
+    return [];
   }
 }
 
-// `git patch-id --stable` over a diff on stdin: the content hash of a
-// change, independent of sha, date, message and whitespace context.
-function patchId(repoRoot: string, diff: string): Promise<string | null> {
+// `git patch-id --stable` for many commits in TWO spawns, whatever the
+// count: one `git diff-tree --stdin -p` streamed into one `git patch-id`.
+// A bare sha is the commit's own diff against its parent; a root or merge
+// commit prints no diff there, so it gets no id. `{ sha, base }` is the
+// cumulative diff from `base` to `sha`. Keyed by sha, so one kind per call.
+// The diff options are pinned, not read from config (renames, algorithm,
+// path quoting): the server compares ids computed on different machines.
+// So are attributes: a `-diff` from a global, system or in-repo attributes
+// file prints "Binary files differ" instead of the text, whose id is
+// another; no attributes file is read, and `--text` overrides the rest
+// (a binary file's bytes are hashed as its diff, the same everywhere).
+// A content hash: it says two changes are the same, never what they are.
+// Empty on any failure.
+export function patchIds(repoRoot: string, commits: { sha: string; base?: string }[]): Promise<Record<string, string>> {
+  if (commits.length === 0) return Promise.resolve({});
   return new Promise((resolve) => {
-    const child = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], { env: gitEnv() });
-    let out = "";
-    child.stdout.on("data", (d) => (out += d));
-    child.on("error", () => resolve(null));
-    child.on("close", () => resolve(out.trim().split(/\s+/)[0] || null));
-    child.stdin.end(diff);
+    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] as ["pipe", "pipe", "ignore"] };
+    const diff = spawn(
+      "git",
+      ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
+      opts,
+    );
+    const ids = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], opts);
+    let text = "";
+    let ok = true;
+    let open = 2;
+    const done = (code: number | null) => {
+      if (code !== 0) ok = false;
+      if (--open > 0) return;
+      const out: Record<string, string> = {};
+      if (ok) {
+        for (const line of text.split("\n")) {
+          const [id, sha] = line.trim().split(/\s+/);
+          if (id && sha) out[sha] = id;
+        }
+      }
+      resolve(out);
+    };
+    for (const child of [diff, ids]) {
+      let settled = false; // a spawn failure emits "error", and may or may not emit "close"
+      const settle = (code: number | null) => void (settled || ((settled = true), done(code)));
+      child.on("error", () => settle(null));
+      child.on("close", settle);
+      child.stdin.on("error", () => (ok = false));
+    }
+    diff.stdout.pipe(ids.stdin);
+    ids.stdout.on("data", (d) => (text += d));
+    diff.stdin.end(commits.map((c) => (c.base ? `${c.sha} ${c.base}` : c.sha)).join("\n") + "\n");
   });
 }
 
