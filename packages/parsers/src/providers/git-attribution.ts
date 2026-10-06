@@ -11,6 +11,7 @@ export type RepoCommit = {
   linesAdded: number;
   linesDeleted: number;
   filesChanged: number;
+  authorEmail?: string; // lowercased; present when the log format carried %ae
 };
 
 export type AttributionEvent = {
@@ -27,16 +28,17 @@ export type EventAttribution = {
   filesChanged: number;
 };
 
-// Parses `git log --numstat --pretty=format:%x1e%H%x1f%cI`. Each record begins
-// with \x1e, header is `<sha>\x1f<iso-date>`, followed by numstat lines
+// Parses `git log --numstat --pretty=format:%x1e%H%x1f%cI[%x1f%ae]`. Each record
+// begins with \x1e, header is `<sha>\x1f<iso-date>[\x1f<author email>]`, then numstat lines
 // `<added>\t<deleted>\t<path>`. Binary files emit `-` for the counts.
 export function parseGitLogNumstat(text: string): RepoCommit[] {
   const commits: RepoCommit[] = [];
   for (const record of text.split(RECORD_SEP)) {
     if (!record.trim()) continue;
     const lines = record.split("\n");
-    const [sha, iso] = lines[0].split(UNIT_SEP);
+    const [sha, iso, email] = lines[0].split(UNIT_SEP);
     if (!sha || !iso) continue;
+    const authorEmail = email?.trim() ? email.trim().toLowerCase() : undefined;
     const committedAt = new Date(iso);
     if (Number.isNaN(committedAt.getTime())) continue;
 
@@ -51,7 +53,7 @@ export function parseGitLogNumstat(text: string): RepoCommit[] {
       linesAdded += addedRaw === "-" ? 0 : Number.parseInt(addedRaw, 10) || 0;
       linesDeleted += deletedRaw === "-" ? 0 : Number.parseInt(deletedRaw, 10) || 0;
     }
-    commits.push({ sha, committedAt, linesAdded, linesDeleted, filesChanged });
+    commits.push({ sha, committedAt, linesAdded, linesDeleted, filesChanged, ...(authorEmail ? { authorEmail } : {}) });
   }
   return commits;
 }
@@ -59,14 +61,17 @@ export function parseGitLogNumstat(text: string): RepoCommit[] {
 // Attributes each event to the EARLIEST commit at or after it:
 //   prev_commit.committedAt < event.occurredAt <= commit.committedAt
 // Events newer than the last commit are uncommitted/WIP and returned as no
-// attribution (omitted). Commits may arrive in any order; we sort ascending.
+// attribution (omitted). Commits may arrive in any order; we sort ascending,
+// and two commits at the same second tie-break on sha, so the CLI, the
+// server (which runs this same function over rows Postgres returns in no
+// promised order) and every re-run pick the same commit.
 export function matchEventsToCommits(
   events: AttributionEvent[],
   commits: RepoCommit[],
 ): EventAttribution[] {
   if (commits.length === 0) return [];
   const sorted = [...commits].sort(
-    (a, b) => a.committedAt.getTime() - b.committedAt.getTime(),
+    (a, b) => a.committedAt.getTime() - b.committedAt.getTime() || (a.sha < b.sha ? -1 : a.sha > b.sha ? 1 : 0),
   );
 
   const out: EventAttribution[] = [];

@@ -264,4 +264,22 @@ describe("computeCommitFates — table sweep", () => {
       "unshipped",
     ]);
   });
+
+  it("a sha squashed into a default-branch commit is shipped and names it (mergedAs), keeping its branch label", () => {
+    const rows = computeCommitFates(
+      facts({
+        shas: [{ sha: "b1", committedAt: iso(3) }, { sha: "b2", committedAt: iso(2) }, { sha: "sss", committedAt: iso(1) }],
+        ancestorShas: ["sss"],
+        squashedInto: { b1: "sss", b2: "sss" },
+        branchesBySha: { b1: ["feat"], b2: ["feat"], sss: ["main"] },
+        branchTipDates: { feat: iso(3), main: iso(1) },
+      }),
+    );
+    expect(rows).toEqual([
+      { sha: "b1", branch: "feat", fate: "shipped", mergedAs: "sss" },
+      { sha: "b2", branch: "feat", fate: "shipped", mergedAs: "sss" },
+      { sha: "sss", branch: "main", fate: "shipped" },
+    ]);
+  });
 });
+

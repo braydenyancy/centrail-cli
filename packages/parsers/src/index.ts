@@ -8,13 +8,26 @@ import { scanCopilotLogs } from "./providers/copilot-cli.js";
 import { scanCodexLogs } from "./providers/codex.js";
 
 export {
+  collapseUsageEvents,
+  lineEvidence,
   readClaudeCodeAccount,
   scanClaudeCodeLogs,
   claudeConfigDirs,
   claudeProjectDirs,
+  TurnCounter,
   type ClaudeCodeAccount,
   type ParsedUsageEvent,
+  type Placement,
+  type RepoIdentity,
 } from "./providers/claude-code.js";
+
+export {
+  bashPaths,
+  claudeToolEvidence,
+  codexCallEvidence,
+  mergeEvidence,
+  type Evidence,
+} from "./providers/evidence.js";
 
 export { scanCopilotLogs } from "./providers/copilot-cli.js";
 export {
@@ -46,25 +59,36 @@ export {
 export type Scanner = {
   surface: string;
   // Increment when a scanner starts discovering previously missed historical
-  // events. The CLI uses this to perform one safe full backfill on upgrade.
+  // events, or when what a re-send carries changes. The CLI uses this to
+  // perform one safe full backfill on upgrade: the server dedupes on
+  // externalId and keeps the larger count, so it is a re-send, never a row.
   revision: number;
-  scan: (opts: { since?: Date }) => Promise<ParsedUsageEvent[]>;
+  // `since` picks which files are read (by mtime) and which events return.
+  // `wholeFiles` returns every event of a file read, those outside `since`
+  // marked `metadata.context`: the caller places them with their session,
+  // as a full scan would, and sends only the rest. A scanner without turns
+  // (Copilot) may ignore it.
+  scan: (opts: { since?: Date; wholeFiles?: boolean }) => Promise<ParsedUsageEvent[]>;
 };
 
+// 0.6.0 bumps every surface once (claude-code 2→3, copilot-cli and codex
+// 1→2): each install re-sends its whole history, and to a server that lists
+// "repo" those events carry the § 3.10 identity metadata 0.5.1 never sent,
+// so the server can fill it into the rows it already holds.
 export const SCANNERS: Scanner[] = [
   {
     surface: "claude-code",
-    revision: 2,
+    revision: 3,
     scan: (opts) => scanClaudeCodeLogs(opts),
   },
   {
     surface: "copilot-cli",
-    revision: 1,
+    revision: 2,
     scan: (opts) => scanCopilotLogs(opts),
   },
   {
     surface: "codex",
-    revision: 1,
+    revision: 2,
     scan: (opts) => scanCodexLogs(opts),
   },
 ];

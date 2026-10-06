@@ -76,4 +76,25 @@ describe("matchEventsToCommits", () => {
   it("returns [] when there are no commits", () => {
     expect(matchEventsToCommits([ev("e5", "2026-06-01T10:00:00Z")], [])).toEqual([]);
   });
+
+  it("two commits at the same second tie-break on sha, whatever order they arrive in", () => {
+    // Same-second commits are real (a script, a fixture, `git commit` twice
+    // fast); the server matches over rows in no promised order, so input
+    // order must not decide.
+    const at = new Date("2026-06-01T00:00:10Z");
+    const a = { sha: "aaaa", committedAt: at, linesAdded: 1, linesDeleted: 0, filesChanged: 1 };
+    const b = { sha: "bbbb", committedAt: at, linesAdded: 2, linesDeleted: 0, filesChanged: 1 };
+    const ev = [{ externalId: "e", occurredAt: new Date("2026-06-01T00:00:00Z") }];
+    expect(matchEventsToCommits(ev, [b, a])[0].sha).toBe("aaaa");
+    expect(matchEventsToCommits(ev, [a, b])[0].sha).toBe("aaaa");
+  });
+
+  it("parseGitLogNumstat reads the author email as an optional third header field", () => {
+    const withEmail = `${RS}aaa${US}2026-06-01T00:00:00Z${US}Jane@Example.com\n1\t0\tx\n`;
+    const without = `${RS}bbb${US}2026-06-01T00:00:00Z\n`;
+    const [a, b] = parseGitLogNumstat(withEmail + without);
+    expect(a.authorEmail).toBe("jane@example.com"); // lowercased: emails compare case-insensitively
+    expect(b.authorEmail).toBeUndefined();
+  });
 });
+

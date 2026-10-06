@@ -74,7 +74,7 @@ describe("scanClaudeCodeLogs", () => {
     expect(e.metadata.origin).toBeUndefined();
   });
 
-  it("skips non-assistant lines, synthetic models, malformed JSON, missing requestId, and missing usage block", async () => {
+  it("skips non-assistant lines, synthetic models, malformed JSON, missing ids, and missing usage block", async () => {
     const base = await makeBase();
     const synthetic = JSON.parse(ASSISTANT_LINE);
     synthetic.requestId = "req_syn";
@@ -98,6 +98,82 @@ describe("scanClaudeCodeLogs", () => {
     const events = await scanClaudeCodeLogs({ basePath: base });
 
     expect(events.map((e) => e.externalId)).toEqual(["req_001"]);
+  });
+
+  it("collapses the lines of one request to one event holding the per-field max", async () => {
+    // Claude Code writes one line per content block; output_tokens grows
+    // across them (streamed-so-far). First-wins undercounted output by 36.7%
+    // on a real corpus; the max equals the final line.
+    const base = await makeBase();
+    const first = JSON.parse(ASSISTANT_LINE);
+    first.message.usage.output_tokens = 5;
+    first.timestamp = "2026-06-01T12:00:01.000Z";
+    const last = JSON.parse(ASSISTANT_LINE);
+    last.message.usage.output_tokens = 140;
+    await writeSession(base, "p", "a.jsonl", [JSON.stringify(first), JSON.stringify(last)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].outputTokens).toBe(140);
+    expect(events[0].inputTokens).toBe(100);
+    expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:00.000Z");
+  });
+
+  it("collapses the same request across files — a resumed session copies the prefix", async () => {
+    const base = await makeBase();
+    const early = JSON.parse(ASSISTANT_LINE);
+    early.message.usage.output_tokens = 5;
+    const final = JSON.parse(ASSISTANT_LINE);
+    final.message.usage.output_tokens = 140;
+    await writeSession(base, "p", "original.jsonl", [JSON.stringify(early)]);
+    await writeSession(base, "p", "resumed.jsonl", [JSON.stringify(final)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].outputTokens).toBe(140);
+  });
+
+  it("collapses a resumed session's copy when requestId is absent too — gateways strip it", async () => {
+    // A resumed session copies earlier responses into its own file under its
+    // own sessionId (1,174 such copies on one real corpus). requestId folds
+    // them; the message-id fallback must too, or every gateway user (Bedrock,
+    // Vertex, proxies) counts a resumed session's history twice.
+    const base = await makeBase();
+    const original = JSON.parse(ASSISTANT_LINE);
+    delete original.requestId;
+    original.message.id = "msg_01";
+    original.message.usage.output_tokens = 5;
+    const copy = JSON.parse(JSON.stringify(original));
+    copy.sessionId = "sess-resumed";
+    copy.message.usage.output_tokens = 140;
+    await writeSession(base, "p", "original.jsonl", [JSON.stringify(original)]);
+    await writeSession(base, "p", "resumed.jsonl", [JSON.stringify(copy)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events.map((e) => [e.externalId, e.outputTokens])).toEqual([["msg:msg_01", 140]]);
+  });
+
+  it("falls back to the message id when requestId is absent — never the timestamp, never the session", async () => {
+    // Every content block of one response is its own line with its own
+    // timestamp; the key must fold them. A copy under another session (a
+    // resume) is the same response, so it folds too.
+    const base = await makeBase();
+    const a = JSON.parse(ASSISTANT_LINE);
+    delete a.requestId;
+    a.message.id = "msg_01";
+    const b = JSON.parse(JSON.stringify(a));
+    b.timestamp = "2026-06-01T12:00:03.000Z";
+    b.message.usage.output_tokens = 120;
+    const c = JSON.parse(JSON.stringify(a));
+    c.sessionId = "sess-2";
+    await writeSession(base, "p", "a.jsonl", [JSON.stringify(a), JSON.stringify(b), JSON.stringify(c)]);
+
+    const events = await scanClaudeCodeLogs({ basePath: base });
+
+    expect(events.map((e) => [e.externalId, e.outputTokens])).toEqual([["msg:msg_01", 120]]);
   });
 
   it("excludes events at or before `since` by occurredAt", async () => {
@@ -185,7 +261,9 @@ describe("scanClaudeCodeLogs", () => {
       externalId: "req_001",
       outputTokens: 1_093,
     });
-    expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:02.000Z");
+    // The most complete counts, at the request's start: the first line's
+    // timestamp, whatever order the lines arrive in (collapseUsageEvents).
+    expect(events[0].occurredAt.toISOString()).toBe("2026-06-01T12:00:00.000Z");
   });
 
   it("prefers an original response over a larger sidechain replay", async () => {
@@ -323,6 +401,11 @@ describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
     expect(dirs.some((d) => d.endsWith(join(".config", "claude", "projects")))).toBe(true);
   });
 
+  it("with CLAUDE_CONFIG_DIR unset also reads Xcode's Claude agent config (phuryn/claude-usage scanner.py:21)", () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    expect(claudeProjectDirs().some((d) => d.endsWith(join("Library", "Developer", "Xcode", "CodingAssistant", "ClaudeAgentConfig", "projects")))).toBe(true);
+  });
+
   it("honors CLAUDE_CONFIG_DIR, comma-separated and trimmed", () => {
     process.env.CLAUDE_CONFIG_DIR = "/a/x ,  /b/y";
     expect(claudeConfigDirs()).toEqual(["/a/x", "/b/y"]);
@@ -330,6 +413,14 @@ describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
       join("/a/x", "projects"),
       join("/b/y", "projects"),
     ]);
+  });
+
+  it("an entry that IS a projects dir is scanned as one, not as <it>/projects (ccusage paths.rs)", async () => {
+    const cfg = await makeBase();
+    await writeSession(join(cfg, "projects"), "-Users-dev-myrepo", "a.jsonl", [ASSISTANT_LINE]);
+    process.env.CLAUDE_CONFIG_DIR = join(cfg, "projects");
+    expect(claudeProjectDirs()).toEqual([join(cfg, "projects")]);
+    expect((await scanClaudeCodeLogs({})).map((e) => e.externalId)).toEqual(["req_001"]);
   });
 
   it("scanClaudeCodeLogs with no basePath reads from CLAUDE_CONFIG_DIR", async () => {
@@ -343,4 +434,22 @@ describe("config-dir resolution (CLAUDE_CONFIG_DIR)", () => {
 
     expect(events.map((e) => e.externalId)).toEqual(["req_001"]);
   });
+});
+
+describe("a year of transcripts", () => {
+  it("scans 150,000 assistant lines in one project dir without overflowing the stack", async () => {
+    // `events.push(...perDir)` crashed at 177k lines on the reference machine
+    // (RangeError: Maximum call stack size exceeded): a `--full` sync would
+    // never complete there. Spread into a call is bounded; a loop is not.
+    const base = await makeBase();
+    const proto = JSON.parse(ASSISTANT_LINE);
+    const lines: string[] = [];
+    for (let i = 0; i < 150_000; i++) {
+      proto.requestId = `req_${i}`;
+      lines.push(JSON.stringify(proto));
+    }
+    await writeSession(base, "big", "s.jsonl", lines);
+    const events = await scanClaudeCodeLogs({ basePath: base });
+    expect(events).toHaveLength(150_000);
+  }, 60_000);
 });
