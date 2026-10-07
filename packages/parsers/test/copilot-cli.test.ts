@@ -143,6 +143,18 @@ describe("scanCopilotLogs", () => {
     expect(events[1].externalId).toBe("sess-abc:gpt-5.4:2026-06-21T21:46:11.546Z:2");
   });
 
+  it("counts off the session dirs it reads: onFile(done, total) after each, a stray file included", async () => {
+    const base = await makeSession([ONE_MODEL]);
+    await mkdir(join(base, "sess-def"));
+    await writeFile(join(base, "sess-def", "workspace.yaml"), WORKSPACE.replace("sess-abc", "sess-def"));
+    await writeFile(join(base, "sess-def", "events.jsonl"), `${ONE_MODEL}\n`);
+    await writeFile(join(base, "stray.txt"), "");
+    const calls: [number, number][] = [];
+    const events = await scanCopilotLogs({ basePath: base, onFile: (done, total) => void calls.push([done, total]) });
+    expect(events).toHaveLength(2);
+    expect(calls).toEqual([[1, 3], [2, 3], [3, 3]]);
+  });
+
   it("honors `since` against the segment timestamp", async () => {
     const base = await makeSession([ONE_MODEL]); // segment at 2026-06-21T21:47:17.588Z
     expect(await scanCopilotLogs({ basePath: base, since: new Date("2026-06-22T00:00:00.000Z") })).toHaveLength(0);

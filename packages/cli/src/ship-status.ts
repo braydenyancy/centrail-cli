@@ -20,6 +20,7 @@ import {
   type RecentCommit,
 } from "./git.js";
 import type { Config } from "./config.js";
+import { progressStatus } from "./progress.js";
 import { versionHeaders } from "./version.js";
 import { toWireFate, type Capabilities, type WireFate } from "./wire.js";
 
@@ -205,7 +206,8 @@ export async function runFatePass(
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
 
-  for (const { root: one, roots: many, name, key } of repos) {
+  for (const [i, { root: one, roots: many, name, key }] of repos.entries()) {
+    progressStatus(`Checking ship status — ${i + 1}/${repos.length} repos`); // git per repo: seconds each on a big one
     const roots = many ?? (one ? [one] : []);
     const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"));
     if (!facts) continue; // no resolvable default branch — skip, never guess

@@ -164,15 +164,19 @@ export async function scanClaudeCodeLogs(opts: {
   basePath?: string;
   since?: Date;
   wholeFiles?: boolean;
+  onFile?: (done: number, total: number) => void;
 }): Promise<ParsedUsageEvent[]> {
   const since = opts.since;
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
 
+  // Every file first, so a caller can count them off: a full scan of a heavy
+  // machine is 1,968 files, 4 GB and 18 s of reading (measured).
+  const files: string[] = [];
+  for (const base of bases) for (const path of await listTranscripts(base, since)) files.push(path);
   const events: ParsedUsageEvent[] = [];
-  for (const base of bases) {
-    // Never `push(...big)`: a year of transcripts is more arguments than a
-    // call takes, and the spread crashed a full scan at 177k lines.
-    for (const e of await scanProjectsDir(base, since)) events.push(e);
+  for (let i = 0; i < files.length; i++) {
+    await readTranscript(files[i], events);
+    opts.onFile?.(i + 1, files.length);
   }
   // `since` picks the files (by mtime); their lines are folded and collapsed
   // whole, and only then filtered, so every id is the one a full scan
@@ -293,11 +297,9 @@ function usageExternalId(raw: Record<string, unknown>, message: Record<string, u
   return `msg:${messageId}`;
 }
 
-// Scans one <config-dir>/projects directory. Missing dir → no events.
-async function scanProjectsDir(
-  basePath: string,
-  since: Date | undefined,
-): Promise<ParsedUsageEvent[]> {
+// The transcripts of one <config-dir>/projects directory a scan reads.
+// Missing dir → none.
+async function listTranscripts(basePath: string, since: Date | undefined): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(basePath);
@@ -306,8 +308,7 @@ async function scanProjectsDir(
     throw err;
   }
 
-  const events: ParsedUsageEvent[] = [];
-
+  const files: string[] = [];
   for (const entry of entries) {
     const dir = join(basePath, entry);
     let dirStat;
@@ -332,36 +333,41 @@ async function scanProjectsDir(
       // so a long-running session keeps reprocessing until it closes —
       // dedup-by-externalId catches the duplicates downstream.
       if (since && fileStat.mtime < since) continue;
-
-      let content: string;
-      try {
-        content = await readFile(path, "utf-8");
-      } catch {
-        continue;
-      }
-      // Turns are numbered per file: a subagent transcript restarts at 1
-      // and must not share turn ids with its parent.
-      const turns = new TurnCounter(basename(path, ".jsonl"));
-      for (const line of content.split("\n")) {
-        if (!line.trim()) continue;
-        let raw: unknown;
-        try {
-          raw = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        turns.observe(raw);
-        const parsed = parseAssistantEvent(raw, turns.current);
-        if (parsed) {
-          applyFallback(raw, parsed);
-          events.push(parsed);
-          for (const extra of extraIterations(raw, parsed)) events.push(extra);
-        }
-      }
+      files.push(path);
     }
   }
+  return files;
+}
 
-  return events;
+// Appends one transcript's events. Never `push(...big)`: a year of
+// transcripts is more arguments than a call takes, and the spread crashed a
+// full scan at 177k lines.
+async function readTranscript(path: string, events: ParsedUsageEvent[]): Promise<void> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return; // swept since it was listed
+  }
+  // Turns are numbered per file: a subagent transcript restarts at 1
+  // and must not share turn ids with its parent.
+  const turns = new TurnCounter(basename(path, ".jsonl"));
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    turns.observe(raw);
+    const parsed = parseAssistantEvent(raw, turns.current);
+    if (parsed) {
+      applyFallback(raw, parsed);
+      events.push(parsed);
+      for (const extra of extraIterations(raw, parsed)) events.push(extra);
+    }
+  }
 }
 
 // Transcripts for one project dir: top-level <session>.jsonl files plus JSONL

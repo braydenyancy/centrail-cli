@@ -123,10 +123,14 @@ function claudeProjectDirs() {
 async function scanClaudeCodeLogs(opts) {
   const since = opts.since;
   const bases = opts.basePath ? [opts.basePath] : claudeProjectDirs();
+  const files = [];
+  for (const base of bases)
+    for (const path of await listTranscripts(base, since))
+      files.push(path);
   const events = [];
-  for (const base of bases) {
-    for (const e of await scanProjectsDir(base, since))
-      events.push(e);
+  for (let i = 0; i < files.length; i++) {
+    await readTranscript(files[i], events);
+    opts.onFile?.(i + 1, files.length);
   }
   const folded = foldSidechainReplays(events);
   if (!since)
@@ -218,7 +222,7 @@ function usageExternalId(raw, message) {
     return null;
   return `msg:${messageId}`;
 }
-async function scanProjectsDir(basePath, since) {
+async function listTranscripts(basePath, since) {
   let entries;
   try {
     entries = await readdir(basePath);
@@ -227,7 +231,7 @@ async function scanProjectsDir(basePath, since) {
       return [];
     throw err;
   }
-  const events = [];
+  const files = [];
   for (const entry of entries) {
     const dir = join2(basePath, entry);
     let dirStat;
@@ -247,34 +251,37 @@ async function scanProjectsDir(basePath, since) {
       }
       if (since && fileStat.mtime < since)
         continue;
-      let content;
-      try {
-        content = await readFile(path, "utf-8");
-      } catch {
-        continue;
-      }
-      const turns = new TurnCounter(basename(path, ".jsonl"));
-      for (const line of content.split("\n")) {
-        if (!line.trim())
-          continue;
-        let raw;
-        try {
-          raw = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        turns.observe(raw);
-        const parsed = parseAssistantEvent(raw, turns.current);
-        if (parsed) {
-          applyFallback(raw, parsed);
-          events.push(parsed);
-          for (const extra of extraIterations(raw, parsed))
-            events.push(extra);
-        }
-      }
+      files.push(path);
     }
   }
-  return events;
+  return files;
+}
+async function readTranscript(path, events) {
+  let content;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return;
+  }
+  const turns = new TurnCounter(basename(path, ".jsonl"));
+  for (const line of content.split("\n")) {
+    if (!line.trim())
+      continue;
+    let raw;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    turns.observe(raw);
+    const parsed = parseAssistantEvent(raw, turns.current);
+    if (parsed) {
+      applyFallback(raw, parsed);
+      events.push(parsed);
+      for (const extra of extraIterations(raw, parsed))
+        events.push(extra);
+    }
+  }
 }
 async function listSessionFiles(dir) {
   let entries;
@@ -495,7 +502,6 @@ function suffixDuplicateExternalIds(events) {
 var DEFAULT_BASE_PATH = join3(homedir2(), ".copilot", "session-state");
 async function scanCopilotLogs(opts) {
   const basePath = opts.basePath ?? DEFAULT_BASE_PATH;
-  const since = opts.since;
   let entries;
   try {
     entries = await readdir2(basePath);
@@ -505,56 +511,60 @@ async function scanCopilotLogs(opts) {
     throw err;
   }
   const events = [];
-  for (const entry of entries) {
-    const dir = join3(basePath, entry);
-    let dirStat;
-    try {
-      dirStat = await stat2(dir);
-    } catch {
-      continue;
-    }
-    if (!dirStat.isDirectory())
-      continue;
-    const ws = await readWorkspace(join3(dir, "workspace.yaml"));
-    if (!ws)
-      continue;
-    const sessionStart = new Date(ws.created_at ?? "");
-    const segments = await readShutdownSegments(join3(dir, "events.jsonl"));
-    const sessionId = ws.id ?? entry;
-    for (const segment of segments) {
-      const segDate = new Date(segment.timestamp ?? "");
-      const occurredAt = Number.isNaN(segDate.getTime()) ? sessionStart : segDate;
-      if (Number.isNaN(occurredAt.getTime()))
-        continue;
-      if (since && occurredAt <= since)
-        continue;
-      for (const [model, m] of Object.entries(segment.modelMetrics)) {
-        const usage = isObject3(m) && isObject3(m.usage) ? m.usage : null;
-        if (!usage)
-          continue;
-        events.push({
-          externalId: `${sessionId}:${model}:${occurredAt.toISOString()}`,
-          provider: "openai",
-          // advisory only; server re-derives from model
-          model,
-          inputTokens: numOr02(usage.inputTokens),
-          outputTokens: numOr02(usage.outputTokens),
-          cacheReadTokens: numOr02(usage.cacheReadTokens),
-          cacheCreationTokens: numOr02(usage.cacheWriteTokens),
-          cacheWriteTokens: numOr02(usage.cacheWriteTokens),
-          cacheCreation5mTokens: 0,
-          cacheCreation1hTokens: 0,
-          occurredAt,
-          metadata: {
-            cwd: ws.cwd,
-            gitBranch: ws.branch,
-            sessionId
-          }
-        });
-      }
-    }
+  for (let i = 0; i < entries.length; i++) {
+    await readSession(basePath, entries[i], opts.since, events);
+    opts.onFile?.(i + 1, entries.length);
   }
   return suffixDuplicateExternalIds(events);
+}
+async function readSession(basePath, entry, since, events) {
+  const dir = join3(basePath, entry);
+  let dirStat;
+  try {
+    dirStat = await stat2(dir);
+  } catch {
+    return;
+  }
+  if (!dirStat.isDirectory())
+    return;
+  const ws = await readWorkspace(join3(dir, "workspace.yaml"));
+  if (!ws)
+    return;
+  const sessionStart = new Date(ws.created_at ?? "");
+  const segments = await readShutdownSegments(join3(dir, "events.jsonl"));
+  const sessionId = ws.id ?? entry;
+  for (const segment of segments) {
+    const segDate = new Date(segment.timestamp ?? "");
+    const occurredAt = Number.isNaN(segDate.getTime()) ? sessionStart : segDate;
+    if (Number.isNaN(occurredAt.getTime()))
+      continue;
+    if (since && occurredAt <= since)
+      continue;
+    for (const [model, m] of Object.entries(segment.modelMetrics)) {
+      const usage = isObject3(m) && isObject3(m.usage) ? m.usage : null;
+      if (!usage)
+        continue;
+      events.push({
+        externalId: `${sessionId}:${model}:${occurredAt.toISOString()}`,
+        provider: "openai",
+        // advisory only; server re-derives from model
+        model,
+        inputTokens: numOr02(usage.inputTokens),
+        outputTokens: numOr02(usage.outputTokens),
+        cacheReadTokens: numOr02(usage.cacheReadTokens),
+        cacheCreationTokens: numOr02(usage.cacheWriteTokens),
+        cacheWriteTokens: numOr02(usage.cacheWriteTokens),
+        cacheCreation5mTokens: 0,
+        cacheCreation1hTokens: 0,
+        occurredAt,
+        metadata: {
+          cwd: ws.cwd,
+          gitBranch: ws.branch,
+          sessionId
+        }
+      });
+    }
+  }
 }
 async function readWorkspace(path) {
   let content;
@@ -636,6 +646,7 @@ async function scanCodexLogs(opts) {
     if (m.sessionId && !pathBySession.has(m.sessionId))
       pathBySession.set(m.sessionId, path);
   const parents = /* @__PURE__ */ new Map();
+  const toRead = [];
   for (const path of files) {
     if (opts.since) {
       try {
@@ -645,6 +656,10 @@ async function scanCodexLogs(opts) {
         continue;
       }
     }
+    toRead.push(path);
+  }
+  for (let i = 0; i < toRead.length; i++) {
+    const path = toRead[i];
     let parsed = await parseSession(path, void 0);
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom)
@@ -657,6 +672,7 @@ async function scanCodexLogs(opts) {
       }
       events.push(e);
     }
+    opts.onFile?.(i + 1, toRead.length);
   }
   return suffixDuplicateExternalIds(events);
 }
@@ -2150,8 +2166,8 @@ function shortKey(key) {
 function renderRepoRows(rows, cfg) {
   const width = Math.min(48, Math.max(20, ...rows.map((r) => shortKey(r.key).length)));
   return rows.map((r, i) => {
-    const status = repoStatus({ key: r.key, label: r.labels[0] ?? "", source: r.source }, cfg);
-    const mark = status === "synced" ? "\u2713" : status === "excluded" ? "\u2717" : "\u2026";
+    const status2 = repoStatus({ key: r.key, label: r.labels[0] ?? "", source: r.source }, cfg);
+    const mark = status2 === "synced" ? "\u2713" : status2 === "excluded" ? "\u2717" : "\u2026";
     const note = r.source === "root" ? "  (no remote)" : r.source === "folder" ? "  (not a repo)" : "";
     const label = r.labels.join(", ");
     return `${String(i + 1).padStart(3)}. ${mark} ${shortKey(r.key).padEnd(width)}  ${label.padEnd(24).slice(0, 24)}  ${String(r.sessions).padStart(5)} sessions${note}`;
@@ -2955,6 +2971,10 @@ async function runStatus() {
 // src/progress.ts
 var mode = "auto";
 var inline = false;
+var status = null;
+var heartbeat = null;
+var HEARTBEAT_MS = 1e3;
+var REDRAW_MS = 100;
 function setProgressMode(next) {
   mode = next;
 }
@@ -2971,24 +2991,54 @@ function progress(message) {
   if (inline)
     process.stderr.write("\r\x1B[K");
   inline = false;
+  stopStatus();
   process.stderr.write(`  ${message}
 `);
 }
 function progressStatus(message) {
   if (!progressEnabled())
     return;
-  if (process.stderr.isTTY !== true) {
+  const now = Date.now();
+  const tty = process.stderr.isTTY === true;
+  const phase = message.replace(/\d[\d,]*/g, "#");
+  if (status?.phase === phase) {
+    status.message = message;
+    if (now - status.drawnAt < (tty ? REDRAW_MS : HEARTBEAT_MS))
+      return;
+  } else {
+    status = { message, phase, since: now, drawnAt: 0 };
+  }
+  status.drawnAt = now;
+  if (!tty) {
     process.stderr.write(`  ${message}
 `);
     return;
   }
-  process.stderr.write(`\r\x1B[K  ${message}`);
-  inline = true;
+  drawStatus(now);
+  if (!heartbeat) {
+    heartbeat = setInterval(() => drawStatus(Date.now()), HEARTBEAT_MS);
+    heartbeat.unref();
+  }
 }
 function progressDone() {
   if (inline && progressEnabled())
     process.stderr.write("\r\x1B[K");
   inline = false;
+  stopStatus();
+}
+function drawStatus(now) {
+  if (!status)
+    return;
+  const secs = Math.floor((now - status.since) / 1e3);
+  const age = secs < 1 ? "" : secs < 60 ? ` \xB7 ${secs}s` : ` \xB7 ${Math.floor(secs / 60)}m ${secs % 60}s`;
+  process.stderr.write(`\r\x1B[K  ${status.message}${age}`);
+  inline = true;
+}
+function stopStatus() {
+  if (heartbeat)
+    clearInterval(heartbeat);
+  heartbeat = null;
+  status = null;
 }
 
 // src/placer.ts
@@ -3292,7 +3342,8 @@ function matchSquash(prefix, candidates, own, cumulative) {
 async function runFatePass(auth, repos, declared = [], machineId, caps = { fields: new Set(machineId ? ["repo"] : []) }, cfg = { hideBranchNames: false }) {
   let anyRepoPassed = false;
   const tally = { shipped: 0, inFlight: 0, unshipped: 0 };
-  for (const { root: one, roots: many, name, key } of repos) {
+  for (const [i, { root: one, roots: many, name, key }] of repos.entries()) {
+    progressStatus(`Checking ship status \u2014 ${i + 1}/${repos.length} repos`);
     const roots = many ?? (one ? [one] : []);
     const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"));
     if (!facts)
@@ -3468,11 +3519,17 @@ async function syncLocked(opts) {
       anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : void 0;
     const scanStartedAt = /* @__PURE__ */ new Date();
-    progressStatus(`${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}\u2026`);
-    const scanned = await scanner.scan({ since, wholeFiles: true });
+    const reading = `${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}`;
+    progressStatus(`${reading}\u2026`);
+    const scanned = await scanner.scan({
+      since,
+      wholeFiles: true,
+      onFile: (done, total) => progressStatus(`${reading} \u2014 ${done.toLocaleString("en-US")}/${total.toLocaleString("en-US")} files`)
+    });
     const candidates = scanned.filter(
       (e) => !e.metadata.context && e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
     );
+    progressStatus(`${scanner.surface}: finding the repo of ${scanned.length.toLocaleString("en-US")} events\u2026`);
     await placer.place(scanned);
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
@@ -3698,7 +3755,6 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
     else if (!entry.roots.includes(b.root))
       entry.roots.push(b.root);
   }
-  progressStatus("Checking ship status\u2026");
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, caps, config);
   if (tally) {
     console.log(`  \u21B3 ${formatShipStatusLine(tally)}`);
@@ -3791,6 +3847,7 @@ try {
     process.exit(command ? 1 : 0);
   }
 } catch (err) {
+  progressDone();
   console.error(`\u2717 ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }

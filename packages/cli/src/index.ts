@@ -5,7 +5,7 @@ import { runInstallHooks } from "./commands/hooks-install.js";
 import { runImport } from "./commands/import.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
-import { setProgressMode } from "./progress.js";
+import { progressDone, setProgressMode } from "./progress.js";
 import { runExclude, runInclude, runInspect, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
 
 const [, , command, ...rest] = process.argv;
@@ -90,6 +90,7 @@ try {
     process.exit(command ? 1 : 0);
   }
 } catch (err) {
+  progressDone(); // a status line mid-redraw would be drawn over the error
   console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }

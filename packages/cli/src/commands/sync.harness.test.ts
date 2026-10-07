@@ -7,9 +7,10 @@
 import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
 import { StandIn, transcriptLine, writeTranscript as writeTranscriptIn } from "../testing/stand-in-server.js";
+import { inTerminal } from "../testing/terminal.js";
 
 // Every module that reads CENTRAIL_CONFIG_DIR / CLAUDE_CONFIG_DIR at load or
 // at call time must be imported AFTER the env is set, hence dynamic imports.
@@ -242,5 +243,54 @@ describe("sync invariants across triggers", () => {
       expect(text).not.toContain(hostname());
       expect(text).not.toContain(home);
     }
+  });
+});
+
+// The founder's complaint, "no logs until the sync is done": a terminal gets
+// every phase on stderr, and nothing else changes for anyone. The hook's
+// detached sync and an agent reading `sync` get the summary on stdout and
+// not one byte on stderr, as before 0.6.1.
+describe("what a sync prints, and where", () => {
+  const ttyWas = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+  const SUMMARY = /^(Inserted \d+ · Skipped \d+.*|  ↳ .*)$/;
+  async function syncWithStderr(isTTY: boolean): Promise<{ stdout: string[]; stderr: string[] }> {
+    Object.defineProperty(process.stderr, "isTTY", { value: isTTY, configurable: true, writable: true });
+    vi.stubEnv("CI", "");
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    const { output } = await inTerminal({ tty: false }, () => runSync({ full: true }));
+    return { stdout: output.split("\n").filter(Boolean), stderr };
+  }
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    if (ttyWas) Object.defineProperty(process.stderr, "isTTY", ttyWas);
+    else delete (process.stderr as { isTTY?: boolean }).isTTY;
+  });
+
+  it("no terminal on stderr: stdout is the summary alone, stderr is never written", async () => {
+    await writeTranscript(repo, "s11", [line("s11", repo, "req_P", 4, T0 + 420_000)]);
+    const { stdout, stderr } = await syncWithStderr(false);
+    expect(stderr).toEqual([]);
+    expect(out("req_P")).toBe(4);
+    expect(stdout[stdout.length - 1]).toMatch(/^Inserted \d+ · Skipped \d+/);
+    for (const l of stdout) expect(l).toMatch(SUMMARY);
+  });
+
+  it("a terminal on stderr: each phase is shown there as it runs, cleared before the same summary on stdout", async () => {
+    await writeTranscript(repo, "s12", [line("s12", repo, "req_Q", 5, T0 + 480_000)]);
+    const { stdout, stderr } = await syncWithStderr(true);
+    const shown = stderr.join("");
+    expect(shown).toMatch(/claude-code: reading logs \(full history\) — \d+\/\d+ files/);
+    expect(shown).toMatch(/claude-code: finding the repo of \d+ events…/);
+    expect(shown).toMatch(/claude-code: sending \d+ of \d+ events/);
+    expect(shown).toMatch(/Checking ship status — 1\/\d+ repos/);
+    expect(stderr[stderr.length - 1]).toBe("\r\x1b[K"); // nothing left on the line the summary prints under
+    expect(out("req_Q")).toBe(5);
+    expect(stdout[stdout.length - 1]).toMatch(/^Inserted \d+ · Skipped \d+/);
+    for (const l of stdout) expect(l).toMatch(SUMMARY);
   });
 });

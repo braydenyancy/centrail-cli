@@ -148,12 +148,18 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
-    progressStatus(`${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}…`);
+    const reading = `${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}`;
+    progressStatus(`${reading}…`);
     // Whole files: the events of a file read that fall before `since` come
     // back marked `context`, so a session resumed after the window still
     // places its turns with its earlier ones (sticky), as `--full` does.
     // They are placed, never sent.
-    const scanned = await scanner.scan({ since, wholeFiles: true });
+    const scanned = await scanner.scan({
+      since,
+      wholeFiles: true,
+      onFile: (done, total) =>
+        progressStatus(`${reading} — ${done.toLocaleString("en-US")}/${total.toLocaleString("en-US")} files`),
+    });
     const candidates = scanned.filter(
       (e) =>
         !e.metadata.context &&
@@ -165,6 +171,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     // while the folder may still exist; the sidecar covers the sessions
     // whose folder is already gone. Then the scope decides what leaves: an
     // excluded repo's events stop here.
+    progressStatus(`${scanner.surface}: finding the repo of ${scanned.length.toLocaleString("en-US")} events…`);
     await placer.place(scanned);
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
@@ -459,7 +466,6 @@ async function pushAttributions(
     if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
     else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
   }
-  progressStatus("Checking ship status…");
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined, caps, config);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
