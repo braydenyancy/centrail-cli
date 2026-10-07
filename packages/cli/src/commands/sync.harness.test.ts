@@ -209,6 +209,32 @@ describe("sync invariants across triggers", () => {
     }
   });
 
+  it("a machine replaced from another one: one clear line, and the hook stops starting syncs that can only fail", async () => {
+    const hookOnce = async () => {
+      let spawned = 0;
+      const claims = await mkdtemp(join(tmpdir(), "centrail-claim-"));
+      await runStopHook(JSON.stringify({ session_id: "s9", cwd: repo }), "claude-code", {
+        spawnSync: () => void spawned++,
+        readState: async () => ({ ...(await readState()), autoSyncAt: undefined }),
+        writeState: async () => {},
+        claimPath: join(claims, "autosync.claim"),
+      });
+      return spawned;
+    };
+    expect(await hookOnce()).toBe(1); // paired: the hook starts a sync
+
+    server.deviceRefusal = "device_revoked";
+    try {
+      await writeTranscript(repo, "s9", [line("s9", repo, "req_Z", 1)]);
+      await expect(runSync({ full: false })).rejects.toThrow(/replaced from another machine/);
+      expect(out("req_Z")).toBeUndefined();
+      expect(await hookOnce()).toBe(0); // parked: nothing left to sync to
+    } finally {
+      server.deviceRefusal = null;
+      await writeAuth({ baseUrl: server.url, token: "t", deviceName: "harness" });
+    }
+  });
+
   it("nothing on the wire ever carried the home path or hostname, whatever the server listed", () => {
     const { hostname } = require("node:os") as typeof import("node:os");
     for (const body of [...server.rows.values(), ...server.ingestBodies, ...server.attributeBodies]) {

@@ -9,7 +9,8 @@ can see what your AI costs in **dollars, commits, and carbon**.
 No install needed:
 
 ```bash
-npx centrail connect          # pair this machine; shows what it found and asks what to sync
+npx centrail connect          # pair this machine (opens your browser); shows what it found and asks what to sync
+npx centrail status           # which account this machine syncs to, and whether its pairing still works
 npx centrail sync             # push new usage (and git commit attribution)
 npx centrail install-hooks    # then let Claude Code (and Codex) sync by itself, every turn
 npx centrail import ccusage.json  # a `ccusage claude daily --json` file as Measured history
