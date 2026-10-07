@@ -231,7 +231,8 @@ describe("upgrading from 0.5.x: nothing beyond the 0.5.1 wire leaves before the 
     process.env.CLAUDE_CONFIG_DIR = freshClaude;
     try {
       // "Sync all?" no; exclude row 1, the folder.
-      const { output } = await inTerminal({ tty: true, input: ["n", "1"] }, () => runConnect({ baseUrl: server.url }));
+      // No `claude` here: the plugin offer must never run the real one.
+      const { output } = await inTerminal({ tty: true, input: ["n", "1"] }, () => runConnect({ baseUrl: server.url }, { claude: null }));
       expect(output.split(PROMPT)).toHaveLength(2);
       const cfg = await readConfig();
       expect(cfg.scopeDecidedAt).not.toBeNull();

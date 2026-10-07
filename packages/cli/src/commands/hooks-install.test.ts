@@ -80,5 +80,30 @@ describe("Stop hook settings merge", () => {
     expect(JSON.parse(await readFile(claude, "utf-8")).hooks).toBeUndefined();
     expect(JSON.parse(await readFile(codex, "utf-8")).hooks.Stop).toBeUndefined();
   });
+
+  it("with the Claude Code plugin enabled, adds no second Claude hook, and still serves Codex", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
+    const claude = join(dir, "settings.json");
+    const codex = join(dir, "codex-hooks.json");
+    const raw = `${JSON.stringify({ enabledPlugins: { "centrail@centrail": true } }, null, 2)}\n`;
+    await writeFile(claude, raw);
+    await runInstallHooks({ remove: false }, claude, codex);
+    expect(await readFile(claude, "utf-8")).toBe(raw);
+    expect(JSON.parse(await readFile(codex, "utf-8")).hooks.Stop).toHaveLength(1);
+  });
+
+  it("rewrites in the file's own indentation, keeps the file as first found once, and refuses one it cannot parse", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
+    const claude = join(dir, "settings.json");
+    const tabbed = `${JSON.stringify({ model: "opus" }, null, "\t")}\n`;
+    await writeFile(claude, tabbed);
+    await runInstallHooks({ remove: false }, claude, join(dir, "codex.json"));
+    await runInstallHooks({ remove: true }, claude, join(dir, "codex.json"));
+    expect(await readFile(claude, "utf-8")).toBe(tabbed);
+    expect(await readFile(`${claude}.centrail-backup`, "utf-8")).toBe(tabbed);
+    await writeFile(claude, "{ not json");
+    await expect(runInstallHooks({ remove: false }, claude, join(dir, "codex.json"))).rejects.toThrow(/Cannot parse/);
+    expect(await readFile(claude, "utf-8")).toBe("{ not json");
+  });
 });
 

@@ -9,6 +9,8 @@ is the source of truth for that contract.
 - `GET /api/cli/device` — this token's own pairing (`sync`, `status`). Bearer token.
 - `POST /api/cli/ingest` — push usage events (`sync`). Bearer token required.
 - `POST /api/cli/attribute` — push git commit attribution (`sync`). Bearer token.
+- `GET /api/cli/capabilities` — what the deployed server accepts, and the CLI
+  versions it ships and accepts (`sync`). No token.
 
 ## Pairing and the token's health (0.6.1, additive)
 
@@ -82,9 +84,10 @@ remain valid.
 
 ## Capabilities and the identity fields (wire 1, additive)
 
-`GET /api/cli/capabilities` returns `{ wireVersions, surfaces, fields? }`.
+`GET /api/cli/capabilities` returns `{ wireVersions, surfaces, fields?, cli? }`.
 `fields` lists optional event fields the deployed server accepts beyond the
-base shape. The CLI reads it once per sync. Absent, or never answered, means
+base shape; `cli: { latest?, minimum }` is the CLI-version floor (§
+Versioning). The CLI reads it once per sync. Absent, or never answered, means
 the 0.5.1 shape exactly; a server that answered before and cannot be asked now
 is taken at its last answer, so a flaky route never strips identity.
 
@@ -241,7 +244,7 @@ last activity.
 
 Every request carries two headers:
 
-- `centrail-cli-version` — the CLI's package version (informational).
+- `centrail-cli-version` — the CLI's package version.
 - `centrail-wire` — the **contract version** (currently `1`).
 
 Rules:
@@ -249,8 +252,44 @@ Rules:
 - Adding optional fields does **not** bump `centrail-wire`.
 - A breaking payload change bumps `centrail-wire`. The server supports the
   **current and previous** contract versions during a deprecation window.
-- Requests older than the previous version receive `426 Upgrade Required` with
-  guidance to run `npm i -g centrail@latest`.
+  Only wire `1` has ever existed.
+
+**The CLI-version floor (decision B, 2026-10-07).** Capabilities carry
+`cli: { latest?, minimum }`: `latest` is npm's `latest` dist-tag (absent when
+the server could not read npm), `minimum` the oldest `centrail-cli-version`
+the server accepts. `POST /api/cli/pair`, `/api/cli/ingest` and
+`/api/cli/attribute` refuse a version below `minimum` with
+`426 { error, code: "cli_outdated", minimum }`, before the token is checked,
+so an outdated install is never mistaken for a revoked one. A missing or
+malformed version header is never refused; the pair poll, `GET
+/api/cli/device` and `/api/import` are not gated. The CLI ignores fields it
+does not know or that do not parse as versions, as it ignores a server
+without `cli`. What it does with them (`packages/cli/src/update.ts`):
+
+- **Behind `latest`:** one line on stderr after a sync, only when stderr is a
+  terminal (the gate progress uses), naming the command that updates the
+  copy that ran. A sync the Stop hook started keeps it in `state.json` and
+  `centrail status` prints it; the copy's next sync at `latest` clears it.
+- **Below `minimum`, or any 426:** no scan (when capabilities already say
+  so) and no further writes; one line naming the minimum and the update
+  command; `state.json` records the refused version, and the Stop hook of
+  that version starts no syncs until it runs another version. The token stays
+  in `auth.json`. A sync by hand asks again, and a server that accepts it
+  lifts the park. `connect` reports a 426 on pairing the same way.
+
+**Update channels.** The CLI never installs itself; it detects how the
+running copy was installed, from where its script lives: the Claude Code
+plugin bundle (`scripts/centrail.mjs`, or under `CLAUDE_PLUGIN_ROOT`) "updates
+through Claude Code (/plugin)"; the npx cache (`_npx`) `npx centrail@latest`;
+mise's npm backend `mise upgrade npm:centrail`; a global npm prefix
+`npm i -g centrail@latest`; anything else a generic line. The plugin is the
+primary hook path: its marketplace is pinned to the `release` branch, which
+`publish.yml` fast-forwards to each tag after `npm publish` succeeds, and
+`connect` (in a terminal, asked once; `centrail setup-plugin` asks again)
+sets `autoUpdate: true` on `extraKnownMarketplaces.centrail` in the user's
+Claude Code settings, the switch Claude Code reads for third-party
+marketplaces. Claude Code notices an update by the plugin's `version`, which
+every release bumps.
 
 > Self-hosting: because the client is open and this contract is documented, you
 > can point the CLI at your own server with `centrail connect --url <base>`. This

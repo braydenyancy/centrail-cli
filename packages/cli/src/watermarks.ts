@@ -1,3 +1,5 @@
+import { parseOutdated, parseUpdateNotice, type Outdated, type UpdateNotice } from "./update.js";
+
 // Per-surface sync watermarks. Before 0.4.1 one shared `lastSyncAt` covered
 // every scanner, so a NEWLY ADDED scanner inherited a watermark that never
 // covered it and silently skipped its whole history unless the user ran
@@ -10,6 +12,8 @@ export type SyncState = {
   scannerRevisions: Record<string, number>; // surface -> discovery logic revision
   autoSyncAt?: string; // last time the Stop hook started a background sync
   capabilities?: string[]; // the last `fields` the server advertised; used when it cannot be asked
+  updateNotice?: UpdateNotice; // a newer release is out (update.ts); `centrail status` repeats it
+  outdated?: Outdated; // the server refuses this version: its hook starts no syncs (update.ts)
 };
 
 // The scanner registry as of the last release with the shared watermark
@@ -33,12 +37,16 @@ export function parseSyncState(raw: unknown): SyncState {
       }
     }
   }
+  const updateNotice = parseUpdateNotice(obj.updateNotice);
+  const outdated = parseOutdated(obj.outdated);
   return {
     lastSyncAt: typeof obj.lastSyncAt === "string" ? obj.lastSyncAt : null,
     surfaces,
     scannerRevisions,
     ...(typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {}),
     ...(Array.isArray(obj.capabilities) ? { capabilities: obj.capabilities.filter((f): f is string => typeof f === "string") } : {}),
+    ...(updateNotice ? { updateNotice } : {}),
+    ...(outdated ? { outdated } : {}),
   };
 }
 

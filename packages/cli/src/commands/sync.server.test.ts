@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// What the server says back about this machine: events another account
-// already holds (decision A). Real config files in a scratch dir, a stubbed
+// What the server says back about this machine and this CLI: events another
+// account already holds (decision A), a newer release, a version it no
+// longer accepts (decision B). Real config files in a scratch dir, a stubbed
 // fetch, one stubbed scanner.
 const mocks = vi.hoisted(() => {
   const dir = `${process.env.TMPDIR ?? "/tmp"}/centrail-server-test-${process.pid}-${Date.now()}`;
@@ -19,10 +20,15 @@ vi.mock("@centrail/parsers", async (importOriginal) => ({
 }));
 vi.mock("../ship-status.js", () => ({ formatShipStatusLine: vi.fn(() => ""), runFatePass: vi.fn(async () => null) }));
 
+import { readAuth, readState } from "../config.js";
+import { CLI_VERSION } from "../version.js";
+import { runStopHook } from "./hook.js";
+import { runStatus } from "./status.js";
 import { heldElsewhereLine, runSync } from "./sync.js";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const AUTH = { baseUrl: "https://centrail.org", token: "tok", deviceName: "Centrail CLI" };
+const AHEAD = "99.0.0";
 
 let routes: Record<string, () => Response>;
 const fetchMock = vi.fn(async (url: string) => {
@@ -47,7 +53,7 @@ beforeEach(async () => {
     occurredAt: new Date(), metadata: { cwd },
   }]);
   routes = {
-    "/api/cli/capabilities": () => json({ fields: [] }),
+    "/api/cli/capabilities": () => json({ fields: [], cli: { minimum: "0.1.0" } }),
     "/api/cli/ingest": () => json({ inserted: 1, skipped: 0, inboxCount: 0 }),
   };
   vi.stubGlobal("fetch", fetchMock);
@@ -92,5 +98,100 @@ describe("events another account holds (one provider event, one account)", () =>
     await runSync({ full: false });
 
     expect(stdout).toEqual(["Inserted 1 · Skipped 2"]);
+  });
+});
+
+describe("a newer release", () => {
+  beforeEach(() => {
+    routes["/api/cli/capabilities"] = () => json({ fields: [], cli: { latest: AHEAD, minimum: "0.1.0" } });
+  });
+  const said = () => stderr.filter((w) => w.includes(`centrail ${AHEAD} is available (you have ${CLI_VERSION})`));
+
+  it("is one stderr line in a terminal, after the summary", async () => {
+    setStderrTTY(true);
+
+    await runSync({ full: false });
+
+    expect(said()).toHaveLength(1);
+    expect(stdout).toEqual(["Inserted 1 · Skipped 0"]); // stdout is the summary, as before
+  });
+
+  it("without a terminal says nothing, and is kept for `centrail status`", async () => {
+    await runSync({ full: false });
+
+    expect(stderr).toEqual([]);
+    expect((await readState()).updateNotice).toMatchObject({ version: CLI_VERSION, latest: AHEAD });
+
+    routes["/api/cli/device"] = () => json({ account: { email: "a@example.test" }, device: { pairedAt: "2026-10-01T00:00:00.000Z" } });
+    stdout = [];
+    await runStatus();
+    expect(stdout[0]).toMatch(/^Connected to centrail\.org as a@example\.test/);
+    expect(stdout[1]).toMatch(new RegExp(`^centrail ${AHEAD} is available \\(you have ${CLI_VERSION.replace(/\./g, "\\.")}\\): `));
+  });
+
+  it("is forgotten once this version is the latest, and an older server changes nothing", async () => {
+    await runSync({ full: false });
+    expect((await readState()).updateNotice).toBeDefined();
+
+    routes["/api/cli/capabilities"] = () => json({ fields: [] });
+    await runSync({ full: false });
+    expect((await readState()).updateNotice).toBeDefined();
+
+    routes["/api/cli/capabilities"] = () => json({ fields: [], cli: { latest: CLI_VERSION, minimum: "0.1.0" } });
+    await runSync({ full: false });
+    expect((await readState()).updateNotice).toBeUndefined();
+  });
+});
+
+describe("a version the server no longer accepts", () => {
+  const refused = () => json({ error: "This CLI is too old", code: "cli_outdated", minimum: AHEAD }, 426);
+
+  it("a 426 on ingest parks the version, keeps the pairing, and names the minimum and the update", async () => {
+    routes["/api/cli/ingest"] = refused;
+
+    await expect(runSync({ full: false })).rejects.toThrow(
+      new RegExp(`centrail ${CLI_VERSION.replace(/\./g, "\\.")} is older than the server accepts \\(${AHEAD.replace(/\./g, "\\.")} or newer\\), so syncing has stopped until it is updated: `),
+    );
+
+    expect(await readAuth()).toMatchObject({ token: "tok" }); // not a revoked token
+    expect((await readState()).outdated).toMatchObject({ version: CLI_VERSION, minimum: AHEAD });
+  });
+
+  it("then this version's Stop hook starts no syncs, and `status` says why", async () => {
+    routes["/api/cli/ingest"] = refused;
+    await expect(runSync({ full: false })).rejects.toThrow();
+
+    const scratch = await mkdtemp(join(tmpdir(), "centrail-server-hook-"));
+    let spawns = 0;
+    await runStopHook(JSON.stringify({ session_id: "s", cwd: scratch }), "claude-code", {
+      sidecarPath: join(scratch, "sessions.jsonl"),
+      spawnSync: () => void spawns++,
+      connected: async () => true,
+    });
+    expect(spawns).toBe(0);
+
+    stdout = [];
+    await runStatus();
+    expect(stdout.some((l) => l.includes(`older than the server accepts (${AHEAD} or newer)`))).toBe(true);
+  });
+
+  it("a minimum above this version in capabilities parks it before any scan", async () => {
+    routes["/api/cli/capabilities"] = () => json({ fields: [], cli: { latest: AHEAD, minimum: AHEAD } });
+
+    await expect(runSync({ full: false })).rejects.toThrow(/older than the server accepts/);
+
+    expect(mocks.scan).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/cli/ingest"))).toBe(false);
+    expect((await readState()).outdated).toMatchObject({ version: CLI_VERSION, minimum: AHEAD });
+  });
+
+  it("a sync by hand tries again, and an accepted one lifts the park", async () => {
+    routes["/api/cli/ingest"] = refused;
+    await expect(runSync({ full: false })).rejects.toThrow();
+
+    routes["/api/cli/ingest"] = () => json({ inserted: 1, skipped: 0, inboxCount: 0 });
+    await runSync({ full: false });
+
+    expect((await readState()).outdated).toBeUndefined();
   });
 });

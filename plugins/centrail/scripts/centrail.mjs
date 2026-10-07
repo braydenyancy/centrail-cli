@@ -1062,6 +1062,173 @@ import { chmod, mkdir, readFile as readFile4, rename, rm, stat as stat4, writeFi
 import { homedir as homedir4 } from "node:os";
 import { join as join5 } from "node:path";
 
+// src/update.ts
+import { realpathSync } from "node:fs";
+
+// src/version.ts
+var CLI_VERSION = "0.6.1";
+var WIRE_VERSION = "1";
+function versionHeaders() {
+  return {
+    "centrail-cli-version": CLI_VERSION,
+    "centrail-wire": WIRE_VERSION
+  };
+}
+
+// src/update.ts
+function detectChannel(script = process.argv[1] ?? "", env = process.env) {
+  const p = realpath(script).replace(/\\/g, "/");
+  const pluginRoot = env.CLAUDE_PLUGIN_ROOT?.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (pluginRoot && p.startsWith(`${pluginRoot}/`) || p.endsWith("/scripts/centrail.mjs"))
+    return "plugin";
+  if (p.includes("/_npx/"))
+    return "npx";
+  if (p.includes("/installs/npm-centrail/"))
+    return "mise";
+  if (/\/(lib|npm)\/node_modules\/centrail\//.test(p) && !p.includes("/.volta/"))
+    return "npm-global";
+  return "unknown";
+}
+function howToUpdate(channel) {
+  switch (channel) {
+    case "plugin":
+      return "it updates through Claude Code (/plugin)";
+    case "npx":
+      return "run `npx centrail@latest`";
+    case "mise":
+      return "run `mise upgrade npm:centrail`";
+    case "npm-global":
+      return "run `npm i -g centrail@latest`";
+    default:
+      return "update it the way you installed it (`npm i -g centrail@latest` for a global install)";
+  }
+}
+function updateNoticeLine(n) {
+  return `centrail ${n.latest} is available (you have ${n.version}): ${howToUpdate(n.channel)}.`;
+}
+function outdatedLine(o) {
+  const floor = o.minimum ? ` (${o.minimum} or newer)` : "";
+  return `centrail ${o.version} is older than the server accepts${floor}, so syncing has stopped until it is updated: ${howToUpdate(o.channel)}.`;
+}
+function here(channel = detectChannel()) {
+  return { version: CLI_VERSION, channel };
+}
+function sameInstall(rec, at) {
+  return rec.version === at.version || rec.channel === at.channel;
+}
+function settleVersions(state, cli, at) {
+  const before = JSON.stringify([state.updateNotice, state.outdated]);
+  if (cli?.latest) {
+    if (isOlder(at.version, cli.latest))
+      state.updateNotice = { ...at, latest: cli.latest };
+    else if (state.updateNotice && sameInstall(state.updateNotice, at))
+      delete state.updateNotice;
+  }
+  if (cli?.minimum) {
+    if (isOlder(at.version, cli.minimum))
+      state.outdated = { ...at, minimum: cli.minimum };
+    else if (state.outdated && sameInstall(state.outdated, at))
+      delete state.outdated;
+  }
+  return JSON.stringify([state.updateNotice, state.outdated]) !== before;
+}
+function hookParked(state, version = CLI_VERSION) {
+  return state.outdated?.version === version;
+}
+function stillTrue(rec, at, floor) {
+  if (!rec || !sameInstall(rec, at))
+    return rec;
+  return (floor ? isOlder(at.version, floor) : rec.version === at.version) ? rec : void 0;
+}
+var CliOutdatedError = class extends Error {
+  constructor(outdated) {
+    super(outdatedLine(outdated));
+    this.outdated = outdated;
+  }
+};
+async function minimumFrom(res) {
+  const body = await res.json().catch(() => null);
+  return validVersion(body?.minimum) ? body.minimum : void 0;
+}
+function parseCliVersions(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return void 0;
+  const o = raw;
+  const out = {};
+  if (validVersion(o.latest))
+    out.latest = o.latest;
+  if (validVersion(o.minimum))
+    out.minimum = o.minimum;
+  return out.latest || out.minimum ? out : void 0;
+}
+function parseUpdateNotice(raw) {
+  const rec = parseVersionRecord(raw);
+  const latest = raw?.latest;
+  return rec && validVersion(latest) ? { ...rec, latest } : void 0;
+}
+function parseOutdated(raw) {
+  const rec = parseVersionRecord(raw);
+  const minimum = raw?.minimum;
+  return rec ? { ...rec, ...validVersion(minimum) ? { minimum } : {} } : void 0;
+}
+function parseVersionRecord(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return void 0;
+  const o = raw;
+  if (!validVersion(o.version))
+    return void 0;
+  const channel = CHANNELS.includes(o.channel) ? o.channel : "unknown";
+  return { version: o.version, channel };
+}
+var CHANNELS = ["plugin", "npx", "mise", "npm-global", "unknown"];
+var SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+function validVersion(v) {
+  return typeof v === "string" && SEMVER.test(v);
+}
+function compareVersions(a, b) {
+  const x = SEMVER.exec(a);
+  const y = SEMVER.exec(b);
+  if (!x || !y)
+    return 0;
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(x[i]) - Number(y[i]);
+    if (d !== 0)
+      return Math.sign(d);
+  }
+  if (!x[4] || !y[4])
+    return x[4] ? -1 : y[4] ? 1 : 0;
+  const p = x[4].split(".");
+  const q = y[4].split(".");
+  for (let i = 0; i < Math.max(p.length, q.length); i++) {
+    if (p[i] === void 0)
+      return -1;
+    if (q[i] === void 0)
+      return 1;
+    const m = /^\d+$/.test(p[i]);
+    const n = /^\d+$/.test(q[i]);
+    if (m && n) {
+      const d = Number(p[i]) - Number(q[i]);
+      if (d !== 0)
+        return Math.sign(d);
+    } else if (m !== n) {
+      return m ? -1 : 1;
+    } else if (p[i] !== q[i]) {
+      return p[i] < q[i] ? -1 : 1;
+    }
+  }
+  return 0;
+}
+function isOlder(v, than) {
+  return compareVersions(v, than) < 0;
+}
+function realpath(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 // src/watermarks.ts
 var SHARED_WATERMARK_SURFACES = /* @__PURE__ */ new Set(["claude-code", "copilot-cli", "codex"]);
 function parseSyncState(raw) {
@@ -1081,12 +1248,16 @@ function parseSyncState(raw) {
       }
     }
   }
+  const updateNotice = parseUpdateNotice(obj.updateNotice);
+  const outdated = parseOutdated(obj.outdated);
   return {
     lastSyncAt: typeof obj.lastSyncAt === "string" ? obj.lastSyncAt : null,
     surfaces,
     scannerRevisions,
     ...typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {},
-    ...Array.isArray(obj.capabilities) ? { capabilities: obj.capabilities.filter((f) => typeof f === "string") } : {}
+    ...Array.isArray(obj.capabilities) ? { capabilities: obj.capabilities.filter((f) => typeof f === "string") } : {},
+    ...updateNotice ? { updateNotice } : {},
+    ...outdated ? { outdated } : {}
   };
 }
 function sinceForSurface(state, surface, scannerRevision = 1) {
@@ -1197,6 +1368,12 @@ async function readState() {
 async function writeState(state) {
   await writeJsonAtomic(STATE_PATH, state);
 }
+async function parkOutdated(minimum) {
+  const state = await readState();
+  state.outdated = { ...here(), ...minimum ? { minimum } : {} };
+  await writeState(state);
+  return state.outdated;
+}
 var LOCK_PATH = join5(CONFIG_DIR, "sync.lock");
 var LOCK_STALE_MS = 15 * 60 * 1e3;
 var LOCK_OWNER_FILE = "owner.json";
@@ -1270,7 +1447,8 @@ var DEFAULT_CONFIG = {
   scopeDecidedAt: null,
   pendingBackfill: false,
   hideRepoNames: false,
-  hideBranchNames: false
+  hideBranchNames: false,
+  pluginAnswer: null
 };
 function parseConfig(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw))
@@ -1292,7 +1470,8 @@ function parseConfig(raw) {
     scopeDecidedAt: typeof o.scopeDecidedAt === "string" ? o.scopeDecidedAt : null,
     pendingBackfill: o.pendingBackfill === true,
     hideRepoNames: o.hideRepoNames === true,
-    hideBranchNames: o.hideBranchNames === true
+    hideBranchNames: o.hideBranchNames === true,
+    pluginAnswer: o.pluginAnswer === "yes" || o.pluginAnswer === "no" ? o.pluginAnswer : null
   };
 }
 function stringList(v) {
@@ -1369,6 +1548,19 @@ function openBrowser(url, baseUrl) {
     return false;
   }
 }
+
+// src/commands/plugin-setup.ts
+import { execFile as execFile2 } from "node:child_process";
+import { constants as constants2 } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter, join as join9 } from "node:path";
+import { createInterface as createInterface2 } from "node:readline/promises";
+
+// src/commands/hooks-install.ts
+import { constants, realpathSync as realpathSync3 } from "node:fs";
+import { copyFile, mkdir as mkdir3, readFile as readFile8, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname4, join as join8 } from "node:path";
+import { stat as stat7 } from "node:fs/promises";
 
 // src/commands/scope.ts
 import { createInterface } from "node:readline/promises";
@@ -1715,7 +1907,7 @@ async function readRepoSize(repoRoot) {
 
 // src/identity.ts
 import { createHmac } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { realpathSync as realpathSync2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { readFile as readFile6 } from "node:fs/promises";
 import { basename as basename3, dirname as dirname2, join as join7 } from "node:path";
@@ -1824,7 +2016,7 @@ function displayLabel(path) {
   if (p === home)
     return "~";
   try {
-    if (realpathSync(p) === realpathSync(home))
+    if (realpathSync2(p) === realpathSync2(home))
       return "~";
   } catch {
   }
@@ -2344,14 +2536,268 @@ async function runSurfaces(args) {
   console.log(`${name}: ${state}`);
 }
 
-// src/version.ts
-var CLI_VERSION = "0.6.1";
-var WIRE_VERSION = "1";
-function versionHeaders() {
-  return {
-    "centrail-cli-version": CLI_VERSION,
-    "centrail-wire": WIRE_VERSION
-  };
+// src/commands/hooks-install.ts
+var HOOK_MARK = "hook stop";
+function claudeSettingsPath() {
+  return join8(claudeConfigDirs()[0], "settings.json");
+}
+function codexHooksPath() {
+  return join8(codexHomeDir(), "hooks.json");
+}
+function hookCommand(node = process.execPath, script = process.argv[1]) {
+  const abs = safeRealpath(script);
+  return `${quote(node)} ${quote(abs)} hook stop`;
+}
+function installStopHook(settings, command2) {
+  const hooks = isObject6(settings.hooks) ? { ...settings.hooks } : {};
+  const stop = Array.isArray(hooks.Stop) ? hooks.Stop : [];
+  const kept = stop.filter((g) => !isCentrailGroup(g));
+  kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
+  return { ...settings, hooks: { ...hooks, Stop: kept } };
+}
+function uninstallStopHook(settings) {
+  if (!isObject6(settings.hooks) || !Array.isArray(settings.hooks.Stop))
+    return settings;
+  const kept = settings.hooks.Stop.filter((g) => !isCentrailGroup(g));
+  const hooks = { ...settings.hooks };
+  if (kept.length > 0)
+    hooks.Stop = kept;
+  else
+    delete hooks.Stop;
+  const out = { ...settings, hooks };
+  if (Object.keys(hooks).length === 0)
+    delete out.hooks;
+  return out;
+}
+async function runInstallHooks(opts, path = claudeSettingsPath(), codexPath = null) {
+  if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
+    await runSetup({ interactive: process.stdin.isTTY === true });
+  }
+  const targets = [path];
+  const codex = codexPath ?? (await isDir(codexHomeDir()) ? codexHooksPath() : null);
+  if (codex)
+    targets.push(codex);
+  for (const target of targets) {
+    const { settings, indent } = await readSettingsFile(target);
+    if (!opts.remove && target === path && pluginEnabled(settings)) {
+      console.log(`Claude Code runs centrail through its plugin (${PLUGIN_ID}); no hook added to ${target}.`);
+      continue;
+    }
+    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, hookCommand());
+    await writeSettingsFile(target, next, indent);
+    console.log(opts.remove ? `Removed the centrail Stop hook from ${target}.` : `Installed the centrail Stop hook in ${target}.`);
+  }
+  if (opts.remove)
+    return;
+  console.log(
+    `Every ${codex ? "Claude Code and Codex" : "Claude Code"} turn now records session id, folder, repo identity, branch, head and the
+repos its files touched, locally, and starts a background \`centrail sync\` at most every 10 minutes.
+Nothing leaves this machine except what \`centrail inspect --last\` shows.`
+  );
+}
+async function isDir(p) {
+  try {
+    return (await stat7(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function isCentrailGroup(g) {
+  return isObject6(g) && Array.isArray(g.hooks) && g.hooks.some(
+    (h) => isObject6(h) && typeof h.command === "string" && h.command.includes("centrail") && h.command.includes(HOOK_MARK)
+  );
+}
+var PLUGIN_ID = "centrail@centrail";
+function pluginEnabled(settings) {
+  return isObject6(settings.enabledPlugins) && settings.enabledPlugins[PLUGIN_ID] === true;
+}
+async function readSettingsFile(path) {
+  let raw;
+  try {
+    raw = await readFile8(path, "utf-8");
+  } catch (err) {
+    if (err.code === "ENOENT")
+      return { settings: {}, indent: "  " };
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Cannot parse ${path}: ${err.message}`);
+  }
+  if (!isObject6(parsed))
+    throw new Error(`Cannot parse ${path}: not a JSON object`);
+  return { settings: parsed, indent: /^([ \t]+)"/m.exec(raw)?.[1] ?? "  " };
+}
+async function writeSettingsFile(path, settings, indent = "  ") {
+  await mkdir3(dirname4(path), { recursive: true });
+  await backUpSettings(path);
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile3(tmp, `${JSON.stringify(settings, null, indent)}
+`);
+  await rename3(tmp, path);
+}
+async function backUpSettings(path) {
+  try {
+    await copyFile(path, `${path}.centrail-backup`, constants.COPYFILE_EXCL);
+  } catch (err) {
+    const code = err.code;
+    if (code !== "EEXIST" && code !== "ENOENT")
+      throw err;
+  }
+}
+function safeRealpath(p) {
+  try {
+    return realpathSync3(p);
+  } catch {
+    return p;
+  }
+}
+function quote(s) {
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+function isObject6(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// src/commands/plugin-setup.ts
+var MARKETPLACE = "centrail";
+var MARKETPLACE_REPO = "braydenyancy/centrail-cli";
+var RELEASE_REF = "release";
+var PLUGIN_STEPS = `
+  Claude Code can run centrail after every turn through its plugin, kept current by Claude Code:
+    claude plugin marketplace add ${MARKETPLACE_REPO}#${RELEASE_REF}
+    claude plugin install ${PLUGIN_ID}
+  then turn on its updates: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Enable auto-update.`;
+async function offerPlugin(opts, deps = {}) {
+  if ((await readConfig()).pluginAnswer && !opts.again)
+    return;
+  if (!opts.interactive) {
+    console.log(PLUGIN_STEPS);
+    return;
+  }
+  const claude = deps.claude === void 0 ? await findClaude() : deps.claude;
+  if (!claude) {
+    console.log(PLUGIN_STEPS);
+    return;
+  }
+  console.log("");
+  const reply = await (deps.ask ?? askLine)("  Keep centrail's Claude Code plugin installed and updated automatically? [Y/n] ");
+  if (reply === null) {
+    console.log(PLUGIN_STEPS);
+    return;
+  }
+  const answer = reply.trim().toLowerCase();
+  const yes = answer === "" || answer.startsWith("y");
+  await updateConfig((c) => {
+    c.pluginAnswer = yes ? "yes" : "no";
+  });
+  if (!yes) {
+    console.log(PLUGIN_STEPS);
+    return;
+  }
+  await setUpPlugin(claude, deps.settingsPath ?? claudeSettingsPath());
+}
+async function setUpPlugin(claude, path) {
+  let file = await readOrSay(path);
+  if (!file)
+    return false;
+  await backUpSettings(path);
+  const entry = marketplaceEntry(file.settings);
+  if (entry && !isReleaseSource(entry.source)) {
+    await writeSettingsFile(path, withMarketplace(file.settings, { ...entry, source: RELEASE_SOURCE }), file.indent);
+  }
+  console.log("  Setting up the Claude Code plugin\u2026");
+  for (const args of [
+    ["plugin", "marketplace", "add", `${MARKETPLACE_REPO}#${RELEASE_REF}`, "--scope", "user"],
+    ["plugin", "install", PLUGIN_ID, "--scope", "user"]
+  ]) {
+    const r = await claude(args);
+    if (r.code !== 0) {
+      const why = r.output.trim().split("\n").filter(Boolean).pop() ?? `exit ${r.code}`;
+      console.log(`  \u2717 \`claude ${args.join(" ")}\` failed: ${why}`);
+      console.log("  Try again with `npx centrail setup-plugin`, or by hand:");
+      console.log(PLUGIN_STEPS);
+      return false;
+    }
+  }
+  file = await readOrSay(path);
+  if (!file)
+    return false;
+  const withUpdates = withMarketplace(file.settings, { ...marketplaceEntry(file.settings) ?? { source: RELEASE_SOURCE }, autoUpdate: true });
+  const next = uninstallStopHook(withUpdates);
+  const removedHook = JSON.stringify(next) !== JSON.stringify(withUpdates);
+  await writeSettingsFile(path, next, file.indent);
+  console.log("  \u2713 Claude Code plugin installed. Claude Code updates it after each release (from its next launch);");
+  console.log(`    to stop that: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Disable auto-update.`);
+  if (removedHook)
+    console.log("  \u2713 Removed the Stop hook `centrail install-hooks` wrote: the plugin's hook replaces it.");
+  return true;
+}
+var RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
+function marketplaceEntry(settings) {
+  const all = settings.extraKnownMarketplaces;
+  const entry = isObject7(all) ? all[MARKETPLACE] : void 0;
+  return isObject7(entry) ? entry : void 0;
+}
+function withMarketplace(settings, entry) {
+  const all = isObject7(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
+  return { ...settings, extraKnownMarketplaces: { ...all, [MARKETPLACE]: entry } };
+}
+function isReleaseSource(source) {
+  return isObject7(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
+}
+async function readOrSay(path) {
+  try {
+    return await readSettingsFile(path);
+  } catch (err) {
+    console.log(`  ${err.message}. Left it as it is; to set the plugin up by hand:`);
+    console.log(PLUGIN_STEPS);
+    return null;
+  }
+}
+async function findClaude(env = process.env) {
+  const win = process.platform === "win32";
+  const exts = win ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (!dir)
+      continue;
+    for (const ext of exts) {
+      const bin = join9(dir, `claude${ext}`);
+      try {
+        await access(bin, constants2.X_OK);
+      } catch {
+        continue;
+      }
+      return (args) => new Promise((resolve) => {
+        execFile2(win ? "claude" : bin, args, { shell: win, timeout: 18e4, windowsHide: true }, (err, stdout, stderr) => {
+          const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
+          resolve({ code, output: `${stdout}${stderr}` });
+        });
+      });
+    }
+  }
+  return null;
+}
+async function askLine(prompt) {
+  process.stdout.write(prompt);
+  if (process.stdin.readableEnded) {
+    process.stdout.write("\n");
+    return null;
+  }
+  const rl = createInterface2({ input: process.stdin });
+  try {
+    const next = await rl[Symbol.asyncIterator]().next();
+    if (next.done)
+      process.stdout.write("\n");
+    return next.done ? null : String(next.value);
+  } finally {
+    rl.close();
+  }
+}
+function isObject7(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
 // src/url.ts
@@ -2377,7 +2823,7 @@ function assertSecureBaseUrl(raw) {
 // src/commands/connect.ts
 var DEFAULT_BASE_URL = "https://centrail.org";
 var PRIVATE_DEVICE_NAME = "Centrail CLI";
-async function runConnect(opts) {
+async function runConnect(opts, pluginDeps = {}) {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
   const previous = await readAuth();
@@ -2397,6 +2843,10 @@ async function runConnect(opts) {
     // data during pairing.
     body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME, ...installId ? { installId } : {} })
   });
+  if (res.status === 426) {
+    const minimum = await minimumFrom(res);
+    throw new Error(`centrail ${CLI_VERSION} is older than ${new URL(baseUrl).host} pairs with${minimum ? ` (${minimum} or newer)` : ""}: ${howToUpdate(here().channel)}.`);
+  }
   if (!res.ok) {
     throw new Error(
       `Pairing request failed (${res.status}) \u2014 is ${baseUrl} reachable?`
@@ -2444,9 +2894,10 @@ async function runConnect(opts) {
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
+      await offerPlugin({ interactive: isInteractiveTerminal() }, pluginDeps);
       console.log("");
-      console.log("  Run `npx centrail sync` to push usage, and `npx centrail install-hooks`");
-      console.log("  so Claude Code syncs by itself after each turn.");
+      console.log("  Run `npx centrail sync` to push usage now. Codex, or Claude Code without the plugin:");
+      console.log("  `npx centrail install-hooks` syncs after each turn.");
       return;
     }
     if (body.status === "expired") {
@@ -2504,9 +2955,9 @@ var FIELDS_SHOWN_ONCE = `
 
 // src/commands/hook.ts
 import { spawn as spawn3 } from "node:child_process";
-import { realpathSync as realpathSync2 } from "node:fs";
-import { mkdir as mkdir3, open, readdir as readdir5, rm as rm2, stat as stat7 } from "node:fs/promises";
-import { dirname as dirname4, join as join8 } from "node:path";
+import { realpathSync as realpathSync4 } from "node:fs";
+import { mkdir as mkdir4, open, readdir as readdir5, rm as rm2, stat as stat8 } from "node:fs/promises";
+import { dirname as dirname5, join as join10 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
@@ -2573,15 +3024,15 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(mains).length > 0)
     line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join8(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join10(dirname5(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl"))
     return [];
-  const dir = join8(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join10(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join8(dir, f));
+    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join10(dir, f));
   } catch {
     return [];
   }
@@ -2625,14 +3076,14 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
       } catch {
         continue;
       }
-      if (!isObject6(line))
+      if (!isObject8(line))
         continue;
       let ev = null;
-      if (line.type === "assistant" && isObject6(line.message))
+      if (line.type === "assistant" && isObject8(line.message))
         ev = lineEvidence(line.message);
-      else if (line.type === "turn_context" && isObject6(line.payload) && typeof line.payload.cwd === "string")
+      else if (line.type === "turn_context" && isObject8(line.payload) && typeof line.payload.cwd === "string")
         turnCwd = line.payload.cwd;
-      else if (line.type === "response_item" && isObject6(line.payload) && line.payload.type === "function_call")
+      else if (line.type === "response_item" && isObject8(line.payload) && line.payload.type === "function_call")
         ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
       if (!ev)
         continue;
@@ -2671,7 +3122,7 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
 function logicalRoot(dir, root) {
   let physical;
   try {
-    physical = realpathSync2(dir);
+    physical = realpathSync4(dir);
   } catch {
     return null;
   }
@@ -2683,7 +3134,7 @@ function logicalRoot(dir, root) {
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
 }
-function isObject6(v) {
+function isObject8(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 var CLOCK_STEP_MS = 60 * 1e3;
@@ -2700,7 +3151,7 @@ async function maybeAutoSync(now, deps, claimPath) {
   const state = await read();
   if (!shouldAutoSync(state, now))
     return;
-  if (!await connected()) {
+  if (!await connected() || hookParked(state)) {
     if (await claimAutoSync(claimPath, now))
       await compactLocked(now, deps);
     return;
@@ -2712,7 +3163,7 @@ async function maybeAutoSync(now, deps, claimPath) {
   (deps.spawnSync ?? spawnDetachedSync)();
 }
 async function compactLocked(now, deps) {
-  const release = await acquireSyncLock(deps.lockPath ?? join8(dirname4(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  const release = await acquireSyncLock(deps.lockPath ?? join10(dirname5(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
   if (!release)
     return;
   try {
@@ -2724,19 +3175,19 @@ async function compactLocked(now, deps) {
 async function claimAutoSync(claimPath, now) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await mkdir3(claimPath, { recursive: false });
+      await mkdir4(claimPath, { recursive: false });
       return true;
     } catch (err) {
       const code = err.code;
       if (code === "ENOENT") {
-        await mkdir3(dirname4(claimPath), { recursive: true });
+        await mkdir4(dirname5(claimPath), { recursive: true });
         continue;
       }
       if (code !== "EEXIST")
         return false;
       let at;
       try {
-        at = (await stat7(claimPath)).mtimeMs;
+        at = (await stat8(claimPath)).mtimeMs;
       } catch {
         continue;
       }
@@ -2756,118 +3207,16 @@ function spawnDetachedSync() {
   child.unref();
 }
 
-// src/commands/hooks-install.ts
-import { realpathSync as realpathSync3 } from "node:fs";
-import { mkdir as mkdir4, readFile as readFile8, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname5, join as join9 } from "node:path";
-import { stat as stat8 } from "node:fs/promises";
-var HOOK_MARK = "hook stop";
-function claudeSettingsPath() {
-  return join9(claudeConfigDirs()[0], "settings.json");
-}
-function codexHooksPath() {
-  return join9(codexHomeDir(), "hooks.json");
-}
-function hookCommand(node = process.execPath, script = process.argv[1]) {
-  const abs = safeRealpath(script);
-  return `${quote(node)} ${quote(abs)} hook stop`;
-}
-function installStopHook(settings, command2) {
-  const hooks = isObject7(settings.hooks) ? { ...settings.hooks } : {};
-  const stop = Array.isArray(hooks.Stop) ? hooks.Stop : [];
-  const kept = stop.filter((g) => !isCentrailGroup(g));
-  kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
-  return { ...settings, hooks: { ...hooks, Stop: kept } };
-}
-function uninstallStopHook(settings) {
-  if (!isObject7(settings.hooks) || !Array.isArray(settings.hooks.Stop))
-    return settings;
-  const kept = settings.hooks.Stop.filter((g) => !isCentrailGroup(g));
-  const hooks = { ...settings.hooks };
-  if (kept.length > 0)
-    hooks.Stop = kept;
-  else
-    delete hooks.Stop;
-  const out = { ...settings, hooks };
-  if (Object.keys(hooks).length === 0)
-    delete out.hooks;
-  return out;
-}
-async function runInstallHooks(opts, path = claudeSettingsPath(), codexPath = null) {
-  if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
-    await runSetup({ interactive: process.stdin.isTTY === true });
-  }
-  const targets = [path];
-  const codex = codexPath ?? (await isDir(codexHomeDir()) ? codexHooksPath() : null);
-  if (codex)
-    targets.push(codex);
-  for (const target of targets) {
-    const settings = await readSettings(target);
-    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, hookCommand());
-    await writeSettings(target, next);
-    console.log(opts.remove ? `Removed the centrail Stop hook from ${target}.` : `Installed the centrail Stop hook in ${target}.`);
-  }
-  if (opts.remove)
-    return;
-  console.log(
-    `Every ${codex ? "Claude Code and Codex" : "Claude Code"} turn now records session id, folder, repo identity, branch, head and the
-repos its files touched, locally, and starts a background \`centrail sync\` at most every 10 minutes.
-Nothing leaves this machine except what \`centrail inspect --last\` shows.`
-  );
-}
-async function isDir(p) {
-  try {
-    return (await stat8(p)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function isCentrailGroup(g) {
-  return isObject7(g) && Array.isArray(g.hooks) && g.hooks.some(
-    (h) => isObject7(h) && typeof h.command === "string" && h.command.includes("centrail") && h.command.includes(HOOK_MARK)
-  );
-}
-async function readSettings(path) {
-  try {
-    const parsed = JSON.parse(await readFile8(path, "utf-8"));
-    return isObject7(parsed) ? parsed : {};
-  } catch (err) {
-    if (err.code === "ENOENT")
-      return {};
-    throw new Error(`Cannot parse ${path}: ${err.message}`);
-  }
-}
-async function writeSettings(path, settings) {
-  await mkdir4(dirname5(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile3(tmp, `${JSON.stringify(settings, null, 2)}
-`);
-  await rename3(tmp, path);
-}
-function safeRealpath(p) {
-  try {
-    return realpathSync3(p);
-  } catch {
-    return p;
-  }
-}
-function quote(s) {
-  return `"${s.replace(/"/g, '\\"')}"`;
-}
-function isObject7(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-
 // src/commands/import.ts
 import { readFile as readFile9 } from "node:fs/promises";
 var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_MODEL = 100;
 function parseCcusageExport(json) {
-  if (!isObject8(json))
+  if (!isObject9(json))
     throw new Error("Not a ccusage export: expected a JSON object");
   const merged = /* @__PURE__ */ new Map();
   const add = (day, breakdown) => {
-    if (!isObject8(breakdown))
+    if (!isObject9(breakdown))
       throw new Error("Not a ccusage export: a model breakdown is not an object");
     if (typeof breakdown.modelName !== "string" || !breakdown.modelName)
       throw new Error("Not a ccusage export: a model breakdown has no modelName");
@@ -2881,14 +3230,14 @@ function parseCcusageExport(json) {
   };
   if (Array.isArray(json.daily)) {
     for (const d of json.daily) {
-      if (!isObject8(d) || typeof d.date !== "string" || !DAY_RE.test(d.date))
+      if (!isObject9(d) || typeof d.date !== "string" || !DAY_RE.test(d.date))
         throw new Error("Not a ccusage export: a daily row has no YYYY-MM-DD date");
       for (const b of Array.isArray(d.modelBreakdowns) ? d.modelBreakdowns : [])
         add(d.date, b);
     }
   } else if (Array.isArray(json.sessions)) {
     for (const s of json.sessions) {
-      if (!isObject8(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity)))
+      if (!isObject9(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity)))
         throw new Error("Not a ccusage export: a session has no lastActivity");
       const day = new Date(s.lastActivity).toISOString().slice(0, 10);
       for (const b of Array.isArray(s.modelBreakdowns) ? s.modelBreakdowns : [])
@@ -2936,7 +3285,7 @@ async function runImport(file, deps = {}) {
   const days = new Set(rows.map((r) => r.day));
   console.log(`Imported ${rows.length} day\xB7model row(s) over ${days.size} day(s) as Measured history (provider ccusage). A re-import replaces them.`);
 }
-function isObject8(v) {
+function isObject9(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -2989,6 +3338,17 @@ async function runStatus() {
   const paired = device.kind === "active" && device.pairedAt ? ` \xB7 paired ${device.pairedAt.slice(0, 10)}` : "";
   const unconfirmed = device.kind === "unknown" ? " (the server could not confirm it just now)" : "";
   console.log(`Connected to ${host}${email ? ` as ${email}` : ""}${paired}${unconfirmed}`);
+  await printVersionRecords();
+}
+async function printVersionRecords() {
+  const state = await readState();
+  const at = here();
+  const outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
+  const notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
+  if (outdated)
+    console.log(outdatedLine(outdated));
+  if (notice && !(outdated && sameInstall(notice, outdated)))
+    console.log(updateNoticeLine(notice));
 }
 
 // src/progress.ts
@@ -3188,7 +3548,8 @@ async function readCapabilities(auth, known) {
       return fallback;
     const body = await res.json();
     const fields = Array.isArray(body.fields) ? body.fields.filter((f) => typeof f === "string") : [];
-    return { fields: new Set(fields) };
+    const cli = parseCliVersions(body.cli);
+    return { fields: new Set(fields), ...cli ? { cli } : {} };
   } catch {
     return fallback;
   }
@@ -3454,6 +3815,8 @@ async function pushFates(auth, fates, repos, facts) {
         },
         body: JSON.stringify({ repos, attributions: [], fates: chunk, ...facts ? { facts } : {} })
       });
+      if (res.status === 426)
+        throw new CliOutdatedError(await parkOutdated(await minimumFrom(res)));
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         console.warn(
@@ -3462,6 +3825,8 @@ async function pushFates(auth, fates, repos, facts) {
       }
     }
   } catch (err) {
+    if (err instanceof CliOutdatedError)
+      throw err;
     console.warn("  \u26A0 Ship-status request failed:", err.message);
   }
 }
@@ -3512,14 +3877,19 @@ async function syncLocked(opts) {
   const served = await readCapabilities(auth, known ? { fields: new Set(known) } : void 0);
   const caps = consentedCapabilities(served, config);
   const capsNow = [...served.fields].sort();
+  const at = here();
+  const versionsChanged = settleVersions(state, served.cli, at);
   if (config.scopeDecidedAt && known && RESEND_ON_GAIN.some((f) => served.fields.has(f) && !known.includes(f)) && !config.pendingBackfill) {
     config.pendingBackfill = true;
     await writeConfig(config);
   }
-  if (!known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
+  if (versionsChanged || !known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
     state.capabilities = capsNow;
     await writeState(state);
   }
+  if (served.cli?.minimum && isOlder(at.version, served.cli.minimum))
+    throw new CliOutdatedError(await parkOutdated(served.cli.minimum));
+  const notice = state.updateNotice?.version === at.version ? state.updateNotice : void 0;
   await compactSidecar();
   await learnConfigDirs();
   const resolver = await IdentityResolver.create(installId);
@@ -3589,6 +3959,8 @@ async function syncLocked(opts) {
       });
       if (res.status === 401)
         await disconnect(await refusalReason(res));
+      if (res.status === 426)
+        throw new CliOutdatedError(await parkOutdated(await minimumFrom(res) ?? served.cli?.minimum));
       if (!res.ok) {
         const b = await res.json().catch(() => null);
         throw new Error(
@@ -3596,6 +3968,8 @@ async function syncLocked(opts) {
         );
       }
       const result = await res.json();
+      if (state.outdated && sameInstall(state.outdated, at))
+        delete state.outdated;
       grandInserted += result.inserted;
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
@@ -3623,6 +3997,8 @@ async function syncLocked(opts) {
         anyWatermark ? "No new events since the last sync." : "No agent usage found (Claude Code, Copilot CLI, Codex)."
       );
     }
+    if (notice)
+      progress(updateNoticeLine(notice));
     return;
   }
   if (attributionEvents.length > 0) {
@@ -3635,6 +4011,8 @@ async function syncLocked(opts) {
   );
   if (grandHeldElsewhere > 0)
     console.log(heldElsewhereLine(grandHeldElsewhere));
+  if (notice)
+    progress(updateNoticeLine(notice));
 }
 function heldElsewhereLine(n) {
   return n === 1 ? "1 event was already synced from this machine to another account; it stays there." : `${n.toLocaleString("en-US")} events were already synced from this machine to another account; they stay there.`;
@@ -3765,6 +4143,8 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
           },
           body: JSON.stringify({ repos, attributions: chunk })
         });
+        if (res.status === 426)
+          throw new CliOutdatedError(await parkOutdated(await minimumFrom(res)));
         if (res.ok) {
           const r = await res.json();
           totalLinked += r.linked;
@@ -3777,6 +4157,8 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
         console.log(`  \u21B3 Attributed ${totalLinked} event(s) to commits.`);
       }
     } catch (err) {
+      if (err instanceof CliOutdatedError)
+        throw err;
       console.warn("  \u26A0 Attribution request failed:", err.message);
     }
   }
@@ -3819,7 +4201,8 @@ Usage:
   centrail status                   Which account this machine syncs to, and whether its pairing still works
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
-  centrail install-hooks            Auto-sync: add the Stop hook to Claude Code (and Codex, if present)
+  centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
+  centrail install-hooks            Auto-sync without the plugin: a Stop hook for Codex (and Claude Code)
   centrail uninstall-hooks          Remove that hook
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
@@ -3843,6 +4226,8 @@ try {
     await runStatus();
   } else if (command === "sync") {
     await runSync({ full: flags.full });
+  } else if (command === "setup-plugin") {
+    await offerPlugin({ interactive: isInteractiveTerminal(), again: true });
   } else if (command === "install-hooks") {
     await runInstallHooks({ remove: false });
   } else if (command === "uninstall-hooks") {

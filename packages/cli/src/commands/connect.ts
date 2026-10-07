@@ -2,8 +2,10 @@ import { readdir } from "node:fs/promises";
 import { claudeProjectDirs } from "@centrail/parsers";
 import { readAuth, readConfig, readState, writeAuth, writeState } from "../config.js";
 import { openBrowser, shouldOpenBrowser } from "../browser.js";
-import { runSetup } from "./scope.js";
-import { versionHeaders } from "../version.js";
+import { offerPlugin, type PluginSetupDeps } from "./plugin-setup.js";
+import { isInteractiveTerminal, runSetup } from "./scope.js";
+import { CLI_VERSION, versionHeaders } from "../version.js";
+import { here, howToUpdate, minimumFrom } from "../update.js";
 import { assertSecureBaseUrl } from "../url.js";
 
 const DEFAULT_BASE_URL = "https://centrail.org";
@@ -19,7 +21,7 @@ type PairResponse = {
 
 type PollResponse = { status: string; token?: string; account?: { email?: unknown } };
 
-export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }): Promise<void> {
+export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }, pluginDeps: PluginSetupDeps = {}): Promise<void> {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
 
@@ -50,6 +52,10 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
     // data during pairing.
     body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME, ...(installId ? { installId } : {}) }),
   });
+  if (res.status === 426) {
+    const minimum = await minimumFrom(res);
+    throw new Error(`centrail ${CLI_VERSION} is older than ${new URL(baseUrl).host} pairs with${minimum ? ` (${minimum} or newer)` : ""}: ${howToUpdate(here().channel)}.`);
+  }
   if (!res.ok) {
     throw new Error(
       `Pairing request failed (${res.status}) — is ${baseUrl} reachable?`,
@@ -99,9 +105,10 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
+      await offerPlugin({ interactive: isInteractiveTerminal() }, pluginDeps);
       console.log("");
-      console.log("  Run `npx centrail sync` to push usage, and `npx centrail install-hooks`");
-      console.log("  so Claude Code syncs by itself after each turn.");
+      console.log("  Run `npx centrail sync` to push usage now. Codex, or Claude Code without the plugin:");
+      console.log("  `npx centrail install-hooks` syncs after each turn.");
       return;
     }
     if (body.status === "expired") {

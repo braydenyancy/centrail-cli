@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { CLI_VERSION } from "../version.js";
 import { AUTO_SYNC_INTERVAL_MS, runStopHook, shouldAutoSync } from "./hook.js";
 import { readSidecar } from "../sidecar.js";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
@@ -95,6 +96,19 @@ describe("runStopHook", () => {
     await runStopHook(JSON.stringify({ session_id: "s", cwd: fx.root }), "claude-code", deps);
     expect([...(await readSidecar(sidecarPath)).keys()]).toEqual(["s"]);
     expect(spawns).toBe(0);
+  });
+
+  it("a version the server refused (426) starts no syncs; an updated copy's hook does", async () => {
+    fx = await scratch();
+    const outdated = { version: CLI_VERSION, channel: "plugin" as const, minimum: "99.0.0" };
+    const parked = (version: string): SyncState => ({ lastSyncAt: null, surfaces: {}, scannerRevisions: {}, outdated: { ...outdated, version } });
+    const input = JSON.stringify({ session_id: "s", cwd: fx.root });
+    let spawns = 0;
+    const deps = { sidecarPath: join(fx.root, "s.jsonl"), spawnSync: () => void spawns++, connected: async () => true };
+    await runStopHook(input, "claude-code", { ...deps, claimPath: join(fx.root, "claim-1"), ...memState(parked(CLI_VERSION)) });
+    expect(spawns).toBe(0);
+    await runStopHook(input, "claude-code", { ...deps, claimPath: join(fx.root, "claim-2"), ...memState(parked("0.0.1")) });
+    expect(spawns).toBe(1);
   });
 
   it("ignores malformed or incomplete input without throwing", async () => {

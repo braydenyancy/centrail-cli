@@ -11,10 +11,18 @@ build time and pinned by the plugin version: nothing is resolved from the
 network per turn, and the sync that runs is the one you installed.
 
 ```
-claude plugin marketplace add braydenyancy/centrail-cli
+claude plugin marketplace add braydenyancy/centrail-cli#release
 claude plugin install centrail@centrail
 npx centrail connect        # once; pairs this machine and asks which repos sync
 ```
+
+`npx centrail connect` offers to do the first two lines itself, and to turn
+on Claude Code's auto-update for this marketplace (off by default for
+third-party ones): `"autoUpdate": true` on `extraKnownMarketplaces.centrail`
+in `~/.claude/settings.json`, or `/plugin` → Marketplaces → centrail →
+Enable auto-update. `#release` is a branch the publish workflow moves to each
+published version; Claude Code sees the plugin's bumped `version` and loads
+the new one on its next launch.
 
 Nothing leaves the machine except what `npx centrail inspect --last` shows.
 `centrail install-hooks` does the same without the plugin, pinned to the node
