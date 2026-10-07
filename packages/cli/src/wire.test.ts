@@ -109,6 +109,7 @@ const cfg: Config = {
   pendingBackfill: false,
   hideRepoNames: false,
   hideBranchNames: false,
+  pluginAnswer: null,
 };
 const legacy = { fields: new Set<string>() };
 const aware = { fields: new Set(["repo"]) };

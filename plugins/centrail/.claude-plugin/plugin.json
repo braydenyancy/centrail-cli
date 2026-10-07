@@ -1,7 +1,7 @@
 {
   "name": "centrail",
   "description": "Records which repo every agent turn belonged to, while the folder still exists, and syncs your local Claude Code / Codex usage to centrail.org in the background. One Stop hook; nothing leaves the machine except what `centrail inspect --last` shows.",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "author": { "name": "Centrail", "url": "https://centrail.org" },
   "homepage": "https://github.com/braydenyancy/centrail-cli",
   "repository": "https://github.com/braydenyancy/centrail-cli",

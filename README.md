@@ -9,10 +9,12 @@ can see what your AI costs in **dollars, commits, and carbon**.
 No install needed:
 
 ```bash
-npx centrail connect          # pair this machine (opens your browser); shows what it found and asks what to sync
-npx centrail status           # which account this machine syncs to, and whether its pairing still works
+npx centrail connect          # pair this machine (opens your browser); shows what it found, asks what to sync,
+                              # and offers the Claude Code plugin, which then syncs by itself every turn
+npx centrail status           # which account this machine syncs to, whether its pairing still works, and updates
 npx centrail sync             # push new usage (and git commit attribution)
-npx centrail install-hooks    # then let Claude Code (and Codex) sync by itself, every turn
+npx centrail setup-plugin     # the Claude Code plugin question again
+npx centrail install-hooks    # sync every turn without the plugin: Codex, or Claude Code
 npx centrail import ccusage.json  # a `ccusage claude daily --json` file as Measured history
 npx centrail repos            # every repo and folder seen here, with sync status
 npx centrail exclude <repo>   # nothing about this repo leaves (host/owner/repo or folder name)
@@ -22,20 +24,50 @@ npx centrail setup            # ask the scope question again
 npx centrail inspect --last   # the last payload, exactly as it left this machine
 ```
 
-Node.js 20+ required. For `install-hooks`, install once (`npm i -g centrail`)
-so the hook has a fixed path to run; the hook records session id, folder,
-repo identity, branch, head and the repos the turn's files touched, locally,
-at the end of every Claude Code or Codex turn, and starts a background sync at
-most every 10 minutes.
+Node.js 20+ required. Either way of syncing every turn runs one `Stop` hook
+that records session id, folder, repo identity, branch, head and the repos the
+turn's files touched, locally, at the end of every turn, and starts a
+background sync at most every 10 minutes.
 
-Or install it as a plugin — one `Stop` hook over a bundled copy of this CLI,
-read by Claude Code and by Codex alike (`plugins/centrail`):
+### The Claude Code plugin
+
+The primary way for Claude Code: one `Stop` hook over a bundled copy of this
+CLI (`plugins/centrail`). `connect` offers to set it up; by hand:
 
 ```bash
-claude plugin marketplace add braydenyancy/centrail-cli
+claude plugin marketplace add braydenyancy/centrail-cli#release
 claude plugin install centrail@centrail
-npx centrail connect
 ```
+
+**Updates.** Claude Code keeps the plugin current, but it auto-updates a
+third-party marketplace only when told to: `connect` (or `setup-plugin`) sets
+`"autoUpdate": true` on the `centrail` entry of `extraKnownMarketplaces` in
+your `~/.claude/settings.json`, or turn it on yourself under `/plugin` →
+Marketplaces → centrail → Enable auto-update. The marketplace is pinned to
+the `release` branch, which moves to each published version once npm has it;
+Claude Code picks the new version up in the background and loads it on its
+next launch ("Plugin updated: centrail"). To opt out, disable auto-update in
+the same place and update with `/plugin` when you choose. A Stop hook
+`install-hooks` wrote earlier is removed when the plugin is set up, so the two
+never both run.
+
+### Without the plugin
+
+`install-hooks` writes the same hook into Codex's `hooks.json` (when Codex is
+installed) and, unless the plugin is enabled, Claude Code's settings. Install
+the CLI once (`npm i -g centrail`) so the hook has a fixed path to run; the
+hook pins the `node` that ran the install, so run it again after upgrading
+node.
+
+### Staying current
+
+The CLI never installs itself. When a newer release is out, a sync in a
+terminal says so in one line with the command for how you installed it
+(`npx centrail@latest`, `npm i -g centrail@latest`, `mise upgrade
+npm:centrail`, or "updates through Claude Code" for the plugin); a sync the
+hook started keeps the notice for `centrail status`. A version the server no
+longer accepts stops syncing (the pairing is kept) and says which version it
+needs; its hook starts no syncs until the copy is updated.
 
 ## What leaves your machine
 
@@ -80,6 +112,12 @@ started by the hook never asks and never waits, and `centrail repos` says
 "scope not answered" until you do. Once you answer, your history is re-sent
 once with repo identity; the server fills it into the usage it already holds
 and never counts anything twice.
+
+**One machine, one account at a time.** Pairing the machine with another
+account moves it there: what it already synced stays with the first account,
+and the new one gets the usage no account holds yet. Each agent request
+belongs to one account, so a sync after the move says how many events stay
+where they are.
 
 Repo identity is the same for every worktree, clone and machine, so one
 assignment in the dashboard covers all of them, and a session whose worktree

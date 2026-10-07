@@ -1,3 +1,5 @@
+import { parseOutdated, parseUpdateNotice, type Outdated, type UpdateNotice } from "./update.js";
+
 // Per-surface sync watermarks. Before 0.4.1 one shared `lastSyncAt` covered
 // every scanner, so a NEWLY ADDED scanner inherited a watermark that never
 // covered it and silently skipped its whole history unless the user ran
@@ -10,6 +12,8 @@ export type SyncState = {
   scannerRevisions: Record<string, number>; // surface -> discovery logic revision
   autoSyncAt?: string; // last time the Stop hook started a background sync
   capabilities?: string[]; // the last `fields` the server advertised; used when it cannot be asked
+  updateNotice?: UpdateNotice; // a newer release is out (update.ts); `centrail status` repeats it
+  outdated?: Outdated; // the server refuses this version: its hook starts no syncs (update.ts)
 };
 
 // The scanner registry as of the last release with the shared watermark
@@ -33,15 +37,28 @@ export function parseSyncState(raw: unknown): SyncState {
       }
     }
   }
+  const updateNotice = parseUpdateNotice(obj.updateNotice);
+  const outdated = parseOutdated(obj.outdated);
   return {
     lastSyncAt: typeof obj.lastSyncAt === "string" ? obj.lastSyncAt : null,
     surfaces,
     scannerRevisions,
     ...(typeof obj.autoSyncAt === "string" ? { autoSyncAt: obj.autoSyncAt } : {}),
     ...(Array.isArray(obj.capabilities) ? { capabilities: obj.capabilities.filter((f): f is string => typeof f === "string") } : {}),
+    ...(updateNotice ? { updateNotice } : {}),
+    ...(outdated ? { outdated } : {}),
   };
 }
 
+// Two CLIs can sync one machine: a global 0.5.1 install beside `npx
+// centrail`, or a plugin hook whose bundle is a release behind. Each stamps
+// the surface's watermark with its own scanner revision, so the newer one
+// read the older stamp as "never completed at my revision" and re-sent the
+// whole history on every sync. Nor can it simply trust the older stamp: the
+// older scanner sent what it found in its older shape. So each pass also
+// keeps its own mark per revision, `surfaces["<surface>@<revision>"]`:
+// every CLI since 0.4.1 rewrites state.json from the fields it knows, and
+// `surfaces` is the one map they all carry through whole.
 export function sinceForSurface(
   state: SyncState,
   surface: string,
@@ -50,14 +67,36 @@ export function sinceForSurface(
   // A scanner revision means previously undiscovered historical events may
   // exist below an old watermark. Missing revision data is revision 1 for
   // compatibility with state files written before this field existed.
+  let since: Date | undefined;
   const completedRevision = state.scannerRevisions[surface] ?? 1;
-  if (completedRevision < scannerRevision) return undefined;
-  const own = state.surfaces[surface];
-  if (own) return validDate(own);
-  if (state.lastSyncAt && SHARED_WATERMARK_SURFACES.has(surface)) {
-    return validDate(state.lastSyncAt);
+  if (completedRevision >= scannerRevision) {
+    const own = state.surfaces[surface];
+    if (own) since = validDate(own);
+    else if (state.lastSyncAt && SHARED_WATERMARK_SURFACES.has(surface)) since = validDate(state.lastSyncAt);
   }
-  return undefined;
+  // A pass at this revision or a later one sent everything this scanner
+  // finds up to its mark, whatever stamped over it since.
+  for (const [key, iso] of Object.entries(state.surfaces)) {
+    const revision = markRevision(key, surface);
+    if (revision === undefined || revision < scannerRevision) continue;
+    const mark = validDate(iso);
+    if (mark && (!since || mark > since)) since = mark;
+  }
+  return since;
+}
+
+// A completed pass: the shared watermark, which every CLI reads, and this
+// revision's own mark, which an older CLI's stamp leaves alone.
+export function stampWatermark(state: SyncState, surface: string, revision: number, at: Date): void {
+  state.surfaces[surface] = at.toISOString();
+  state.scannerRevisions[surface] = revision;
+  state.surfaces[`${surface}@${revision}`] = at.toISOString();
+}
+
+function markRevision(key: string, surface: string): number | undefined {
+  if (!key.startsWith(`${surface}@`)) return undefined;
+  const revision = Number(key.slice(surface.length + 1));
+  return Number.isInteger(revision) && revision > 0 ? revision : undefined;
 }
 
 function validDate(iso: string): Date | undefined {

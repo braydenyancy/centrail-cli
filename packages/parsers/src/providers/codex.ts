@@ -36,6 +36,7 @@ export async function scanCodexLogs(opts: {
   basePath?: string;
   since?: Date;
   wholeFiles?: boolean;
+  onFile?: (done: number, total: number) => void;
 }): Promise<ParsedUsageEvent[]> {
   const files = opts.basePath
     ? await findJsonlFiles(opts.basePath)
@@ -47,6 +48,7 @@ export async function scanCodexLogs(opts: {
   for (const [path, m] of metaByPath) if (m.sessionId && !pathBySession.has(m.sessionId)) pathBySession.set(m.sessionId, path);
   const parents = new Map<string, ParsedUsageEvent[]>();
 
+  const toRead: string[] = [];
   for (const path of files) {
     if (opts.since) {
       try {
@@ -55,6 +57,11 @@ export async function scanCodexLogs(opts: {
         continue;
       }
     }
+    toRead.push(path);
+  }
+
+  for (let i = 0; i < toRead.length; i++) {
+    const path = toRead[i];
     // Parse without `since`, drop a fork's replayed prefix, then filter:
     // the replay carries fresh timestamps, so `since` cannot catch it.
     let parsed = await parseSession(path, undefined);
@@ -67,6 +74,7 @@ export async function scanCodexLogs(opts: {
       }
       events.push(e);
     }
+    opts.onFile?.(i + 1, toRead.length);
   }
 
   return suffixDuplicateExternalIds(events);

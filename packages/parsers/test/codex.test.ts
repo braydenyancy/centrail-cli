@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -171,6 +171,20 @@ describe("scanCodexLogs", () => {
       await scanCodexLogs({ basePath: base, since: new Date("2026-07-18T12:00:02.000Z") }),
     ).toEqual([]);
     expect(await scanCodexLogs({ basePath: join(base, "missing") })).toEqual([]);
+  });
+
+  it("counts off the rollouts it reads: onFile(done, total) after each, files `since` skips not counted", async () => {
+    const base = await makeSession([META, TURN, tokenCount()]);
+    await writeFile(join(base, "2026", "07", "18", "second.jsonl"), `${[META, TURN, tokenCount()].join("\n")}\n`);
+    const old = new Date("2026-06-01T00:00:00.000Z");
+    await utimes(join(base, "2026", "07", "18", "second.jsonl"), old, old);
+    const calls: [number, number][] = [];
+    const onFile = (done: number, total: number) => void calls.push([done, total]);
+    await scanCodexLogs({ basePath: base, onFile });
+    expect(calls).toEqual([[1, 2], [2, 2]]);
+    calls.length = 0;
+    await scanCodexLogs({ basePath: base, since: new Date("2026-06-02T00:00:00.000Z"), onFile });
+    expect(calls).toEqual([[1, 1]]);
   });
 
   it("wholeFiles returns the read file's events before since too, marked context, for the caller to place and not send", async () => {

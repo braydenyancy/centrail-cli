@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import type { CommitFateRow, ParsedUsageEvent, Placement, RepoIdentity } from "@centrail/parsers";
 import type { Config } from "./config.js";
 import type { RecentCommit } from "./git.js";
+import { parseCliVersions, type CliVersions } from "./update.js";
 import { versionHeaders } from "./version.js";
 
 // The parser event contains local-only context used for Git attribution.
@@ -42,7 +43,9 @@ export function toWireUsageEvent(event: ParsedUsageEvent): WireUsageEvent {
 // (CONTRACT.md § Release ordering); an unreachable or older server reads as
 // "nothing extra", which is exactly the 0.5.1 wire. The wire policy never
 // reads this directly: it gets consentedCapabilities.
-export type Capabilities = { fields: Set<string> };
+// `cli` is the server's word on this CLI's version (update.ts): not a wire
+// field, so the scope answer does not gate it.
+export type Capabilities = { fields: Set<string>; cli?: CliVersions };
 
 // What the wire policy may use: the server's list once the scope question
 // has been answered (decision § 3.7), nothing before it. An install that
@@ -68,11 +71,12 @@ export async function readCapabilities(auth: { baseUrl: string }, known?: Capabi
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return fallback;
-    const body = (await res.json()) as { fields?: unknown };
+    const body = (await res.json()) as { fields?: unknown; cli?: unknown };
     const fields = Array.isArray(body.fields)
       ? body.fields.filter((f): f is string => typeof f === "string")
       : [];
-    return { fields: new Set(fields) };
+    const cli = parseCliVersions(body.cli);
+    return { fields: new Set(fields), ...(cli ? { cli } : {}) };
   } catch {
     return fallback;
   }

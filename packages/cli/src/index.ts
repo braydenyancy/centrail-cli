@@ -2,11 +2,12 @@
 import { runConnect } from "./commands/connect.js";
 import { runStopHook } from "./commands/hook.js";
 import { runInstallHooks } from "./commands/hooks-install.js";
+import { offerPlugin } from "./commands/plugin-setup.js";
 import { runImport } from "./commands/import.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
-import { setProgressMode } from "./progress.js";
-import { runExclude, runInclude, runInspect, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
+import { progressDone, setProgressMode } from "./progress.js";
+import { isInteractiveTerminal, runExclude, runInclude, runInspect, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
 
 const [, , command, ...rest] = process.argv;
 
@@ -27,7 +28,8 @@ Usage:
   centrail status                   Which account this machine syncs to, and whether its pairing still works
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
-  centrail install-hooks            Auto-sync: add the Stop hook to Claude Code (and Codex, if present)
+  centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
+  centrail install-hooks            Auto-sync without the plugin: a Stop hook for Codex (and Claude Code)
   centrail uninstall-hooks          Remove that hook
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
@@ -52,6 +54,8 @@ try {
     await runStatus();
   } else if (command === "sync") {
     await runSync({ full: flags.full });
+  } else if (command === "setup-plugin") {
+    await offerPlugin({ interactive: isInteractiveTerminal(), again: true });
   } else if (command === "install-hooks") {
     await runInstallHooks({ remove: false });
   } else if (command === "uninstall-hooks") {
@@ -90,6 +94,7 @@ try {
     process.exit(command ? 1 : 0);
   }
 } catch (err) {
+  progressDone(); // a status line mid-redraw would be drawn over the error
   console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }

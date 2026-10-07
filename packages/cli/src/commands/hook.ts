@@ -7,6 +7,7 @@ import { acquireSyncLock, readAuth, readState, writeState } from "../config.js";
 import { deepestRoot, nearestDirectory, nestedCheckout, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
 import { appendSidecar, compactSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
+import { hookParked } from "../update.js";
 import type { SyncState } from "../watermarks.js";
 
 // `centrail hook stop` — the collection trigger. Claude Code runs it at the
@@ -271,7 +272,10 @@ async function maybeAutoSync(now: Date, deps: HookDeps, claimPath: string): Prom
   const connected = deps.connected ?? (async () => (await readAuth()) !== null);
   const state = await read();
   if (!shouldAutoSync(state, now)) return;
-  if (!(await connected())) {
+  // A parked pairing (401) or a version the server refuses (426, update.ts):
+  // a sync could only fail. The park is per version, so the hook resumes
+  // when it runs an updated copy.
+  if (!(await connected()) || hookParked(state)) {
     // Nothing to sync to, and a sync is what compacts the sidecar, which
     // every hook reads whole. Compact it here instead: same throttle, the
     // lock a sync takes.

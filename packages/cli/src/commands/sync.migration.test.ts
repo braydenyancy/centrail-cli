@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SCANNERS } from "@centrail/parsers";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
-import { StandIn, transcriptLine, writeTranscript as writeTranscriptIn } from "../testing/stand-in-server.js";
+import { StandIn, transcriptLine, writeTranscript as writeTranscriptIn, type Row } from "../testing/stand-in-server.js";
 
 const home = await mkdtemp(join(tmpdir(), "centrail-migration-"));
 process.env.CENTRAIL_CONFIG_DIR = join(home, "cfg");
@@ -65,13 +65,13 @@ describe("0.6 upgrade: one full re-send carries identity to rows the server alre
     ]);
 
     // A 0.5.1 install: it synced everything as bare usage numbers and left
-    // its own scanner revisions in state.json.
+    // its own watermarks and scanner revisions in state.json, nothing else.
     server.fields = [];
     await runSync({ full: true });
     expect(server.rows.get(old)?.metadata).toBeUndefined();
     const state = await readState();
-    state.scannerRevisions = { ...REVISIONS_0_5_1 };
-    await writeState(state);
+    const stamped051 = SCANNERS.filter((s) => state.surfaces[s.surface]).map((s) => [s.surface, state.surfaces[s.surface]]);
+    await writeState({ lastSyncAt: null, surfaces: Object.fromEntries(stamped051), scannerRevisions: { ...REVISIONS_0_5_1 } });
     const rowsBefore = server.rows.size;
 
     // Upgrade to 0.6.0. The server lists what it lists; the first sync re-sends everything.
@@ -135,5 +135,45 @@ describe("0.6 upgrade: one full re-send carries identity to rows the server alre
     mark = server.ingestBodies.length;
     await runSync({ full: false });
     expect(sentSince(mark).map((e) => e.externalId)).not.toContain(old);
+  });
+});
+
+// Two CLIs on one machine: a global 0.5.1 install's `centrail sync` beside
+// `npx centrail` — and, after the next revision bump, a plugin hook whose
+// bundle is a release behind the npx one. Each stamps its own scanner
+// revision over the other's. The newer one used to read the older stamp as
+// "never completed at my revision" and re-send the whole history, every
+// time (115k events on the reference machine). It must re-send only what it
+// has not covered itself: what the older one sent since, in its older shape.
+describe("an older CLI syncing between two newer syncs", () => {
+  it("costs the newer one a re-send since its own last pass, never the whole history", async () => {
+    server.fields = ["repo", "match"];
+    const repo = await fx.repo("alt", { remote: "https://github.com/acme/alt.git" });
+    const claude = join(home, "claude");
+    const now = Date.now();
+    await writeTranscriptIn(claude, repo, "sess-alt", [
+      transcriptLine({ sessionId: "sess-alt", cwd: repo, requestId: "req_alt_old", out: 3, atMs: now - 10 * DAY }),
+    ]);
+    await runSync({ full: true }); // 0.6's own pass: everything, with identity
+
+    // Five days on, 0.5.1 synced a session 0.6 has not seen, as bare numbers,
+    // and rewrote state.json as 0.5.1 does: its own watermark and revisions,
+    // and only the fields it knows.
+    const state = await readState();
+    for (const [k, v] of Object.entries(state.surfaces)) state.surfaces[k] = new Date(Date.parse(v) - 5 * DAY).toISOString();
+    await writeTranscriptIn(claude, repo, "sess-alt-2", [
+      transcriptLine({ sessionId: "sess-alt-2", cwd: repo, requestId: "req_alt_mid", out: 6, atMs: now - 3 * DAY }),
+    ]);
+    server.rows.set("req_alt_mid", { externalId: "req_alt_mid", outputTokens: 6 } as Row);
+    state.surfaces["claude-code"] = new Date(now - 60_000).toISOString();
+    await writeState({ lastSyncAt: state.lastSyncAt, surfaces: state.surfaces, scannerRevisions: { ...REVISIONS_0_5_1 } });
+
+    const mark = server.ingestBodies.length;
+    await runSync({ full: false });
+    const sent = sentSince(mark).map((e) => e.externalId);
+    expect(sent).not.toContain("req_alt_old"); // behind 0.6's own pass: never again
+    expect(sent).toContain("req_alt_mid"); // behind 0.5.1's watermark, but 0.5.1 sent it without identity…
+    expect(server.rows.get("req_alt_mid")?.metadata).toMatchObject({ repo: { key: "github.com/acme/alt" } }); // …which this fills
+    expect((await readState()).scannerRevisions["claude-code"]).toBe(SCANNERS[0].revision);
   });
 });

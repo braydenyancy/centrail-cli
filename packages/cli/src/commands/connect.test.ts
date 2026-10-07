@@ -10,11 +10,16 @@ const dir = vi.hoisted(() => {
   return d;
 });
 
-vi.mock("./scope.js", () => ({ runSetup: vi.fn(async () => {}) }));
+vi.mock("./scope.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./scope.js")>()),
+  runSetup: vi.fn(async () => {}),
+}));
 
+import { CLI_VERSION } from "../version.js";
 import { PRIVATE_DEVICE_NAME, runConnect } from "./connect.js";
 
 const INSTALL_ID = "3f0c2a8e-7d1b-4c55-9a3e-2b8f6d4e1c90";
+const readAuth = async () => readJson("auth.json").catch(() => null);
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const readJson = async (name: string) => JSON.parse(await readFile(join(dir, name), "utf-8"));
 const writeJson = (name: string, value: unknown) => writeFile(join(dir, name), JSON.stringify(value));
@@ -73,7 +78,7 @@ describe("runConnect privacy boundary", () => {
 describe("runConnect pairing", () => {
   const synced = { lastSyncAt: null, surfaces: { "claude-code": "2026-10-06T00:00:00.000Z" }, scannerRevisions: { "claude-code": 2 } };
 
-  it("stores who approved, and gives a new account this machine's whole history", async () => {
+  it("stores who approved, and re-reads the history for a new account, which keeps what the old one holds", async () => {
     await writeJson("auth.json", { baseUrl: "https://centrail.org", token: "tok-a", deviceName: PRIVATE_DEVICE_NAME, account: { email: "a@example.test" } });
     await writeJson("state.json", synced);
     vi.stubGlobal("fetch", serverApproving({ email: "b@example.test" }));
@@ -86,6 +91,29 @@ describe("runConnect pairing", () => {
     const said = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join("\n");
     expect(said).toContain("This machine is paired with a@example.test");
     expect(said).toContain("Paired with b@example.test");
+    expect(said).toContain("What this machine synced to a@example.test stays there; b@example.test gets everything else.");
+  });
+
+  it("without a terminal never asks about the plugin and never touches Claude Code's settings", async () => {
+    const claude = vi.fn();
+    const settingsPath = join(dir, "claude-settings.json");
+    vi.stubGlobal("fetch", serverApproving({ email: "a@example.test" }));
+
+    await runConnect({ baseUrl: "https://centrail.org", noBrowser: true }, { settingsPath, claude, ask: vi.fn() });
+
+    expect(claude).not.toHaveBeenCalled();
+    await expect(readFile(settingsPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const said = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join("\n");
+    expect(said).toContain("claude plugin marketplace add braydenyancy/centrail-cli#release");
+  });
+
+  it("a server that no longer pairs this version says which, and how to update", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "CLI too old", code: "cli_outdated", minimum: "99.0.0" }, 426)));
+
+    await expect(runConnect({ baseUrl: "https://centrail.org", noBrowser: true })).rejects.toThrow(
+      `centrail ${CLI_VERSION} is older than centrail.org pairs with (99.0.0 or newer): `,
+    );
+    expect(await readAuth()).toBeNull();
   });
 
   it("keeps the watermarks when the same account re-pairs", async () => {

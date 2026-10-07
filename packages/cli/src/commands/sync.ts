@@ -11,6 +11,7 @@ import {
   disconnectedMessage,
   ensureInstallId,
   parkAuth,
+  parkOutdated,
   readAuth,
   readConfig,
   readDisconnected,
@@ -24,7 +25,7 @@ import {
 } from "../config.js";
 import { checkDevice, refusalReason } from "../device.js";
 import { progress, progressDone, progressStatus } from "../progress.js";
-import { sinceForSurface, type SyncState } from "../watermarks.js";
+import { sinceForSurface, stampWatermark, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 import { readRepoCommits, readRepoSize } from "../git.js";
@@ -34,6 +35,7 @@ import { compactSidecar, readSidecar } from "../sidecar.js";
 import { formatShipStatusLine, runFatePass } from "../ship-status.js";
 import { eventInScope, surfaceEnabled } from "../scope.js";
 import { consentedCapabilities, readCapabilities, toWireEvent, wireBranch, wireRepoRef, type Capabilities } from "../wire.js";
+import { CliOutdatedError, here, isOlder, minimumFrom, sameInstall, settleVersions, updateNoticeLine } from "../update.js";
 import { isInteractiveTerminal, runSetup, SCOPE_UNANSWERED } from "./scope.js";
 
 // 250 (not the server's 500 cap) — headroom so a batch of metadata-heavy
@@ -55,6 +57,12 @@ type IngestResponse = {
   inserted: number;
   skipped: number;
   inboxCount: number;
+  // One provider event, one account (decision A, 2026-10-07): events this
+  // machine already synced to another account stay there. The server skips
+  // them and counts them here, never naming the account, and within
+  // `skipped` (events − inserted), so the summary reports them once, apart.
+  // Older servers omit it.
+  heldElsewhere?: number;
 };
 
 export async function runSync(opts: { full: boolean }): Promise<void> {
@@ -104,6 +112,12 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   // unanswered, so events, attributions and fate rows all keep 0.5.1's shape.
   const caps = consentedCapabilities(served, config);
   const capsNow = [...served.fields].sort();
+  // The server's word on this CLI's version: a notice while a newer release
+  // is out (printed below, in a terminal; kept in state for `centrail
+  // status`), and below the minimum a park instead of a scan whose every
+  // write would be refused.
+  const at = here();
+  const versionsChanged = settleVersions(state, served.cli, at);
   // A server that starts listing a field events carry gets the history
   // re-sent once with it — the widened-scope rule: what it can now store
   // was held back from events already behind the watermark. Marked before
@@ -115,10 +129,12 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     config.pendingBackfill = true;
     await writeConfig(config);
   }
-  if (!known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
+  if (versionsChanged || !known || JSON.stringify(capsNow) !== JSON.stringify(known)) {
     state.capabilities = capsNow;
     await writeState(state);
   }
+  if (served.cli?.minimum && isOlder(at.version, served.cli.minimum)) throw new CliOutdatedError(await parkOutdated(served.cli.minimum));
+  const notice = state.updateNotice?.version === at.version ? state.updateNotice : undefined;
   await compactSidecar(); // under the sync lock; hook appends are line-atomic
   await learnConfigDirs();
   const resolver = await IdentityResolver.create(installId);
@@ -129,6 +145,11 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   let grandInserted = 0;
   let grandSkipped = 0;
   let grandInbox = 0;
+  let grandHeldElsewhere = 0;
+  // Held events read on a full pass: the history a moved machine left with
+  // its first account. An incremental pass re-reads a day of overlap, which
+  // after a move is that account's too; repeating it every sync is noise.
+  let heldOnFullRead = 0;
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -148,12 +169,18 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
-    progressStatus(`${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}…`);
+    const reading = `${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}`;
+    progressStatus(`${reading}…`);
     // Whole files: the events of a file read that fall before `since` come
     // back marked `context`, so a session resumed after the window still
     // places its turns with its earlier ones (sticky), as `--full` does.
     // They are placed, never sent.
-    const scanned = await scanner.scan({ since, wholeFiles: true });
+    const scanned = await scanner.scan({
+      since,
+      wholeFiles: true,
+      onFile: (done, total) =>
+        progressStatus(`${reading} — ${done.toLocaleString("en-US")}/${total.toLocaleString("en-US")} files`),
+    });
     const candidates = scanned.filter(
       (e) =>
         !e.metadata.context &&
@@ -165,6 +192,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     // while the folder may still exist; the sidecar covers the sessions
     // whose folder is already gone. Then the scope decides what leaves: an
     // excluded repo's events stop here.
+    progressStatus(`${scanner.surface}: finding the repo of ${scanned.length.toLocaleString("en-US")} events…`);
     await placer.place(scanned);
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
@@ -180,6 +208,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
     let surfaceInserted = 0;
     let surfaceSkipped = 0;
+    let surfaceHeld = 0;
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
       progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
@@ -198,6 +227,8 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         body: JSON.stringify(body),
       });
       if (res.status === 401) await disconnect(await refusalReason(res));
+      // Refused before the token is looked at: an outdated install stays paired.
+      if (res.status === 426) throw new CliOutdatedError(await parkOutdated((await minimumFrom(res)) ?? served.cli?.minimum));
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(
@@ -205,13 +236,24 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         );
       }
       const result = (await res.json()) as IngestResponse;
+      // Accepted: a park this install left (a 426 seen when the server could
+      // not be asked for its minimum) no longer holds; written with the stamp.
+      if (state.outdated && sameInstall(state.outdated, at)) delete state.outdated;
       grandInserted += result.inserted;
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
+      const held = typeof result.heldElsewhere === "number" && result.heldElsewhere > 0 ? Math.min(result.heldElsewhere, result.skipped) : 0;
+      grandHeldElsewhere += held;
       surfaceInserted += result.inserted;
-      surfaceSkipped += result.skipped;
+      surfaceSkipped += result.skipped - held;
+      surfaceHeld += held;
     }
-    progress(`${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced`);
+    progress(
+      `${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced` +
+        (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : ""),
+    );
+
+    if (!since) heldOnFullRead += surfaceHeld;
 
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
@@ -234,6 +276,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
           : "No agent usage found (Claude Code, Copilot CLI, Codex).",
       );
     }
+    if (notice) progress(updateNoticeLine(notice));
     return;
   }
 
@@ -244,10 +287,19 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
   progressDone();
   console.log(
-    `Inserted ${grandInserted} · Skipped ${grandSkipped}` +
-      (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
+    `Inserted ${grandInserted} · Skipped ${grandSkipped - grandHeldElsewhere}` +
+      // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
+      (grandInbox > 0 ? ` · ${grandInbox} not in a project` : "") +
       (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
+  if (heldOnFullRead > 0) console.log(heldElsewhereLine(heldOnFullRead));
+  if (notice) progress(updateNoticeLine(notice));
+}
+
+export function heldElsewhereLine(n: number): string {
+  return n === 1
+    ? "1 event was already synced from this machine to another account; it stays there."
+    : `${n.toLocaleString("en-US")} events were already synced from this machine to another account; they stay there.`;
 }
 
 // The server refused this machine's token: park it, so the Stop hook stops
@@ -286,8 +338,7 @@ async function stampSurface(
   revision: number,
   scanStartedAt: Date,
 ): Promise<void> {
-  state.surfaces[surface] = scanStartedAt.toISOString();
-  state.scannerRevisions[surface] = revision;
+  stampWatermark(state, surface, revision, scanStartedAt);
   await writeState(state);
 }
 
@@ -430,6 +481,7 @@ async function pushAttributions(
           },
           body: JSON.stringify({ repos, attributions: chunk }),
         });
+        if (res.status === 426) throw new CliOutdatedError(await parkOutdated(await minimumFrom(res)));
         if (res.ok) {
           const r = (await res.json()) as { linked: number };
           totalLinked += r.linked;
@@ -442,6 +494,7 @@ async function pushAttributions(
         console.log(`  ↳ Attributed ${totalLinked} event(s) to commits.`);
       }
     } catch (err) {
+      if (err instanceof CliOutdatedError) throw err; // best-effort, but not past a refused version
       console.warn("  ⚠ Attribution request failed:", (err as Error).message);
     }
   }
@@ -459,7 +512,6 @@ async function pushAttributions(
     if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
     else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
   }
-  progressStatus("Checking ship status…");
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined, caps, config);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);

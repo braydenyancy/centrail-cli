@@ -19,7 +19,9 @@ import {
   type PrefixCommit,
   type RecentCommit,
 } from "./git.js";
-import type { Config } from "./config.js";
+import { parkOutdated, type Config } from "./config.js";
+import { progressStatus } from "./progress.js";
+import { CliOutdatedError, minimumFrom } from "./update.js";
 import { versionHeaders } from "./version.js";
 import { toWireFate, type Capabilities, type WireFate } from "./wire.js";
 
@@ -185,7 +187,8 @@ function matchSquash(
 // Fate pass over the repos the attribution push already resolved. Returns the
 // aggregate tally, or null when NO repo had a fate pass (all defaults
 // unresolvable / no repos) — callers omit the output line then. Best-effort
-// like attribution: failures warn, never throw.
+// like attribution: failures warn, and only a refused CLI version (426)
+// throws.
 //
 // `machineId` (the random install id) is given only for a server that lists
 // "repo", and the `facts` block rides with it (§ 3.10). Each row is shaped by
@@ -205,7 +208,8 @@ export async function runFatePass(
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
 
-  for (const { root: one, roots: many, name, key } of repos) {
+  for (const [i, { root: one, roots: many, name, key }] of repos.entries()) {
+    progressStatus(`Checking ship status — ${i + 1}/${repos.length} repos`); // git per repo: seconds each on a big one
     const roots = many ?? (one ? [one] : []);
     const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"));
     if (!facts) continue; // no resolvable default branch — skip, never guess
@@ -281,7 +285,8 @@ export async function gatherShipStatusFactsForRoots(roots: string[], withPatchId
 // POST one repo's fates to /api/cli/attribute (the cap equals the chunk, so
 // one call; chunked defensively). Old
 // servers may ignore or reject the section — either way this must not fail
-// the sync, and we never read any fates-specific response field.
+// the sync, and we never read any fates-specific response field. A 426 is
+// the one refusal that does: it is about this version, not the section.
 async function pushFates(
   auth: { baseUrl: string; token: string },
   fates: WireFate[],
@@ -301,6 +306,7 @@ async function pushFates(
         },
         body: JSON.stringify({ repos, attributions: [], fates: chunk, ...(facts ? { facts } : {}) }),
       });
+      if (res.status === 426) throw new CliOutdatedError(await parkOutdated(await minimumFrom(res)));
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         console.warn(
@@ -311,6 +317,7 @@ async function pushFates(
       // depend on the server recognizing `fates` yet.
     }
   } catch (err) {
+    if (err instanceof CliOutdatedError) throw err; // best-effort, but not past a refused version
     console.warn("  ⚠ Ship-status request failed:", (err as Error).message);
   }
 }

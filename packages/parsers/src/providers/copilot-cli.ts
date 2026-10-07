@@ -26,9 +26,9 @@ const DEFAULT_BASE_PATH = join(homedir(), ".copilot", "session-state");
 export async function scanCopilotLogs(opts: {
   basePath?: string;
   since?: Date;
+  onFile?: (done: number, total: number) => void;
 }): Promise<ParsedUsageEvent[]> {
   const basePath = opts.basePath ?? DEFAULT_BASE_PATH;
-  const since = opts.since;
 
   let entries: string[];
   try {
@@ -39,58 +39,68 @@ export async function scanCopilotLogs(opts: {
   }
 
   const events: ParsedUsageEvent[] = [];
-
-  for (const entry of entries) {
-    const dir = join(basePath, entry);
-    let dirStat;
-    try {
-      dirStat = await stat(dir);
-    } catch {
-      continue;
-    }
-    if (!dirStat.isDirectory()) continue;
-
-    const ws = await readWorkspace(join(dir, "workspace.yaml"));
-    if (!ws) continue;
-
-    const sessionStart = new Date(ws.created_at ?? "");
-    const segments = await readShutdownSegments(join(dir, "events.jsonl"));
-
-    const sessionId = ws.id ?? entry;
-    for (const segment of segments) {
-      // Each segment is timestamped by its shutdown; fall back to the session
-      // start if the line lacks a usable timestamp.
-      const segDate = new Date(segment.timestamp ?? "");
-      const occurredAt = Number.isNaN(segDate.getTime()) ? sessionStart : segDate;
-      if (Number.isNaN(occurredAt.getTime())) continue;
-      if (since && occurredAt <= since) continue;
-
-      for (const [model, m] of Object.entries(segment.modelMetrics)) {
-        const usage = isObject(m) && isObject(m.usage) ? m.usage : null;
-        if (!usage) continue;
-        events.push({
-          externalId: `${sessionId}:${model}:${occurredAt.toISOString()}`,
-          provider: "openai", // advisory only; server re-derives from model
-          model,
-          inputTokens: numOr0(usage.inputTokens),
-          outputTokens: numOr0(usage.outputTokens),
-          cacheReadTokens: numOr0(usage.cacheReadTokens),
-          cacheCreationTokens: numOr0(usage.cacheWriteTokens),
-          cacheWriteTokens: numOr0(usage.cacheWriteTokens),
-          cacheCreation5mTokens: 0,
-          cacheCreation1hTokens: 0,
-          occurredAt,
-          metadata: {
-            cwd: ws.cwd,
-            gitBranch: ws.branch,
-            sessionId,
-          },
-        });
-      }
-    }
+  for (let i = 0; i < entries.length; i++) {
+    await readSession(basePath, entries[i], opts.since, events);
+    opts.onFile?.(i + 1, entries.length);
   }
 
   return suffixDuplicateExternalIds(events);
+}
+
+// Appends one session dir's events (entry: its name under the base path).
+async function readSession(
+  basePath: string,
+  entry: string,
+  since: Date | undefined,
+  events: ParsedUsageEvent[],
+): Promise<void> {
+  const dir = join(basePath, entry);
+  let dirStat;
+  try {
+    dirStat = await stat(dir);
+  } catch {
+    return;
+  }
+  if (!dirStat.isDirectory()) return;
+
+  const ws = await readWorkspace(join(dir, "workspace.yaml"));
+  if (!ws) return;
+
+  const sessionStart = new Date(ws.created_at ?? "");
+  const segments = await readShutdownSegments(join(dir, "events.jsonl"));
+
+  const sessionId = ws.id ?? entry;
+  for (const segment of segments) {
+    // Each segment is timestamped by its shutdown; fall back to the session
+    // start if the line lacks a usable timestamp.
+    const segDate = new Date(segment.timestamp ?? "");
+    const occurredAt = Number.isNaN(segDate.getTime()) ? sessionStart : segDate;
+    if (Number.isNaN(occurredAt.getTime())) continue;
+    if (since && occurredAt <= since) continue;
+
+    for (const [model, m] of Object.entries(segment.modelMetrics)) {
+      const usage = isObject(m) && isObject(m.usage) ? m.usage : null;
+      if (!usage) continue;
+      events.push({
+        externalId: `${sessionId}:${model}:${occurredAt.toISOString()}`,
+        provider: "openai", // advisory only; server re-derives from model
+        model,
+        inputTokens: numOr0(usage.inputTokens),
+        outputTokens: numOr0(usage.outputTokens),
+        cacheReadTokens: numOr0(usage.cacheReadTokens),
+        cacheCreationTokens: numOr0(usage.cacheWriteTokens),
+        cacheWriteTokens: numOr0(usage.cacheWriteTokens),
+        cacheCreation5mTokens: 0,
+        cacheCreation1hTokens: 0,
+        occurredAt,
+        metadata: {
+          cwd: ws.cwd,
+          gitBranch: ws.branch,
+          sessionId,
+        },
+      });
+    }
+  }
 }
 
 type Workspace ={ id?: string; cwd?: string; branch?: string; created_at?: string };

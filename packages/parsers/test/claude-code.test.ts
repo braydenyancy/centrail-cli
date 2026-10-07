@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -206,6 +206,26 @@ describe("scanClaudeCodeLogs", () => {
     const events = await scanClaudeCodeLogs({ basePath: base });
 
     expect(events.map((e) => e.externalId).sort()).toEqual(["req_001", "req_subagent"]);
+  });
+
+  it("counts off the files it reads: onFile(done, total) after each transcript, subagents included, files `since` skips not counted", async () => {
+    const base = await makeBase();
+    await writeSession(base, "p1", "a.jsonl", [ASSISTANT_LINE]);
+    await writeSession(base, "p2", "b.jsonl", [ASSISTANT_LINE]);
+    await writeSession(base, join("p2", "b", "subagents"), "agent-a1.jsonl", [ASSISTANT_LINE]);
+    await writeSession(base, "p3", "old.jsonl", [ASSISTANT_LINE]);
+    const old = new Date("2026-06-01T00:00:00.000Z");
+    await utimes(join(base, "p3", "old.jsonl"), old, old);
+
+    const calls: [number, number][] = [];
+    const onFile = (done: number, total: number) => void calls.push([done, total]);
+    const events = await scanClaudeCodeLogs({ basePath: base, onFile });
+    expect(calls).toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
+    expect(events).toEqual(await scanClaudeCodeLogs({ basePath: base })); // reporting changes nothing read
+
+    calls.length = 0;
+    await scanClaudeCodeLogs({ basePath: base, since: new Date("2026-06-02T00:00:00.000Z"), onFile });
+    expect(calls).toEqual([[1, 3], [2, 3], [3, 3]]);
   });
 
   it("counts workflow subagents nested below the known subagents root", async () => {

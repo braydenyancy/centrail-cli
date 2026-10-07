@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { here, type Outdated } from "./update.js";
 import { parseSyncState, type SyncState } from "./watermarks.js";
 
 export type { SyncState } from "./watermarks.js";
@@ -119,6 +120,17 @@ export async function writeState(state: SyncState): Promise<void> {
   await writeJsonAtomic(STATE_PATH, state);
 }
 
+// The server refuses this CLI version (HTTP 426, or a capabilities minimum
+// above it; CONTRACT.md § Versioning). Unlike a 401 the token is kept: an
+// outdated install is not disconnected. The park names the version, so this
+// version's Stop hook starts no more syncs and an updated one starts again.
+export async function parkOutdated(minimum: string | undefined): Promise<Outdated> {
+  const state = await readState();
+  state.outdated = { ...here(), ...(minimum ? { minimum } : {}) };
+  await writeState(state);
+  return state.outdated;
+}
+
 const LOCK_PATH = join(CONFIG_DIR, "sync.lock");
 // Compatibility window for ownerless lock directories written by 0.5.0-era
 // clients. New locks carry a PID and are never reclaimed while it is alive.
@@ -225,6 +237,7 @@ export type Config = {
   pendingBackfill: boolean; // scope widened: next sync rescans everything once
   hideRepoNames: boolean; // ship repo identity as a keyed hash, no label
   hideBranchNames: boolean; // never ship gitBranch
+  pluginAnswer: "yes" | "no" | null; // connect's Claude Code plugin question; asked once (plugin-setup.ts)
 };
 
 const DEFAULT_CONFIG: Config = {
@@ -237,6 +250,7 @@ const DEFAULT_CONFIG: Config = {
   pendingBackfill: false,
   hideRepoNames: false,
   hideBranchNames: false,
+  pluginAnswer: null,
 };
 
 export function parseConfig(raw: unknown): Config {
@@ -258,6 +272,7 @@ export function parseConfig(raw: unknown): Config {
     pendingBackfill: o.pendingBackfill === true,
     hideRepoNames: o.hideRepoNames === true,
     hideBranchNames: o.hideBranchNames === true,
+    pluginAnswer: o.pluginAnswer === "yes" || o.pluginAnswer === "no" ? o.pluginAnswer : null,
   };
 }
 

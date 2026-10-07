@@ -67,8 +67,14 @@ export type Scanner = {
   // `wholeFiles` returns every event of a file read, those outside `since`
   // marked `metadata.context`: the caller places them with their session,
   // as a full scan would, and sends only the rest. A scanner without turns
-  // (Copilot) may ignore it.
-  scan: (opts: { since?: Date; wholeFiles?: boolean }) => Promise<ParsedUsageEvent[]>;
+  // (Copilot) may ignore it. `onFile` is called after each file (a Copilot
+  // session) is read, with the count read and the count `since` left to
+  // read, so a caller can show a full scan moving.
+  scan: (opts: {
+    since?: Date;
+    wholeFiles?: boolean;
+    onFile?: (done: number, total: number) => void;
+  }) => Promise<ParsedUsageEvent[]>;
 };
 
 // 0.6.0 bumps every surface once (claude-code 2→3, copilot-cli and codex

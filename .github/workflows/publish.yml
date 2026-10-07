@@ -6,9 +6,11 @@ jobs:
   npm-publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # the release branch below; nothing else is written
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the push below must see release's tip to fast-forward it
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -26,3 +28,10 @@ jobs:
       - run: npm publish --workspaces --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # The Claude Code plugin's marketplace is pinned to `release` (README §
+      # The Claude Code plugin): tags never move, so this branch does, and
+      # only once npm holds the same version. Claude Code's auto-update sees
+      # the bumped plugin.json version. Fast-forward only, created on first
+      # use: a tag cut behind it fails here instead of rewinding everyone.
+      - name: Fast-forward the release branch to this tag
+        run: git push origin "$GITHUB_SHA:refs/heads/release"
