@@ -48,6 +48,7 @@ export class StandIn {
   ingestCalls = 0;
   failNextIngests = 0;
   failCapabilities = false;
+  deviceRefusal: "device_revoked" | "unknown_token" | null = null;
   fields: string[] = ["repo"];
   server!: Server;
   url = "";
@@ -78,6 +79,17 @@ export class StandIn {
             return;
           }
           res.end(JSON.stringify({ wireVersions: ["1"], surfaces: ["claude-code", "codex", "copilot-cli"], fields: this.fields }));
+          return;
+        }
+        if (req.url === "/api/cli/device") {
+          // The token's own health (CONTRACT.md). A test sets `deviceRefusal`
+          // to answer as a revoked device or a deleted account.
+          if (this.deviceRefusal) {
+            res.statusCode = 401;
+            res.end(JSON.stringify({ error: "Invalid or revoked token", code: this.deviceRefusal }));
+            return;
+          }
+          res.end(JSON.stringify({ account: { email: "stand-in@example.test" }, device: { name: "Centrail CLI", pairedAt: "2026-10-01T00:00:00.000Z" } }));
           return;
         }
         if (req.url === "/api/cli/pair") {

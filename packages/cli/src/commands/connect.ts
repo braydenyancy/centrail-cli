@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { claudeProjectDirs } from "@centrail/parsers";
-import { writeAuth } from "../config.js";
+import { readAuth, readConfig, readState, writeAuth, writeState } from "../config.js";
+import { openBrowser, shouldOpenBrowser } from "../browser.js";
 import { runSetup } from "./scope.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
@@ -16,11 +17,29 @@ type PairResponse = {
   expiresIn: number;
 };
 
-type PollResponse = { status: string; token?: string };
+type PollResponse = { status: string; token?: string; account?: { email?: unknown } };
 
-export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
+export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }): Promise<void> {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
+
+  // One machine holds one pairing (auth.json). Approving in the browser is
+  // the confirmation: the approve page says when this machine is paired to
+  // another account and what moving it means.
+  const previous = await readAuth();
+  if (previous) {
+    console.log("");
+    console.log(`  This machine is paired${previous.account ? ` with ${previous.account.email}` : ""}. Approving below re-pairs it;`);
+    console.log("  approve as another account and it moves there (the old account keeps what it synced).");
+  }
+
+  // The install id lets the server replace this machine's own device in
+  // place, or move it between accounts, instead of pairing a stranger. It is
+  // a consented field (decision § 3.7): sent only once this install has
+  // answered the scope question. A first pairing has no device to replace,
+  // and the server learns the id from the first consented sync.
+  const config = await readConfig();
+  const installId = config.scopeDecidedAt && config.installId ? config.installId : undefined;
 
   const res = await fetch(`${baseUrl}/api/cli/pair`, {
     method: "POST",
@@ -28,7 +47,7 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
     // The current server calls this field hostname, but it is only a display
     // label. Never send the operating-system hostname or other fingerprinting
     // data during pairing.
-    body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME }),
+    body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME, ...(installId ? { installId } : {}) }),
   });
   if (!res.ok) {
     throw new Error(
@@ -41,6 +60,9 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
   console.log(`  Visit:  ${pair.verificationUrl}`);
   console.log(`  Code:   ${pair.code}`);
   console.log("");
+  if (!opts.noBrowser && shouldOpenBrowser() && openBrowser(pair.verificationUrl, baseUrl)) {
+    console.log("  Opened in your browser. Check the code matches, then approve.");
+  }
   console.log("  Waiting for authorization...");
 
   const deadline = Date.now() + pair.expiresIn * 1000;
@@ -61,12 +83,15 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
 
     const body = (await poll.json()) as PollResponse;
     if (body.status === "approved" && body.token) {
+      const email = typeof body.account?.email === "string" && body.account.email ? body.account.email : undefined;
       await writeAuth({
         baseUrl,
         token: body.token,
         deviceName: PRIVATE_DEVICE_NAME,
+        ...(email ? { account: { email } } : {}),
       });
-      console.log(`  ✓ Paired (${PRIVATE_DEVICE_NAME})`);
+      if (!email || previous?.account?.email !== email) await forgetWatermarks();
+      console.log(email ? `  ✓ Paired with ${email}` : `  ✓ Paired (${PRIVATE_DEVICE_NAME})`);
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
@@ -82,6 +107,19 @@ export async function runConnect(opts: { baseUrl?: string }): Promise<void> {
     }
   }
   throw new Error("Pairing timed out — run `centrail connect` again");
+}
+
+// Watermarks belong to the machine, not the account (state.json), so an
+// account that pairs where another synced would get a day of history, not
+// this machine's whole history. Forgotten whenever the account may have
+// changed: re-sending to the same account costs a rescan, never a duplicate
+// (the server dedupes per account).
+async function forgetWatermarks(): Promise<void> {
+  const state = await readState();
+  if (Object.keys(state.surfaces).length === 0 && !state.lastSyncAt) return;
+  state.surfaces = {};
+  state.lastSyncAt = null;
+  await writeState(state);
 }
 
 async function reportDetectedLogs(): Promise<void> {

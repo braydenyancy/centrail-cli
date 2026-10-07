@@ -8,15 +8,22 @@ import {
 } from "@centrail/parsers";
 import {
   acquireSyncLock,
+  disconnectedMessage,
   ensureInstallId,
+  parkAuth,
   readAuth,
   readConfig,
+  readDisconnected,
   readState,
   writeConfig,
   writeLastSync,
   writeState,
+  type AuthConfig,
   type Config,
+  type DisconnectReason,
 } from "../config.js";
+import { checkDevice, refusalReason } from "../device.js";
+import { progress, progressDone, progressStatus } from "../progress.js";
 import { sinceForSurface, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
@@ -66,9 +73,13 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
 async function syncLocked(opts: { full: boolean }): Promise<void> {
   const auth = await readAuth();
   if (!auth) {
-    throw new Error("Not connected — run `centrail connect` first");
+    const parked = await readDisconnected();
+    throw new Error(parked ? disconnectedMessage(parked) : "Not connected — run `centrail connect` first");
   }
   assertSecureBaseUrl(auth.baseUrl);
+  const device = await checkDevice(auth);
+  if (device.kind === "refused") await disconnect(device.reason);
+  progress(`Syncing to ${new URL(auth.baseUrl).host}${accountLabel(auth, device.kind === "active" ? device.account : undefined)}`);
 
   // Fresh installs answer the scope question in `connect`. An install that
   // synced under 0.5.x never saw it (§ 3.7: nothing beyond the 0.5.1 wire
@@ -137,6 +148,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     if (mark) anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : undefined;
     const scanStartedAt = new Date();
+    progressStatus(`${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}…`);
     // Whole files: the events of a file read that fall before `since` come
     // back marked `context`, so a session resumed after the window still
     // places its turns with its earlier ones (sticky), as `--full` does.
@@ -157,6 +169,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
     if (events.length === 0) {
+      progress(`${scanner.surface}: nothing new${candidates.length > 0 ? ` (${candidates.length.toLocaleString("en-US")} held back by scope)` : ""}`);
       await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
@@ -165,8 +178,11 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       for (const e of events) attributionEvents.push(e);
     }
 
+    let surfaceInserted = 0;
+    let surfaceSkipped = 0;
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
+      progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
       const body = {
         source: { surface: scanner.surface, kind: "local_logs" },
         events: batch.map((e) => toWireEvent(e, caps, config, installId)),
@@ -181,9 +197,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         },
         body: JSON.stringify(body),
       });
-      if (res.status === 401) {
-        throw new Error("Token revoked or expired — run `centrail connect`");
-      }
+      if (res.status === 401) await disconnect(await refusalReason(res));
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(
@@ -194,7 +208,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       grandInserted += result.inserted;
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
+      surfaceInserted += result.inserted;
+      surfaceSkipped += result.skipped;
     }
+    progress(`${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced`);
 
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
@@ -207,6 +224,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
 
   if (!anyEvents) {
+    progressDone();
     if (heldByScope > 0) {
       console.log(`Nothing in scope to sync — ${heldByScope} event(s) held back by your scope (see \`centrail repos\`).`);
     } else {
@@ -220,14 +238,29 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
 
   if (attributionEvents.length > 0) {
+    progressStatus("Matching events to commits…");
     await pushAttributions(auth, attributionEvents, resolver, config, caps, installId);
   }
 
+  progressDone();
   console.log(
     `Inserted ${grandInserted} · Skipped ${grandSkipped}` +
       (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
       (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
+}
+
+// The server refused this machine's token: park it, so the Stop hook stops
+// starting syncs that can only fail, and say why in one line.
+async function disconnect(reason: DisconnectReason): Promise<never> {
+  progressDone();
+  await parkAuth(reason);
+  throw new Error(disconnectedMessage({ at: new Date().toISOString(), reason }));
+}
+
+function accountLabel(auth: AuthConfig, fresh?: { email: string }): string {
+  const email = fresh?.email ?? auth.account?.email;
+  return email ? ` as ${email}` : "";
 }
 
 // A hook run with a scrubbed environment (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)
@@ -426,6 +459,7 @@ async function pushAttributions(
     if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
     else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
   }
+  progressStatus("Checking ship status…");
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined, caps, config);
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);

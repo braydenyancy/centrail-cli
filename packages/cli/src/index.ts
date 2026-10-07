@@ -3,23 +3,30 @@ import { runConnect } from "./commands/connect.js";
 import { runStopHook } from "./commands/hook.js";
 import { runInstallHooks } from "./commands/hooks-install.js";
 import { runImport } from "./commands/import.js";
+import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
+import { setProgressMode } from "./progress.js";
 import { runExclude, runInclude, runInspect, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
 
 const [, , command, ...rest] = process.argv;
 
-const flags = { url: undefined as string | undefined, full: false, last: false };
+const flags = { url: undefined as string | undefined, full: false, last: false, noBrowser: false };
 for (let i = 0; i < rest.length; i++) {
   if (rest[i] === "--url") flags.url = rest[++i];
   else if (rest[i] === "--full") flags.full = true;
   else if (rest[i] === "--last") flags.last = true;
+  else if (rest[i] === "--no-browser") flags.noBrowser = true;
+  else if (rest[i] === "--quiet") setProgressMode("quiet");
+  else if (rest[i] === "--verbose") setProgressMode("verbose");
 }
 
 const USAGE = `centrail — sync local AI agent usage to centrail.org
 
 Usage:
-  centrail connect [--url <base>]   Pair this machine with your account
+  centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser)
+  centrail status                   Which account this machine syncs to, and whether its pairing still works
   centrail sync [--full]            Push new usage events (--full rescans everything)
+                                    Progress shows in a terminal; --quiet hides it, --verbose forces it
   centrail install-hooks            Auto-sync: add the Stop hook to Claude Code (and Codex, if present)
   centrail uninstall-hooks          Remove that hook
   centrail inspect --last           Print the last payload exactly as it left this machine
@@ -40,7 +47,9 @@ async function readStdin(): Promise<string> {
 
 try {
   if (command === "connect") {
-    await runConnect({ baseUrl: flags.url });
+    await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
+  } else if (command === "status") {
+    await runStatus();
   } else if (command === "sync") {
     await runSync({ full: flags.full });
   } else if (command === "install-hooks") {

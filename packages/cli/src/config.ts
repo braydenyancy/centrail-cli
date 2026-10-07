@@ -11,12 +11,14 @@ export type { SyncState } from "./watermarks.js";
 export const CONFIG_DIR =
   process.env.CENTRAIL_CONFIG_DIR?.trim() || join(homedir(), ".config", "centrail");
 const AUTH_PATH = join(CONFIG_DIR, "auth.json");
+const DISCONNECTED_PATH = join(CONFIG_DIR, "auth.disconnected.json");
 const STATE_PATH = join(CONFIG_DIR, "state.json");
 
 export type AuthConfig = {
   baseUrl: string;
   token: string;
   deviceName: string;
+  account?: { email: string }; // who approved the pairing, when the server says (display only)
 };
 
 export async function readAuth(): Promise<AuthConfig | null> {
@@ -32,10 +34,12 @@ export async function readAuth(): Promise<AuthConfig | null> {
     ) {
       return null;
     }
+    const account = raw.account as { email?: unknown } | undefined;
     return {
       baseUrl: raw.baseUrl,
       token: raw.token,
       deviceName: raw.deviceName,
+      ...(typeof account?.email === "string" && account.email ? { account: { email: account.email } } : {}),
     };
   } catch {
     return null;
@@ -55,6 +59,52 @@ async function writeJsonAtomic(path: string, value: unknown, mode?: number): Pro
 export async function writeAuth(auth: AuthConfig): Promise<void> {
   await writeJsonAtomic(AUTH_PATH, auth, 0o600);
   await chmod(AUTH_PATH, 0o600); // contains the bearer token
+  await rm(DISCONNECTED_PATH, { force: true });
+}
+
+// Why the server refused this machine's token: its pairing was replaced from
+// another machine or revoked in Settings ("device_revoked"), or no longer
+// exists at all, as after an account deletion ("unknown_token"). A server
+// older than the codes says neither.
+export type DisconnectReason = "device_revoked" | "unknown_token" | "unauthorized";
+
+export type Disconnected = { at: string; reason: DisconnectReason; baseUrl: string };
+
+// A 401 parks the token instead of keeping it. With no auth.json the Stop
+// hook stops starting syncs that can only fail (every 10 minutes, silently,
+// forever) and compacts the sidecar instead, and the next command a person
+// runs says why. `connect` clears it. The token is kept beside the reason,
+// so a 401 the server sent in error is undone by renaming the file back.
+export async function parkAuth(reason: DisconnectReason): Promise<void> {
+  const auth = await readAuth();
+  if (!auth) return;
+  await writeJsonAtomic(DISCONNECTED_PATH, { ...auth, disconnectedAt: new Date().toISOString(), reason }, 0o600);
+  await rm(AUTH_PATH, { force: true });
+}
+
+export async function readDisconnected(): Promise<Disconnected | null> {
+  try {
+    const raw = JSON.parse(await readFile(DISCONNECTED_PATH, "utf-8")) as Record<string, unknown>;
+    const reason = raw.reason === "device_revoked" || raw.reason === "unknown_token" ? raw.reason : "unauthorized";
+    return {
+      at: typeof raw.disconnectedAt === "string" ? raw.disconnectedAt : "",
+      reason,
+      baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function disconnectedMessage(d: Pick<Disconnected, "at" | "reason">): string {
+  const why =
+    d.reason === "device_revoked"
+      ? "its pairing was replaced from another machine or revoked in Settings → Devices"
+      : d.reason === "unknown_token"
+        ? "its pairing no longer exists, so the account may have been deleted"
+        : "the server refused its token: the pairing was revoked or the account deleted";
+  const noticed = d.at ? ` (noticed ${d.at.slice(0, 10)})` : "";
+  return `This machine is no longer connected to Centrail: ${why}${noticed}. Run \`npx centrail connect\` to pair it again.`;
 }
 
 export async function readState(): Promise<SyncState> {

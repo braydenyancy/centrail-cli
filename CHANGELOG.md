@@ -5,6 +5,34 @@ versioning.
 
 ## [Unreleased]
 
+### 0.6.1 — one machine, one account, and a CLI that says what it is doing
+- **`connect` opens your browser** at the approval page, as `wrangler login`
+  does, and still prints the URL. Not in an SSH session, CI, a Linux session
+  with no display, or when output is piped (an agent); `--no-browser` skips
+  it. It only ever opens a page on the server it pairs with.
+- **A machine whose pairing is gone says so, once, and stops trying.**
+  Replaced from another machine, revoked in Settings or its account deleted,
+  it used to fail silently in the Stop hook's background sync every 10
+  minutes, forever, and an interactive `sync` with nothing new printed "No new
+  events" as if it were fine. `sync` now asks the server first
+  (`GET /api/cli/device`); on any 401 it parks the token in
+  `auth.disconnected.json`, so the hook stops starting syncs, and every later
+  command prints why and `npx centrail connect`.
+- **`connect` knows which account it is on.** It says when the machine is
+  already paired and to whom; the server returns the approving account, and
+  an install that answered the scope question sends its install id, so
+  re-pairing replaces this machine's own device instead of taking another
+  slot, and pairing as another account moves the machine there. When the
+  account changes, the watermarks are forgotten: the new account gets this
+  machine's whole history instead of the last day of it.
+- **`centrail status`** prints the account this machine syncs to and when it
+  was paired, or why it is disconnected.
+- **Sync progress in a terminal**: the account, each source's scan, a batch
+  counter and per-source new/already-synced counts, on stderr. Only when
+  stderr is a terminal and not in CI: the hook's background sync and an
+  agent reading `sync`'s output see exactly the summary they saw before.
+  `--quiet` hides it, `--verbose` forces it.
+
 ### 0.6.0 — sessions outside a repo find their home (decision § 3.9), and an adversarial pass over 0.6
 - **Upgrading re-sends your history once, and heavy users will see their
   totals jump.** Every scanner revision is bumped, so each install re-sends

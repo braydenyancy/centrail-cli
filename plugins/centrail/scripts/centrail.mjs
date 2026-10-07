@@ -1096,6 +1096,7 @@ function isObject5(v) {
 // src/config.ts
 var CONFIG_DIR = process.env.CENTRAIL_CONFIG_DIR?.trim() || join5(homedir4(), ".config", "centrail");
 var AUTH_PATH = join5(CONFIG_DIR, "auth.json");
+var DISCONNECTED_PATH = join5(CONFIG_DIR, "auth.disconnected.json");
 var STATE_PATH = join5(CONFIG_DIR, "state.json");
 async function readAuth() {
   try {
@@ -1103,25 +1104,53 @@ async function readAuth() {
     if (typeof raw.baseUrl !== "string" || typeof raw.token !== "string" || typeof raw.deviceName !== "string") {
       return null;
     }
+    const account = raw.account;
     return {
       baseUrl: raw.baseUrl,
       token: raw.token,
-      deviceName: raw.deviceName
+      deviceName: raw.deviceName,
+      ...typeof account?.email === "string" && account.email ? { account: { email: account.email } } : {}
     };
   } catch {
     return null;
   }
 }
-async function writeJsonAtomic(path, value, mode) {
+async function writeJsonAtomic(path, value, mode2) {
   await mkdir(CONFIG_DIR, { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}
-`, mode === void 0 ? {} : { mode });
+`, mode2 === void 0 ? {} : { mode: mode2 });
   await rename(tmp, path);
 }
 async function writeAuth(auth) {
   await writeJsonAtomic(AUTH_PATH, auth, 384);
   await chmod(AUTH_PATH, 384);
+  await rm(DISCONNECTED_PATH, { force: true });
+}
+async function parkAuth(reason) {
+  const auth = await readAuth();
+  if (!auth)
+    return;
+  await writeJsonAtomic(DISCONNECTED_PATH, { ...auth, disconnectedAt: (/* @__PURE__ */ new Date()).toISOString(), reason }, 384);
+  await rm(AUTH_PATH, { force: true });
+}
+async function readDisconnected() {
+  try {
+    const raw = JSON.parse(await readFile4(DISCONNECTED_PATH, "utf-8"));
+    const reason = raw.reason === "device_revoked" || raw.reason === "unknown_token" ? raw.reason : "unauthorized";
+    return {
+      at: typeof raw.disconnectedAt === "string" ? raw.disconnectedAt : "",
+      reason,
+      baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl : ""
+    };
+  } catch {
+    return null;
+  }
+}
+function disconnectedMessage(d) {
+  const why = d.reason === "device_revoked" ? "its pairing was replaced from another machine or revoked in Settings \u2192 Devices" : d.reason === "unknown_token" ? "its pairing no longer exists, so the account may have been deleted" : "the server refused its token: the pairing was revoked or the account deleted";
+  const noticed = d.at ? ` (noticed ${d.at.slice(0, 10)})` : "";
+  return `This machine is no longer connected to Centrail: ${why}${noticed}. Run \`npx centrail connect\` to pair it again.`;
 }
 async function readState() {
   try {
@@ -1270,6 +1299,42 @@ async function readLastSync() {
   }
 }
 
+// src/browser.ts
+import { spawn } from "node:child_process";
+function shouldOpenBrowser(env = process.env, isTTY = process.stdout.isTTY === true, platform = process.platform) {
+  if (!isTTY || env.CI || env.SSH_CONNECTION || env.SSH_TTY)
+    return false;
+  if (platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.WSL_DISTRO_NAME)
+    return false;
+  return true;
+}
+function browserCommand(url, env = process.env, platform = process.platform) {
+  const chosen = env.BROWSER?.split(":")[0]?.trim();
+  if (chosen)
+    return [chosen, [url]];
+  if (platform === "darwin")
+    return ["open", [url]];
+  if (platform === "win32")
+    return ["rundll32", ["url.dll,FileProtocolHandler", url]];
+  if (env.WSL_DISTRO_NAME)
+    return ["wslview", [url]];
+  return ["xdg-open", [url]];
+}
+function openBrowser(url, baseUrl) {
+  try {
+    if (new URL(url).origin !== new URL(baseUrl).origin)
+      return false;
+    const [cmd, args] = browserCommand(url);
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/commands/scope.ts
 import { createInterface } from "node:readline/promises";
 
@@ -1277,7 +1342,7 @@ import { createInterface } from "node:readline/promises";
 import { stat as stat6 } from "node:fs/promises";
 
 // src/git.ts
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn as spawn2 } from "node:child_process";
 import { readFile as readFile5, stat as stat5 } from "node:fs/promises";
 import { basename as basename2, dirname, join as join6 } from "node:path";
 import { promisify } from "node:util";
@@ -1458,12 +1523,12 @@ function patchIds(repoRoot, commits) {
     return Promise.resolve({});
   return new Promise((resolve) => {
     const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] };
-    const diff = spawn(
+    const diff = spawn2(
       "git",
       ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
       opts
     );
-    const ids = spawn("git", ["-C", repoRoot, "patch-id", "--stable"], opts);
+    const ids = spawn2("git", ["-C", repoRoot, "patch-id", "--stable"], opts);
     let text = "";
     let ok = true;
     let open2 = 2;
@@ -2245,7 +2310,7 @@ async function runSurfaces(args) {
 }
 
 // src/version.ts
-var CLI_VERSION = "0.6.0";
+var CLI_VERSION = "0.6.1";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
@@ -2280,13 +2345,21 @@ var PRIVATE_DEVICE_NAME = "Centrail CLI";
 async function runConnect(opts) {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
+  const previous = await readAuth();
+  if (previous) {
+    console.log("");
+    console.log(`  This machine is paired${previous.account ? ` with ${previous.account.email}` : ""}. Approving below re-pairs it;`);
+    console.log("  approve as another account and it moves there (the old account keeps what it synced).");
+  }
+  const config = await readConfig();
+  const installId = config.scopeDecidedAt && config.installId ? config.installId : void 0;
   const res = await fetch(`${baseUrl}/api/cli/pair`, {
     method: "POST",
     headers: { "content-type": "application/json", ...versionHeaders() },
     // The current server calls this field hostname, but it is only a display
     // label. Never send the operating-system hostname or other fingerprinting
     // data during pairing.
-    body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME })
+    body: JSON.stringify({ hostname: PRIVATE_DEVICE_NAME, ...installId ? { installId } : {} })
   });
   if (!res.ok) {
     throw new Error(
@@ -2298,6 +2371,9 @@ async function runConnect(opts) {
   console.log(`  Visit:  ${pair.verificationUrl}`);
   console.log(`  Code:   ${pair.code}`);
   console.log("");
+  if (!opts.noBrowser && shouldOpenBrowser() && openBrowser(pair.verificationUrl, baseUrl)) {
+    console.log("  Opened in your browser. Check the code matches, then approve.");
+  }
   console.log("  Waiting for authorization...");
   const deadline = Date.now() + pair.expiresIn * 1e3;
   while (Date.now() < deadline) {
@@ -2316,12 +2392,16 @@ async function runConnect(opts) {
       continue;
     const body = await poll.json();
     if (body.status === "approved" && body.token) {
+      const email = typeof body.account?.email === "string" && body.account.email ? body.account.email : void 0;
       await writeAuth({
         baseUrl,
         token: body.token,
-        deviceName: PRIVATE_DEVICE_NAME
+        deviceName: PRIVATE_DEVICE_NAME,
+        ...email ? { account: { email } } : {}
       });
-      console.log(`  \u2713 Paired (${PRIVATE_DEVICE_NAME})`);
+      if (!email || previous?.account?.email !== email)
+        await forgetWatermarks();
+      console.log(email ? `  \u2713 Paired with ${email}` : `  \u2713 Paired (${PRIVATE_DEVICE_NAME})`);
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
@@ -2337,6 +2417,14 @@ async function runConnect(opts) {
     }
   }
   throw new Error("Pairing timed out \u2014 run `centrail connect` again");
+}
+async function forgetWatermarks() {
+  const state = await readState();
+  if (Object.keys(state.surfaces).length === 0 && !state.lastSyncAt)
+    return;
+  state.surfaces = {};
+  state.lastSyncAt = null;
+  await writeState(state);
 }
 async function reportDetectedLogs() {
   const dirs = claudeProjectDirs();
@@ -2376,7 +2464,7 @@ var FIELDS_SHOWN_ONCE = `
 `;
 
 // src/commands/hook.ts
-import { spawn as spawn2 } from "node:child_process";
+import { spawn as spawn3 } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import { mkdir as mkdir3, open, readdir as readdir5, rm as rm2, stat as stat7 } from "node:fs/promises";
 import { dirname as dirname4, join as join8 } from "node:path";
@@ -2621,7 +2709,7 @@ async function claimAutoSync(claimPath, now) {
   return false;
 }
 function spawnDetachedSync() {
-  const child = spawn2(process.execPath, [process.argv[1], "sync"], {
+  const child = spawn3(process.execPath, [process.argv[1], "sync"], {
     detached: true,
     stdio: "ignore",
     env: process.env
@@ -2811,6 +2899,96 @@ async function runImport(file, deps = {}) {
 }
 function isObject8(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// src/device.ts
+async function checkDevice(auth) {
+  try {
+    const res = await fetch(`${auth.baseUrl}/api/cli/device`, {
+      headers: { authorization: `Bearer ${auth.token}`, ...versionHeaders() },
+      signal: AbortSignal.timeout(5e3)
+    });
+    if (res.status === 401)
+      return { kind: "refused", reason: await refusalReason(res) };
+    if (!res.ok)
+      return { kind: "unknown" };
+    const body = await res.json();
+    const email = body.account?.email;
+    const pairedAt = body.device?.pairedAt;
+    return {
+      kind: "active",
+      ...typeof email === "string" && email ? { account: { email } } : {},
+      ...typeof pairedAt === "string" ? { pairedAt } : {}
+    };
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+async function refusalReason(res) {
+  const body = await res.json().catch(() => null);
+  return body?.code === "device_revoked" || body?.code === "unknown_token" ? body.code : "unauthorized";
+}
+
+// src/commands/status.ts
+async function runStatus() {
+  const auth = await readAuth();
+  if (!auth) {
+    const parked = await readDisconnected();
+    console.log(parked ? disconnectedMessage(parked) : "Not connected. Run `npx centrail connect` to pair this machine.");
+    process.exitCode = 1;
+    return;
+  }
+  const device = await checkDevice(auth);
+  if (device.kind === "refused") {
+    await parkAuth(device.reason);
+    console.log(disconnectedMessage({ at: (/* @__PURE__ */ new Date()).toISOString(), reason: device.reason }));
+    process.exitCode = 1;
+    return;
+  }
+  const host = new URL(auth.baseUrl).host;
+  const email = (device.kind === "active" ? device.account?.email : void 0) ?? auth.account?.email;
+  const paired = device.kind === "active" && device.pairedAt ? ` \xB7 paired ${device.pairedAt.slice(0, 10)}` : "";
+  const unconfirmed = device.kind === "unknown" ? " (the server could not confirm it just now)" : "";
+  console.log(`Connected to ${host}${email ? ` as ${email}` : ""}${paired}${unconfirmed}`);
+}
+
+// src/progress.ts
+var mode = "auto";
+var inline = false;
+function setProgressMode(next) {
+  mode = next;
+}
+function progressEnabled(env = process.env, isTTY = process.stderr.isTTY === true) {
+  if (mode === "quiet")
+    return false;
+  if (mode === "verbose")
+    return true;
+  return isTTY && !env.CI;
+}
+function progress(message) {
+  if (!progressEnabled())
+    return;
+  if (inline)
+    process.stderr.write("\r\x1B[K");
+  inline = false;
+  process.stderr.write(`  ${message}
+`);
+}
+function progressStatus(message) {
+  if (!progressEnabled())
+    return;
+  if (process.stderr.isTTY !== true) {
+    process.stderr.write(`  ${message}
+`);
+    return;
+  }
+  process.stderr.write(`\r\x1B[K  ${message}`);
+  inline = true;
+}
+function progressDone() {
+  if (inline && progressEnabled())
+    process.stderr.write("\r\x1B[K");
+  inline = false;
 }
 
 // src/placer.ts
@@ -3236,9 +3414,14 @@ async function runSync(opts) {
 async function syncLocked(opts) {
   const auth = await readAuth();
   if (!auth) {
-    throw new Error("Not connected \u2014 run `centrail connect` first");
+    const parked = await readDisconnected();
+    throw new Error(parked ? disconnectedMessage(parked) : "Not connected \u2014 run `centrail connect` first");
   }
   assertSecureBaseUrl(auth.baseUrl);
+  const device = await checkDevice(auth);
+  if (device.kind === "refused")
+    await disconnect(device.reason);
+  progress(`Syncing to ${new URL(auth.baseUrl).host}${accountLabel(auth, device.kind === "active" ? device.account : void 0)}`);
   let config = await readConfig();
   if (!config.scopeDecidedAt) {
     if (isInteractiveTerminal()) {
@@ -3285,6 +3468,7 @@ async function syncLocked(opts) {
       anyWatermark = true;
     const since = mark ? new Date(mark.getTime() - WATERMARK_OVERLAP_MS) : void 0;
     const scanStartedAt = /* @__PURE__ */ new Date();
+    progressStatus(`${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}\u2026`);
     const scanned = await scanner.scan({ since, wholeFiles: true });
     const candidates = scanned.filter(
       (e) => !e.metadata.context && e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
@@ -3293,6 +3477,7 @@ async function syncLocked(opts) {
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
     if (events.length === 0) {
+      progress(`${scanner.surface}: nothing new${candidates.length > 0 ? ` (${candidates.length.toLocaleString("en-US")} held back by scope)` : ""}`);
       await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
       continue;
     }
@@ -3301,8 +3486,11 @@ async function syncLocked(opts) {
       for (const e of events)
         attributionEvents.push(e);
     }
+    let surfaceInserted = 0;
+    let surfaceSkipped = 0;
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
+      progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
       const body = {
         source: { surface: scanner.surface, kind: "local_logs" },
         events: batch.map((e) => toWireEvent(e, caps, config, installId))
@@ -3317,9 +3505,8 @@ async function syncLocked(opts) {
         },
         body: JSON.stringify(body)
       });
-      if (res.status === 401) {
-        throw new Error("Token revoked or expired \u2014 run `centrail connect`");
-      }
+      if (res.status === 401)
+        await disconnect(await refusalReason(res));
       if (!res.ok) {
         const b = await res.json().catch(() => null);
         throw new Error(
@@ -3330,7 +3517,10 @@ async function syncLocked(opts) {
       grandInserted += result.inserted;
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
+      surfaceInserted += result.inserted;
+      surfaceSkipped += result.skipped;
     }
+    progress(`${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced`);
     await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
   if (config.pendingBackfill) {
@@ -3338,6 +3528,7 @@ async function syncLocked(opts) {
     await writeConfig(config);
   }
   if (!anyEvents) {
+    progressDone();
     if (heldByScope > 0) {
       console.log(`Nothing in scope to sync \u2014 ${heldByScope} event(s) held back by your scope (see \`centrail repos\`).`);
     } else {
@@ -3348,11 +3539,22 @@ async function syncLocked(opts) {
     return;
   }
   if (attributionEvents.length > 0) {
+    progressStatus("Matching events to commits\u2026");
     await pushAttributions(auth, attributionEvents, resolver, config, caps, installId);
   }
+  progressDone();
   console.log(
     `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped}` + (grandInbox > 0 ? ` \xB7 ${grandInbox} to review in Inbox` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
   );
+}
+async function disconnect(reason) {
+  progressDone();
+  await parkAuth(reason);
+  throw new Error(disconnectedMessage({ at: (/* @__PURE__ */ new Date()).toISOString(), reason }));
+}
+function accountLabel(auth, fresh) {
+  const email = fresh?.email ?? auth.account?.email;
+  return email ? ` as ${email}` : "";
 }
 async function learnConfigDirs() {
   const known = claudeConfigDirs();
@@ -3496,6 +3698,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
     else if (!entry.roots.includes(b.root))
       entry.roots.push(b.root);
   }
+  progressStatus("Checking ship status\u2026");
   const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : void 0, caps, config);
   if (tally) {
     console.log(`  \u21B3 ${formatShipStatusLine(tally)}`);
@@ -3504,7 +3707,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
 
 // src/index.ts
 var [, , command, ...rest] = process.argv;
-var flags = { url: void 0, full: false, last: false };
+var flags = { url: void 0, full: false, last: false, noBrowser: false };
 for (let i = 0; i < rest.length; i++) {
   if (rest[i] === "--url")
     flags.url = rest[++i];
@@ -3512,12 +3715,20 @@ for (let i = 0; i < rest.length; i++) {
     flags.full = true;
   else if (rest[i] === "--last")
     flags.last = true;
+  else if (rest[i] === "--no-browser")
+    flags.noBrowser = true;
+  else if (rest[i] === "--quiet")
+    setProgressMode("quiet");
+  else if (rest[i] === "--verbose")
+    setProgressMode("verbose");
 }
 var USAGE = `centrail \u2014 sync local AI agent usage to centrail.org
 
 Usage:
-  centrail connect [--url <base>]   Pair this machine with your account
+  centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser)
+  centrail status                   Which account this machine syncs to, and whether its pairing still works
   centrail sync [--full]            Push new usage events (--full rescans everything)
+                                    Progress shows in a terminal; --quiet hides it, --verbose forces it
   centrail install-hooks            Auto-sync: add the Stop hook to Claude Code (and Codex, if present)
   centrail uninstall-hooks          Remove that hook
   centrail inspect --last           Print the last payload exactly as it left this machine
@@ -3537,7 +3748,9 @@ async function readStdin() {
 }
 try {
   if (command === "connect") {
-    await runConnect({ baseUrl: flags.url });
+    await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
+  } else if (command === "status") {
+    await runStatus();
   } else if (command === "sync") {
     await runSync({ full: flags.full });
   } else if (command === "install-hooks") {

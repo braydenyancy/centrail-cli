@@ -6,8 +6,36 @@ is the source of truth for that contract.
 ## Endpoints (server: centrail.org)
 
 - `POST /api/cli/pair` and `/api/cli/pair/poll` — device pairing (`connect`).
+- `GET /api/cli/device` — this token's own pairing (`sync`, `status`). Bearer token.
 - `POST /api/cli/ingest` — push usage events (`sync`). Bearer token required.
 - `POST /api/cli/attribute` — push git commit attribution (`sync`). Bearer token.
+
+## Pairing and the token's health (0.6.1, additive)
+
+One machine holds one pairing (`auth.json`). `POST /api/cli/pair` takes
+`{ hostname, installId? }`: `hostname` is the fixed label `Centrail CLI`, never
+the machine's name, and `installId` is the random per-install id, sent only by
+an install that has answered the scope question (§ 3.7; it is the same id
+events carry as `metadata.origin.machineId`). With it, approving replaces this
+install's own device in place instead of taking another slot, and approving
+as a different account moves the machine there, revoking the old account's
+device for it. A server that learns an install id from a device's consented
+events records it, so a first pairing (sent without one) is matched later.
+Older servers ignore the field.
+
+The approved poll answers `{ status: "approved", token, account?: { email } }`;
+the CLI stores the email for display only.
+
+`GET /api/cli/device` answers `200 { account: { email }, device: { name,
+pairedAt } }` for a working token. Every bearer route refuses a dead one with
+`401 { error, code }`: `code` is `"device_revoked"` (replaced from another
+machine or revoked in Settings) or `"unknown_token"` (no such pairing: never
+issued, or the account was deleted); `error` stays for older clients. The CLI
+asks before it scans, so a dead token is caught even when nothing is new; a
+server without the route (404), an outage or a timeout is read as unknown and
+the sync goes on. On any 401 the CLI moves `auth.json` to
+`auth.disconnected.json` with the reason, so the Stop hook stops starting
+syncs, and every later command says why until `connect` pairs again.
 
 ## Payload types
 
