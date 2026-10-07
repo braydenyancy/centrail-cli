@@ -282,7 +282,8 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   progressDone();
   console.log(
     `Inserted ${grandInserted} · Skipped ${grandSkipped - grandHeldElsewhere}` +
-      (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
+      // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
+      (grandInbox > 0 ? ` · ${grandInbox} not in a project` : "") +
       (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
   if (grandHeldElsewhere > 0) console.log(heldElsewhereLine(grandHeldElsewhere));

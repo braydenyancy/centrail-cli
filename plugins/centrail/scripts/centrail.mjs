@@ -4007,7 +4007,8 @@ async function syncLocked(opts) {
   }
   progressDone();
   console.log(
-    `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped - grandHeldElsewhere}` + (grandInbox > 0 ? ` \xB7 ${grandInbox} to review in Inbox` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
+    `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped - grandHeldElsewhere}` + // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
+    (grandInbox > 0 ? ` \xB7 ${grandInbox} not in a project` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
   );
   if (grandHeldElsewhere > 0)
     console.log(heldElsewhereLine(grandHeldElsewhere));
