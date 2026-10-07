@@ -24,7 +24,7 @@ import {
 } from "../config.js";
 import { checkDevice, refusalReason } from "../device.js";
 import { progress, progressDone, progressStatus } from "../progress.js";
-import { sinceForSurface, type SyncState } from "../watermarks.js";
+import { sinceForSurface, stampWatermark, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
 import { readRepoCommits, readRepoSize } from "../git.js";
@@ -293,8 +293,7 @@ async function stampSurface(
   revision: number,
   scanStartedAt: Date,
 ): Promise<void> {
-  state.surfaces[surface] = scanStartedAt.toISOString();
-  state.scannerRevisions[surface] = revision;
+  stampWatermark(state, surface, revision, scanStartedAt);
   await writeState(state);
 }
 

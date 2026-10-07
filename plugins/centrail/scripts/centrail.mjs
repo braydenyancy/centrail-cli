@@ -1090,16 +1090,35 @@ function parseSyncState(raw) {
   };
 }
 function sinceForSurface(state, surface, scannerRevision = 1) {
+  let since;
   const completedRevision = state.scannerRevisions[surface] ?? 1;
-  if (completedRevision < scannerRevision)
-    return void 0;
-  const own = state.surfaces[surface];
-  if (own)
-    return validDate(own);
-  if (state.lastSyncAt && SHARED_WATERMARK_SURFACES.has(surface)) {
-    return validDate(state.lastSyncAt);
+  if (completedRevision >= scannerRevision) {
+    const own = state.surfaces[surface];
+    if (own)
+      since = validDate(own);
+    else if (state.lastSyncAt && SHARED_WATERMARK_SURFACES.has(surface))
+      since = validDate(state.lastSyncAt);
   }
-  return void 0;
+  for (const [key, iso] of Object.entries(state.surfaces)) {
+    const revision = markRevision(key, surface);
+    if (revision === void 0 || revision < scannerRevision)
+      continue;
+    const mark = validDate(iso);
+    if (mark && (!since || mark > since))
+      since = mark;
+  }
+  return since;
+}
+function stampWatermark(state, surface, revision, at) {
+  state.surfaces[surface] = at.toISOString();
+  state.scannerRevisions[surface] = revision;
+  state.surfaces[`${surface}@${revision}`] = at.toISOString();
+}
+function markRevision(key, surface) {
+  if (!key.startsWith(`${surface}@`))
+    return void 0;
+  const revision = Number(key.slice(surface.length + 1));
+  return Number.isInteger(revision) && revision > 0 ? revision : void 0;
 }
 function validDate(iso) {
   const date = new Date(iso);
@@ -3630,8 +3649,7 @@ async function learnConfigDirs() {
     process.env.CLAUDE_CONFIG_DIR = [...known, ...learned].join(",");
 }
 async function stampSurface(state, surface, revision, scanStartedAt) {
-  state.surfaces[surface] = scanStartedAt.toISOString();
-  state.scannerRevisions[surface] = revision;
+  stampWatermark(state, surface, revision, scanStartedAt);
   await writeState(state);
 }
 async function pushAttributions(auth, events, resolver, config, caps, installId) {
