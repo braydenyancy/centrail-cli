@@ -30,7 +30,8 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
   if (previous) {
     console.log("");
     console.log(`  This machine is paired${previous.account ? ` with ${previous.account.email}` : ""}. Approving below re-pairs it;`);
-    console.log("  approve as another account and it moves there (the old account keeps what it synced).");
+    console.log("  approve as another account and it moves there: what it synced stays with the old account,");
+    console.log("  and its usage from now on goes to the new one.");
   }
 
   // The install id lets the server replace this machine's own device in
@@ -92,6 +93,9 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
       });
       if (!email || previous?.account?.email !== email) await forgetWatermarks();
       console.log(email ? `  ✓ Paired with ${email}` : `  ✓ Paired (${PRIVATE_DEVICE_NAME})`);
+      if (email && previous?.account?.email && previous.account.email !== email) {
+        console.log(`  What this machine synced to ${previous.account.email} stays there; ${email} gets everything else.`);
+      }
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
@@ -109,11 +113,13 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
   throw new Error("Pairing timed out — run `centrail connect` again");
 }
 
-// Watermarks belong to the machine, not the account (state.json), so an
-// account that pairs where another synced would get a day of history, not
-// this machine's whole history. Forgotten whenever the account may have
-// changed: re-sending to the same account costs a rescan, never a duplicate
-// (the server dedupes per account).
+// Watermarks belong to the machine, not the account (state.json). Forgotten
+// whenever the account may have changed, so the first sync after re-reads
+// everything once. One provider event, one account (decision A, 2026-10-07):
+// the server keeps an event with the account that synced it first, skips it
+// for any other and counts it as `heldElsewhere`, so the old account keeps
+// its history and the new one gets only what no account holds. Re-sending to
+// the same account costs a rescan, never a duplicate.
 async function forgetWatermarks(): Promise<void> {
   const state = await readState();
   if (Object.keys(state.surfaces).length === 0 && !state.lastSyncAt) return;

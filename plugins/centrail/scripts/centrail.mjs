@@ -2384,7 +2384,8 @@ async function runConnect(opts) {
   if (previous) {
     console.log("");
     console.log(`  This machine is paired${previous.account ? ` with ${previous.account.email}` : ""}. Approving below re-pairs it;`);
-    console.log("  approve as another account and it moves there (the old account keeps what it synced).");
+    console.log("  approve as another account and it moves there: what it synced stays with the old account,");
+    console.log("  and its usage from now on goes to the new one.");
   }
   const config = await readConfig();
   const installId = config.scopeDecidedAt && config.installId ? config.installId : void 0;
@@ -2437,6 +2438,9 @@ async function runConnect(opts) {
       if (!email || previous?.account?.email !== email)
         await forgetWatermarks();
       console.log(email ? `  \u2713 Paired with ${email}` : `  \u2713 Paired (${PRIVATE_DEVICE_NAME})`);
+      if (email && previous?.account?.email && previous.account.email !== email) {
+        console.log(`  What this machine synced to ${previous.account.email} stays there; ${email} gets everything else.`);
+      }
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
@@ -3525,6 +3529,7 @@ async function syncLocked(opts) {
   let grandInserted = 0;
   let grandSkipped = 0;
   let grandInbox = 0;
+  let grandHeldElsewhere = 0;
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -3564,6 +3569,7 @@ async function syncLocked(opts) {
     }
     let surfaceInserted = 0;
     let surfaceSkipped = 0;
+    let surfaceHeld = 0;
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
       progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
@@ -3593,10 +3599,15 @@ async function syncLocked(opts) {
       grandInserted += result.inserted;
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
+      const held = typeof result.heldElsewhere === "number" && result.heldElsewhere > 0 ? Math.min(result.heldElsewhere, result.skipped) : 0;
+      grandHeldElsewhere += held;
       surfaceInserted += result.inserted;
-      surfaceSkipped += result.skipped;
+      surfaceSkipped += result.skipped - held;
+      surfaceHeld += held;
     }
-    progress(`${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced`);
+    progress(
+      `${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced` + (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : "")
+    );
     await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
   if (config.pendingBackfill) {
@@ -3620,8 +3631,13 @@ async function syncLocked(opts) {
   }
   progressDone();
   console.log(
-    `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped}` + (grandInbox > 0 ? ` \xB7 ${grandInbox} to review in Inbox` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
+    `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped - grandHeldElsewhere}` + (grandInbox > 0 ? ` \xB7 ${grandInbox} to review in Inbox` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
   );
+  if (grandHeldElsewhere > 0)
+    console.log(heldElsewhereLine(grandHeldElsewhere));
+}
+function heldElsewhereLine(n) {
+  return n === 1 ? "1 event was already synced from this machine to another account; it stays there." : `${n.toLocaleString("en-US")} events were already synced from this machine to another account; they stay there.`;
 }
 async function disconnect(reason) {
   progressDone();

@@ -73,7 +73,7 @@ describe("runConnect privacy boundary", () => {
 describe("runConnect pairing", () => {
   const synced = { lastSyncAt: null, surfaces: { "claude-code": "2026-10-06T00:00:00.000Z" }, scannerRevisions: { "claude-code": 2 } };
 
-  it("stores who approved, and gives a new account this machine's whole history", async () => {
+  it("stores who approved, and re-reads the history for a new account, which keeps what the old one holds", async () => {
     await writeJson("auth.json", { baseUrl: "https://centrail.org", token: "tok-a", deviceName: PRIVATE_DEVICE_NAME, account: { email: "a@example.test" } });
     await writeJson("state.json", synced);
     vi.stubGlobal("fetch", serverApproving({ email: "b@example.test" }));
@@ -86,6 +86,7 @@ describe("runConnect pairing", () => {
     const said = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join("\n");
     expect(said).toContain("This machine is paired with a@example.test");
     expect(said).toContain("Paired with b@example.test");
+    expect(said).toContain("What this machine synced to a@example.test stays there; b@example.test gets everything else.");
   });
 
   it("keeps the watermarks when the same account re-pairs", async () => {

@@ -81,6 +81,12 @@ started by the hook never asks and never waits, and `centrail repos` says
 once with repo identity; the server fills it into the usage it already holds
 and never counts anything twice.
 
+**One machine, one account at a time.** Pairing the machine with another
+account moves it there: what it already synced stays with the first account,
+and the new one gets the usage no account holds yet. Each agent request
+belongs to one account, so a sync after the move says how many events stay
+where they are.
+
 Repo identity is the same for every worktree, clone and machine, so one
 assignment in the dashboard covers all of them, and a session whose worktree
 was deleted before sync still lands on its repo (the hook captured it).

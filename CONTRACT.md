@@ -23,6 +23,17 @@ device for it. A server that learns an install id from a device's consented
 events records it, so a first pairing (sent without one) is matched later.
 Older servers ignore the field.
 
+**One provider event, one account (decision A, 2026-10-07).** A machine that
+moves keeps its history where it was synced. The CLI forgets its watermarks
+whenever the account may have changed (`connect`), so the first sync after
+re-sends everything still on disk; the server stores an event only for the
+first account that synced its `externalId` and skips it for any other. The
+ingest response counts those as `heldElsewhere` (never naming the account),
+inside `skipped`, which is events − inserted:
+`{ inserted, skipped, updated, inboxCount, heldElsewhere }`. The CLI sums it
+across batches and, when it is above zero, prints it on its own line and
+reports `skipped` without it. Older servers omit it (read as 0).
+
 The approved poll answers `{ status: "approved", token, account?: { email } }`;
 the CLI stores the email for display only.
 

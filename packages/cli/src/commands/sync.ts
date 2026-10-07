@@ -55,6 +55,12 @@ type IngestResponse = {
   inserted: number;
   skipped: number;
   inboxCount: number;
+  // One provider event, one account (decision A, 2026-10-07): events this
+  // machine already synced to another account stay there. The server skips
+  // them and counts them here, never naming the account, and within
+  // `skipped` (events − inserted), so the summary reports them once, apart.
+  // Older servers omit it.
+  heldElsewhere?: number;
 };
 
 export async function runSync(opts: { full: boolean }): Promise<void> {
@@ -129,6 +135,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   let grandInserted = 0;
   let grandSkipped = 0;
   let grandInbox = 0;
+  let grandHeldElsewhere = 0;
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -187,6 +194,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
     let surfaceInserted = 0;
     let surfaceSkipped = 0;
+    let surfaceHeld = 0;
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
       progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
@@ -215,10 +223,16 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       grandInserted += result.inserted;
       grandSkipped += result.skipped;
       grandInbox += result.inboxCount;
+      const held = typeof result.heldElsewhere === "number" && result.heldElsewhere > 0 ? Math.min(result.heldElsewhere, result.skipped) : 0;
+      grandHeldElsewhere += held;
       surfaceInserted += result.inserted;
-      surfaceSkipped += result.skipped;
+      surfaceSkipped += result.skipped - held;
+      surfaceHeld += held;
     }
-    progress(`${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced`);
+    progress(
+      `${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced` +
+        (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : ""),
+    );
 
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
@@ -251,10 +265,17 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
   progressDone();
   console.log(
-    `Inserted ${grandInserted} · Skipped ${grandSkipped}` +
+    `Inserted ${grandInserted} · Skipped ${grandSkipped - grandHeldElsewhere}` +
       (grandInbox > 0 ? ` · ${grandInbox} to review in Inbox` : "") +
       (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
+  if (grandHeldElsewhere > 0) console.log(heldElsewhereLine(grandHeldElsewhere));
+}
+
+export function heldElsewhereLine(n: number): string {
+  return n === 1
+    ? "1 event was already synced from this machine to another account; it stays there."
+    : `${n.toLocaleString("en-US")} events were already synced from this machine to another account; they stay there.`;
 }
 
 // The server refused this machine's token: park it, so the Stop hook stops
