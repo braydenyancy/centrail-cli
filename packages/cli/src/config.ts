@@ -97,14 +97,14 @@ export async function readDisconnected(): Promise<Disconnected | null> {
 }
 
 export function disconnectedMessage(d: Pick<Disconnected, "at" | "reason">): string {
-  const when = d.at ? ` on ${d.at.slice(0, 10)}` : "";
   const why =
     d.reason === "device_revoked"
-      ? `its pairing was replaced from another machine or revoked in Settings → Devices${when}`
+      ? "its pairing was replaced from another machine or revoked in Settings → Devices"
       : d.reason === "unknown_token"
-        ? `its pairing no longer exists${when}; the account may have been deleted`
-        : `the server refused its token${when}: the pairing was revoked or the account deleted`;
-  return `This machine is no longer connected to Centrail: ${why}. Run \`npx centrail connect\` to pair it again.`;
+        ? "its pairing no longer exists, so the account may have been deleted"
+        : "the server refused its token: the pairing was revoked or the account deleted";
+  const noticed = d.at ? ` (noticed ${d.at.slice(0, 10)})` : "";
+  return `This machine is no longer connected to Centrail: ${why}${noticed}. Run \`npx centrail connect\` to pair it again.`;
 }
 
 export async function readState(): Promise<SyncState> {
