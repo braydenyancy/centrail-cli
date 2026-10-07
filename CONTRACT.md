@@ -260,7 +260,9 @@ the server could not read npm), `minimum` the oldest `centrail-cli-version`
 the server accepts. `POST /api/cli/pair`, `/api/cli/ingest` and
 `/api/cli/attribute` refuse a version below `minimum` with
 `426 { error, code: "cli_outdated", minimum }`, before the token is checked,
-so an outdated install is never mistaken for a revoked one. A missing or
+so an outdated install is never mistaken for a revoked one. The 426 is an
+application-version refusal, not a protocol switch, so it carries no `Upgrade`
+header; the body's `code` is the signal. A missing or
 malformed version header is never refused; the pair poll, `GET
 /api/cli/device` and `/api/import` are not gated. The CLI ignores fields it
 does not know or that do not parse as versions, as it ignores a server
