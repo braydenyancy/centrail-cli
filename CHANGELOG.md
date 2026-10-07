@@ -5,6 +5,38 @@ versioning.
 
 ## [Unreleased]
 
+### 0.7.0 — a sync you can watch, a moved machine's history stays put, and a CLI that stays current
+- **A long sync shows it is moving.** In a terminal, reading logs counts
+  files (`reading logs (full history) — 1,234/1,968 files`), placing events
+  and checking ship status count too, and a status line that waits shows its
+  clock (`· 14s`). Hooks, agents and pipes see the same one-line summary as
+  before. `@centrail/parsers` scanners take an optional `onFile(done, total)`.
+- **A moved machine's history stays with its first account** (founder
+  decision, 2026-10-07). The server keeps one copy of each provider event:
+  when a machine moves to another account, what it synced stays where it
+  was, and the new account receives only usage no account holds. The first
+  sync after a move says so once: "N events were already synced from this
+  machine to another account; they stay there." This replaces 0.6.1's "the
+  new account gets this machine's whole history".
+- **Staying current, without installing itself.** The server publishes the
+  latest release and the oldest it accepts. Behind `latest`, a sync in a
+  terminal prints one line with the command for how this copy was installed
+  (Claude Code plugin, `npx`, mise or a global npm install); a hook's sync
+  keeps it for `centrail status`. Below the minimum the server answers `426
+  cli_outdated`: the machine stays paired, stops starting syncs and says how
+  to update.
+- **The Claude Code plugin is the primary hook.** After pairing, `connect`
+  asks once whether to install the plugin from the `release` branch and turn
+  on Claude Code's auto-update for it; `centrail setup-plugin` asks again.
+  `install-hooks` adds no Claude hook while the plugin is enabled, and every
+  settings write keeps one backup. Publishing a `v*` tag fast-forwards
+  `release`, so auto-update only ever delivers released code.
+- **An older CLI's stamp no longer costs a newer one its whole history.**
+  Each scanner revision keeps its own watermark, so two copies of different
+  versions on one machine stop re-sending everything to each other.
+- The summary counts events outside a project as a fact ("N not in a
+  project"), not as an Inbox to review.
+
 ### 0.6.1 — one machine, one account, and a CLI that says what it is doing
 - **`connect` opens your browser** at the approval page, as `wrangler login`
   does, and still prints the URL. Not in an SSH session, CI, a Linux session
