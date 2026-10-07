@@ -89,6 +89,16 @@ describe("events another account holds (one provider event, one account)", () =>
     expect(heldElsewhereLine(1)).toBe("1 event was already synced from this machine to another account; it stays there.");
   });
 
+  it("are not repeated by the incremental syncs that re-read the day before the move", async () => {
+    await runSync({ full: false }); // the full pass after a move sets the watermark
+    routes["/api/cli/ingest"] = () => json({ inserted: 1, skipped: 1205, updated: 0, inboxCount: 0, heldElsewhere: 1204 });
+    stdout = [];
+
+    await runSync({ full: false });
+
+    expect(stdout).toEqual(["Inserted 1 · Skipped 1"]);
+  });
+
   it.each([
     ["zero", { heldElsewhere: 0 }],
     ["absent (an older server)", {}],

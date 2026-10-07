@@ -146,6 +146,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   let grandSkipped = 0;
   let grandInbox = 0;
   let grandHeldElsewhere = 0;
+  // Held events read on a full pass: the history a moved machine left with
+  // its first account. An incremental pass re-reads a day of overlap, which
+  // after a move is that account's too; repeating it every sync is noise.
+  let heldOnFullRead = 0;
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -249,6 +253,8 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : ""),
     );
 
+    if (!since) heldOnFullRead += surfaceHeld;
+
     // Only after every batch for this surface landed; a failure above throws
     // and leaves this surface's watermark where it was.
     await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
@@ -286,7 +292,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       (grandInbox > 0 ? ` · ${grandInbox} not in a project` : "") +
       (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
   );
-  if (grandHeldElsewhere > 0) console.log(heldElsewhereLine(grandHeldElsewhere));
+  if (heldOnFullRead > 0) console.log(heldElsewhereLine(heldOnFullRead));
   if (notice) progress(updateNoticeLine(notice));
 }
 

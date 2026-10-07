@@ -3900,6 +3900,7 @@ async function syncLocked(opts) {
   let grandSkipped = 0;
   let grandInbox = 0;
   let grandHeldElsewhere = 0;
+  let heldOnFullRead = 0;
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -3982,6 +3983,8 @@ async function syncLocked(opts) {
     progress(
       `${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced` + (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : "")
     );
+    if (!since)
+      heldOnFullRead += surfaceHeld;
     await stampSurface(state, scanner.surface, scanner.revision, scanStartedAt);
   }
   if (config.pendingBackfill) {
@@ -4010,8 +4013,8 @@ async function syncLocked(opts) {
     `Inserted ${grandInserted} \xB7 Skipped ${grandSkipped - grandHeldElsewhere}` + // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
     (grandInbox > 0 ? ` \xB7 ${grandInbox} not in a project` : "") + (heldByScope > 0 ? ` \xB7 ${heldByScope} held back by scope` : "")
   );
-  if (grandHeldElsewhere > 0)
-    console.log(heldElsewhereLine(grandHeldElsewhere));
+  if (heldOnFullRead > 0)
+    console.log(heldElsewhereLine(heldOnFullRead));
   if (notice)
     progress(updateNoticeLine(notice));
 }
