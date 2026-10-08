@@ -54,7 +54,28 @@ async function writeJsonAtomic(path: string, value: unknown, mode?: number): Pro
   await mkdir(CONFIG_DIR, { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, mode === undefined ? {} : { mode });
-  await rename(tmp, path);
+  await replaceFile(tmp, path);
+}
+
+// rename over an existing file is atomic everywhere, but Windows refuses it
+// (EPERM, EACCES, EBUSY) while another process holds the target open: a
+// hook reading the sidecar, an antivirus scan. Those holds are brief, so on
+// Windows it retries for about 1.5 s before giving up.
+export async function replaceFile(tmp: string, path: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(tmp, path);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const held = code === "EPERM" || code === "EACCES" || code === "EBUSY";
+      if (platform !== "win32" || !held || attempt >= 6) {
+        await rm(tmp, { force: true });
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 25 * 2 ** attempt));
+    }
+  }
 }
 
 export async function writeAuth(auth: AuthConfig): Promise<void> {

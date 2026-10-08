@@ -3,6 +3,7 @@
 // not a path; a relative path is not evidence; a Bash command's absolute
 // paths are reads (it may have written, but the command does not say).
 import { describe, expect, it } from "vitest";
+import { join } from "node:path";
 import { bashPaths, claudeToolEvidence, codexCallEvidence, mergeEvidence, type Evidence } from "../src/providers/evidence.js";
 
 const none: Evidence = { writes: [], reads: [] };
@@ -35,6 +36,10 @@ describe("bashPaths", () => {
     ['git -C "/w/a b/repo" log', ["/w/a b/repo"]],
     ["git -C '/w/a/repo' log", ["/w/a/repo"]],
     ["ls /w/a /w/b", ["/w/a", "/w/b"]],
+    // Windows: a drive path with either separator, bare or quoted.
+    ["cd C:\\w\\a && npm test", ["C:\\w\\a"]],
+    ['git -C "C:\\w\\a b\\repo" log', ["C:\\w\\a b\\repo"]],
+    ["ls C:/w/a d:/w/b", ["C:/w/a", "d:/w/b"]],
     ["FOO=/w/a/.env node x.js", ["/w/a/.env"]],
     ["curl https://example.com/w/a/x", []],
     ["echo http://h/p", []],
@@ -57,7 +62,7 @@ describe("codexCallEvidence", () => {
     ["shell with workdir", "shell", { command: ["bash", "-lc", "ls"], workdir: "/w/b" }, { writes: [], reads: ["/w/b"] }],
     ["shell without workdir", "shell", { command: ["bash", "-lc", "cat /w/c/x"] }, { writes: [], reads: ["/w/c/x"] }],
     ["shell_command", "shell_command", { command: "cat /w/c/x", workdir: "/w/b" }, { writes: [], reads: ["/w/b", "/w/c/x"] }],
-    ["apply_patch relative to cwd", "apply_patch", { input: "*** Begin Patch\n*** Update File: src/x.ts\n@@\n-a\n+b\n*** Add File: docs/n.md\n+hi\n*** Delete File: old.txt\n*** End Patch" }, { writes: ["/w/a/src/x.ts", "/w/a/docs/n.md", "/w/a/old.txt"], reads: [] }],
+    ["apply_patch relative to cwd", "apply_patch", { input: "*** Begin Patch\n*** Update File: src/x.ts\n@@\n-a\n+b\n*** Add File: docs/n.md\n+hi\n*** Delete File: old.txt\n*** End Patch" }, { writes: [join("/w/a", "src/x.ts"), join("/w/a", "docs/n.md"), join("/w/a", "old.txt")], reads: [] }], // the OS's own join: \w\a\… on Windows
     ["apply_patch absolute", "apply_patch", { input: "*** Begin Patch\n*** Update File: /w/b/y.ts\n*** End Patch" }, { writes: ["/w/b/y.ts"], reads: [] }],
     ["wait", "wait", { cell_id: "1" }, none],
     ["unparseable arguments", "shell", "not json", none],

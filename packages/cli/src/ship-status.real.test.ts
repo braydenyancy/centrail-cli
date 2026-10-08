@@ -246,7 +246,8 @@ describe("patch ids ignore the machine's attributes", () => {
     const plain = await gather(dir);
     if (where === "global") {
       await writeFile(join(fx.root, "attributes"), "*.js -diff\n");
-      await writeFile(join(fx.root, "gitconfig"), `[core]\n\tattributesFile = ${join(fx.root, "attributes")}\n`);
+      // Forward slashes: a backslash in a git config value is an escape.
+      await writeFile(join(fx.root, "gitconfig"), `[core]\n\tattributesFile = ${join(fx.root, "attributes").replace(/\\/g, "/")}\n`);
       process.env.GIT_CONFIG_GLOBAL = join(fx.root, "gitconfig");
     } else {
       await writeFile(join(dir, ".gitattributes"), "*.js -diff\n");

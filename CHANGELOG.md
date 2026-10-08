@@ -5,6 +5,24 @@ versioning.
 
 ## [Unreleased]
 
+### 0.7.1 — Windows works, and every change is tested on macOS, Windows and Linux
+- **Windows repos are found.** Git prints `C:/x/repo` where Claude Code and
+  Codex print `C:\x\repo`, so on Windows no turn ever matched its repo and
+  everything landed in Uncategorized. Paths git returns are normalized, and
+  folder checks compare whole segments, ignoring case on Windows. Shell
+  commands' `C:\…` and `C:/…` paths count as evidence.
+- **No console windows.** The background sync and every git it runs start
+  hidden; before, each git call flashed a window every ten minutes.
+- **Files Windows holds open.** Config, session-log and settings writes
+  retry when another process (a hook, antivirus) holds the file; a failed
+  session-log compaction no longer aborts the sync.
+- **The username stays off the wire on Windows.** The home folder labels as
+  `~` however its path is spelled (case, separators, 8.3 short names).
+- **CI** runs build, typecheck and tests on macOS, Windows and Linux at Node
+  20 and 24, checks the committed plugin bundle is the current build, runs
+  the plugin's hook through the shell Claude Code uses, and validates the
+  plugin with `claude plugin validate --strict`.
+
 ### 0.7.0 — a sync you can watch, a moved machine's history stays put, and a CLI that stays current
 - **A long sync shows it is moving.** In a terminal, reading logs counts
   files (`reading logs (full history) — 1,234/1,968 files`), placing events

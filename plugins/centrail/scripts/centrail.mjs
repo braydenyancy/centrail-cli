@@ -46,7 +46,7 @@ function claudeToolEvidence(block) {
   return { writes: [], reads: [] };
 }
 var SYSTEM_PREFIXES = ["/dev", "/proc", "/sys", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"];
-var BASH_PATH = /(?:^|[\s=:;|&(<>'"`])(?:'(\/[^']+)'|"(\/[^"]+)"|(\/[^\s'"`;|&<>()]+))/g;
+var BASH_PATH = /(?:^|[\s=:;|&(<>'"`])(?:'((?:[A-Za-z]:[\\/]|\/)[^']+)'|"((?:[A-Za-z]:[\\/]|\/)[^"]+)"|((?:[A-Za-z]:[\\/]|\/)[^\s'"`;|&<>()]+))/g;
 function bashPaths(command2) {
   const out = [];
   for (const m of command2.matchAll(BASH_PATH)) {
@@ -1066,7 +1066,7 @@ import { join as join5 } from "node:path";
 import { realpathSync } from "node:fs";
 
 // src/version.ts
-var CLI_VERSION = "0.7.0";
+var CLI_VERSION = "0.7.1";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
@@ -1326,7 +1326,23 @@ async function writeJsonAtomic(path, value, mode2) {
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}
 `, mode2 === void 0 ? {} : { mode: mode2 });
-  await rename(tmp, path);
+  await replaceFile(tmp, path);
+}
+async function replaceFile(tmp, path, platform = process.platform) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(tmp, path);
+      return;
+    } catch (err) {
+      const code = err.code;
+      const held = code === "EPERM" || code === "EACCES" || code === "EBUSY";
+      if (platform !== "win32" || !held || attempt >= 6) {
+        await rm(tmp, { force: true });
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 25 * 2 ** attempt));
+    }
+  }
 }
 async function writeAuth(auth) {
   await writeJsonAtomic(AUTH_PATH, auth, 384);
@@ -1558,7 +1574,7 @@ import { createInterface as createInterface2 } from "node:readline/promises";
 
 // src/commands/hooks-install.ts
 import { constants, realpathSync as realpathSync3 } from "node:fs";
-import { copyFile, mkdir as mkdir3, readFile as readFile8, rename as rename3, writeFile as writeFile3 } from "node:fs/promises";
+import { copyFile, mkdir as mkdir3, readFile as readFile8, writeFile as writeFile3 } from "node:fs/promises";
 import { dirname as dirname4, join as join8 } from "node:path";
 import { stat as stat7 } from "node:fs/promises";
 
@@ -1571,7 +1587,7 @@ import { stat as stat6 } from "node:fs/promises";
 // src/git.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
 import { readFile as readFile5, stat as stat5 } from "node:fs/promises";
-import { basename as basename2, dirname, join as join6 } from "node:path";
+import { basename as basename2, dirname, join as join6, win32 } from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var GIT_REDIRECT_VARS = [
@@ -1591,7 +1607,7 @@ function gitEnv(base = process.env) {
   return env;
 }
 function exec(cmd, args, opts = {}) {
-  return execFileAsync(cmd, args, { ...opts, env: gitEnv() });
+  return execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
 }
 function gitExec(args, opts = {}) {
   return exec("git", args, opts);
@@ -1599,10 +1615,28 @@ function gitExec(args, opts = {}) {
 async function resolveRepoRoot(cwd) {
   try {
     const { stdout } = await exec("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
-    return stdout.trim() || null;
+    const root = stdout.trim();
+    return root ? nativePath(root) : null;
   } catch {
     return null;
   }
+}
+function nativePath(p, platform = process.platform) {
+  if (platform !== "win32")
+    return p;
+  const n = win32.normalize(p);
+  return /^[a-z]:/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
+}
+function isWithin(path, root, platform = process.platform) {
+  const [p, r] = platform === "win32" ? [winKey(path), winKey(root)] : [path, root];
+  const sep = platform === "win32" ? "\\" : "/";
+  return p === r || p.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
+}
+function samePath(a, b, platform = process.platform) {
+  return platform === "win32" ? winKey(a) === winKey(b) : a === b;
+}
+function winKey(p) {
+  return win32.normalize(p).toLowerCase();
 }
 async function nearestDirectory(path) {
   let dir = path;
@@ -1621,12 +1655,12 @@ async function nearestDirectory(path) {
 function deepestRoot(roots, path) {
   let best = null;
   for (const r of roots)
-    if ((path === r || path.startsWith(`${r}/`)) && (!best || r.length > best.length))
+    if (isWithin(path, r) && (!best || r.length > best.length))
       best = r;
   return best;
 }
 async function nestedCheckout(root, dir) {
-  for (let d = dir; d !== root && d.startsWith(`${root}/`); d = dirname(d)) {
+  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname(d)) {
     try {
       await stat5(join6(d, ".git"));
       return true;
@@ -1638,11 +1672,11 @@ async function nestedCheckout(root, dir) {
 async function readMainCheckout(repoRoot) {
   try {
     const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    const common = stdout.trim();
+    const common = stdout.trim() ? nativePath(stdout.trim()) : "";
     if (!common || basename2(common) !== ".git")
       return null;
     const main = dirname(common);
-    return main === repoRoot ? null : main;
+    return samePath(main, repoRoot) ? null : main;
   } catch {
     return null;
   }
@@ -1749,7 +1783,7 @@ function patchIds(repoRoot, commits) {
   if (commits.length === 0)
     return Promise.resolve({});
   return new Promise((resolve) => {
-    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] };
+    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"], windowsHide: true };
     const diff = spawn2(
       "git",
       ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
@@ -2013,10 +2047,10 @@ async function listRoots(repoRoot, ref) {
 function displayLabel(path) {
   const p = path.replace(/[\/\\]+$/, "");
   const home = homedir5().replace(/[\/\\]+$/, "");
-  if (p === home)
+  if (samePath(p, home))
     return "~";
   try {
-    if (realpathSync2(p) === realpathSync2(home))
+    if (samePath(realpathSync2.native(p), realpathSync2.native(home)))
       return "~";
   } catch {
   }
@@ -2074,7 +2108,7 @@ async function readHeadState(repoRoot) {
 import { basename as basename4 } from "node:path";
 
 // src/sidecar.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile7, rename as rename2, writeFile as writeFile2 } from "node:fs/promises";
+import { appendFile, mkdir as mkdir2, readFile as readFile7, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname3 } from "node:path";
 var SIDECAR_PATH = `${CONFIG_DIR}/sessions.jsonl`;
 async function appendSidecar(line, path = SIDECAR_PATH) {
@@ -2142,7 +2176,7 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile2(tmp, [...keep.values(), ...recent].map((l) => `${l}
 `).join(""), { mode: 384 });
-  await rename2(tmp, path);
+  await replaceFile(tmp, path);
 }
 function isSidecarLine(v) {
   if (v === null || typeof v !== "object")
@@ -2636,7 +2670,7 @@ async function writeSettingsFile(path, settings, indent = "  ") {
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile3(tmp, `${JSON.stringify(settings, null, indent)}
 `);
-  await rename3(tmp, path);
+  await replaceFile(tmp, path);
 }
 async function backUpSettings(path) {
   try {
@@ -2962,7 +2996,7 @@ var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
     return "codex";
-  const t = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  const t = typeof input.transcript_path === "string" ? input.transcript_path.replace(/\\/g, "/") : "";
   if (/\/sessions\/.*rollout-[^/]*\.jsonl$/.test(t))
     return "codex";
   return fallback;
@@ -3126,7 +3160,7 @@ function logicalRoot(dir, root) {
   } catch {
     return null;
   }
-  if (physical !== root && !physical.startsWith(`${root}/`))
+  if (!isWithin(physical, root))
     return null;
   const suffix = physical.slice(root.length);
   if (!dir.endsWith(suffix))
@@ -3201,6 +3235,8 @@ async function claimAutoSync(claimPath, now) {
 function spawnDetachedSync() {
   const child = spawn3(process.execPath, [process.argv[1], "sync"], {
     detached: true,
+    windowsHide: true,
+    // a detached child on Windows has no console; each git it runs would open one
     stdio: "ignore",
     env: process.env
   });
@@ -3890,7 +3926,8 @@ async function syncLocked(opts) {
   if (served.cli?.minimum && isOlder(at.version, served.cli.minimum))
     throw new CliOutdatedError(await parkOutdated(served.cli.minimum));
   const notice = state.updateNotice?.version === at.version ? state.updateNotice : void 0;
-  await compactSidecar();
+  await compactSidecar().catch(() => {
+  });
   await learnConfigDirs();
   const resolver = await IdentityResolver.create(installId);
   const placer = new Placer(resolver);
@@ -4036,7 +4073,7 @@ async function learnConfigDirs() {
   for (const line of (await readSidecar()).values()) {
     if (line.surface !== "claude-code" || !line.transcript)
       continue;
-    const i = line.transcript.lastIndexOf("/projects/");
+    const i = line.transcript.replace(/\\/g, "/").lastIndexOf("/projects/");
     if (i <= 0)
       continue;
     const dir = line.transcript.slice(0, i);

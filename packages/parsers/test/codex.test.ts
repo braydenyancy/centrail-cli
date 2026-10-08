@@ -273,7 +273,7 @@ describe("Codex path resolution", () => {
   it("defaults to ~/.codex/sessions and honors CODEX_HOME", () => {
     delete process.env.CODEX_HOME;
     expect(codexHomeDir()).toMatch(/\.codex$/);
-    expect(codexSessionsDir()).toMatch(/\.codex\/sessions$/);
+    expect(codexSessionsDir()).toMatch(/\.codex[\\/]sessions$/);
 
     process.env.CODEX_HOME = "/custom/codex";
     expect(codexHomeDir()).toBe("/custom/codex");
@@ -333,7 +333,7 @@ describe("Codex turns and touched files", () => {
     const events = (await scanCodexLogs({ basePath: base })).sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
     expect(events.map((e) => e.metadata.turn)).toEqual(["sess#t1", "sess#t1", "sess#t2"]);
     expect(events[0].metadata.touched).toEqual({ writes: [], reads: ["/ws/a"] });
-    expect(events[1].metadata.touched).toEqual({ writes: ["/ws/a/x.ts"], reads: ["/ws/a"] });
+    expect(events[1].metadata.touched).toEqual({ writes: [join("/ws/a", "x.ts")], reads: ["/ws/a"] });
     expect(events[2].metadata.touched).toEqual({ writes: [], reads: [] }); // a new turn starts clean
   });
 });

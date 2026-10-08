@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { gitEnv } from "../git.js";
 
@@ -44,9 +44,10 @@ export type Scratch = {
   cleanup: () => Promise<void>;
 };
 
-// realpath: macOS hands out /var/folders/… while git answers /private/var/….
+// realpath: macOS hands out /var/folders/… while git answers /private/var/…,
+// and Windows a short RUNNER~1 that git answers long; .native expands both.
 export async function scratch(): Promise<Scratch> {
-  const root = await mkdtemp(join(realpathSync(tmpdir()), "centrail-git-"));
+  const root = await mkdtemp(join(realpathSync.native(tmpdir()), "centrail-git-"));
   const env = fixtureEnv(root);
   const git = async (cwd: string, ...args: string[]): Promise<string> => {
     const { stdout } = await run("git", ["-C", cwd, ...args], { env });
@@ -74,7 +75,7 @@ export async function scratch(): Promise<Scratch> {
     return dir;
   };
   const worktree = async (repoDir: string, path: string, branch?: string): Promise<string> => {
-    const abs = path.startsWith("/") ? path : join(root, path);
+    const abs = isAbsolute(path) ? path : join(root, path);
     const args = ["worktree", "add", "-q"];
     if (branch) args.push("-b", branch);
     args.push(abs);

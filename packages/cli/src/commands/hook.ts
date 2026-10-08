@@ -4,7 +4,7 @@ import { mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
 import { acquireSyncLock, readAuth, readState, writeState } from "../config.js";
-import { deepestRoot, nearestDirectory, nestedCheckout, readMainCheckout, resolveRepoRoot } from "../git.js";
+import { deepestRoot, isWithin, nearestDirectory, nestedCheckout, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
 import { appendSidecar, compactSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
 import { hookParked } from "../update.js";
@@ -41,7 +41,7 @@ export type HookInput = {
 // enough to read the transcript as a rollout and stamp the surface.
 export function detectSurface(input: HookInput, fallback: string): string {
   if (typeof input.turn_id === "string" && input.turn_id) return "codex";
-  const t = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  const t = typeof input.transcript_path === "string" ? input.transcript_path.replace(/\\/g, "/") : "";
   if (/\/sessions\/.*rollout-[^/]*\.jsonl$/.test(t)) return "codex";
   return fallback;
 }
@@ -237,7 +237,7 @@ function logicalRoot(dir: string, root: string): string | null {
   } catch {
     return null;
   }
-  if (physical !== root && !physical.startsWith(`${root}/`)) return null;
+  if (!isWithin(physical, root)) return null;
   const suffix = physical.slice(root.length);
   if (!dir.endsWith(suffix)) return null;
   const logical = dir.slice(0, dir.length - suffix.length);
@@ -328,6 +328,7 @@ async function claimAutoSync(claimPath: string, now: Date): Promise<boolean> {
 function spawnDetachedSync(): void {
   const child = spawn(process.execPath, [process.argv[1], "sync"], {
     detached: true,
+    windowsHide: true, // a detached child on Windows has no console; each git it runs would open one
     stdio: "ignore",
     env: process.env,
   });
