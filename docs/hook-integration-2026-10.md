@@ -22,8 +22,11 @@ The isolated worktree `centrail-cli-hook-fix` branches from freshly fetched
 unreleased 0.7.4; main CI and the v0.7.3 publish workflow at that exact commit
 are successful.
 The account-local compatibility branch and the active server
-worktree were not edited. No push, tag, publish, PR, merge or deploy occurred;
-no installed user hook or plugin cache was changed.
+worktree were not edited. At the initial local validation receipt, no push,
+tag, publish, PR, merge or deploy had occurred. Branch push and PR creation were
+subsequently authorized for review; tagging, publishing, merging and deploying
+remain outside that authorization. No installed user hook or plugin cache was
+changed.
 
 ## Configuration and runtime evidence
 
