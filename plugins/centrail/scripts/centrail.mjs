@@ -1066,7 +1066,7 @@ import { join as join5 } from "node:path";
 import { realpathSync } from "node:fs";
 
 // src/version.ts
-var CLI_VERSION = "0.7.0";
+var CLI_VERSION = "0.7.1";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
