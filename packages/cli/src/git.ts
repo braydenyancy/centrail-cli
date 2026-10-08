@@ -33,7 +33,16 @@ function exec(
   args: string[],
   opts: { maxBuffer?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
+  const result = execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
+  // Node 20 on Windows can emit ENOTCONN on a stdio socket when the
+  // executable is missing. execFile's callback handles the process error,
+  // but that separate stream error must also reject rather than crash.
+  return new Promise((resolve, reject) => {
+    for (const stream of [result.child?.stdin, result.child?.stdout, result.child?.stderr]) {
+      stream?.on("error", reject);
+    }
+    result.then(resolve, reject);
+  });
 }
 
 // Every git spawn in the CLI goes through here, so the GIT_DIR scrub above

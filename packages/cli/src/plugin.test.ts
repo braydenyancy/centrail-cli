@@ -1,4 +1,4 @@
-// The Claude Code / Codex plugin: one hooks.json over the same bundle. The
+// Claude Code owns the plugin launcher; Codex owns an explicit pinned hook. The
 // plugin carries its own copy of the CLI bundle (hash-pinned by the plugin
 // version; never resolved from the network per turn), so the test runs
 // THAT file as the harness would — a Stop input on stdin — and expects a
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readSidecar } from "./sidecar.js";
 import { scratch, type Scratch } from "./testing/git-fixture.js";
+import { codexHookCommand, installStopHook } from "./commands/hooks-install.js";
 
 const ROOT = join(__dirname, "..", "..", "..");
 const PLUGIN = join(ROOT, "plugins", "centrail");
@@ -20,6 +21,68 @@ afterEach(async () => {
 });
 
 describe("plugins/centrail", () => {
+  it("Codex metadata explicitly replaces default plugin hook discovery with no hooks", async () => {
+    const codex = JSON.parse(await readFile(join(PLUGIN, ".codex-plugin", "plugin.json"), "utf-8"));
+    expect(codex.name).toBe("centrail");
+    expect(codex.hooks).toEqual({ hooks: {} });
+    const cli = JSON.parse(await readFile(join(ROOT, "packages", "cli", "package.json"), "utf-8"));
+    expect(codex.version).toBe(cli.version);
+  });
+
+  it.skipIf(process.platform === "win32")("reproduces the Claude launcher failure if copied into Codex without its plugin-root contract", async () => {
+    const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
+    try {
+      const result = await runHook("/bin/sh", ["-c", await hookCommand()], cfg, JSON.stringify({
+        session_id: "fixture-stop", turn_id: "fixture-turn", cwd: cfg, hook_event_name: "Stop", stop_hook_active: false,
+      }), { CLAUDE_PLUGIN_ROOT: undefined, PLUGIN_ROOT: undefined });
+      expect(result.stdout).toBe("");
+      expect(result.code).toBeGreaterThan(0);
+      expect(result.stderr).toMatch(/\/scripts\/hook\.sh/);
+      await expect(readFile(join(cfg, "sessions.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(cfg, { recursive: true, force: true }); }
+  });
+
+  it("spawns the generated Codex command without plugin variables or a Unix launcher, and processes exactly one Stop", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
+    const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
+    try {
+      const command = codexHookCommand(process.execPath, join(ROOT, "packages", "cli", "dist", "index.js"));
+      const settings = installStopHook({}, command);
+      expect((settings.hooks!.Stop as unknown[])).toHaveLength(1);
+      expect(command).not.toMatch(/CLAUDE_PLUGIN_ROOT|hook\.sh/);
+      // Codex's native Windows runner uses COMSPEC /C and wraps the command
+      // in outer quotes. No Git Bash is involved in this test on Windows.
+      const shell = process.platform === "win32" ? process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe" : "/bin/sh";
+      const args = process.platform === "win32" ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command];
+      const input = JSON.stringify({ session_id: "s-codex-native", turn_id: "fixture-turn", cwd: repo, hook_event_name: "Stop", stop_hook_active: false });
+      const env = { CLAUDE_PLUGIN_ROOT: undefined, PLUGIN_ROOT: undefined };
+      expect(await runHook(shell, args, cfg, input, env, process.platform === "win32")).toEqual({ stdout: "{}\n", stderr: "", code: 0 });
+      const raw = await readFile(join(cfg, "sessions.jsonl"), "utf-8");
+      expect(raw.trim().split("\n")).toHaveLength(1);
+      const line = JSON.parse(raw.trim());
+      expect(line.surface).toBe("codex");
+      expect(line.repo.key).toBe("github.com/acme/r");
+      expect(await runHook(shell, args, cfg, "not json", env, process.platform === "win32")).toEqual({ stdout: "{}\n", stderr: "", code: 0 });
+    } finally { await rm(cfg, { recursive: true, force: true }); }
+  });
+
+  it("the explicit Codex command starts with an empty PATH and no plugin root", async () => {
+    const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
+    try {
+      const command = codexHookCommand(process.execPath, join(ROOT, "packages", "cli", "dist", "index.js"));
+      const windows = process.platform === "win32";
+      const shell = windows ? process.env.ComSpec ?? process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe" : "/bin/sh";
+      const args = windows ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command];
+      expect(await runHook(shell, args, cfg, JSON.stringify({ session_id: "s-no-path", cwd: cfg }), {
+        PATH: "", CLAUDE_PLUGIN_ROOT: undefined, PLUGIN_ROOT: undefined,
+      }, windows)).toEqual({ stdout: "{}\n", stderr: "", code: 0 });
+      const rows = (await readFile(join(cfg, "sessions.jsonl"), "utf-8")).trim().split("\n");
+      expect(rows).toHaveLength(1);
+      expect(JSON.parse(rows[0]).surface).toBe("codex");
+      expect(JSON.parse(rows[0]).repo).toBeNull(); // Git still needs to be available to resolve identity.
+    } finally { await rm(cfg, { recursive: true, force: true }); }
+  });
   it("declares one Stop hook that runs the bundled CLI, and its version is the CLI's", async () => {
     const hooks = JSON.parse(await readFile(join(PLUGIN, "hooks", "hooks.json"), "utf-8"));
     const stop = hooks.hooks.Stop;
@@ -49,6 +112,8 @@ describe("plugins/centrail", () => {
     expect([stdout, stderr, code]).toEqual(["", "", 0]);
     const lines = await readSidecar(join(cfg, "sessions.jsonl"));
     expect(lines.get("s-plugin")?.repo?.key).toBe("github.com/acme/r");
+    expect((await readFile(join(cfg, "sessions.jsonl"), "utf-8")).trim().split("\n")).toHaveLength(1);
+    expect(lines.get("s-plugin")?.surface).toBe("claude-code");
     expect(await run("not json")).toEqual({ stdout: "", stderr: "", code: 0 });
     await rm(cfg, { recursive: true, force: true });
   });
@@ -127,10 +192,10 @@ function hookShell(): string {
   return existsSync(gitBash) ? gitBash : "bash";
 }
 
-function runHook(cmd: string, args: string[], cfg: string, input: string, extra: NodeJS.ProcessEnv = {}) {
+function runHook(cmd: string, args: string[], cfg: string, input: string, extra: NodeJS.ProcessEnv = {}, windowsVerbatimArguments = false) {
   return new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
-    const env = { ...process.env, ...extra, CENTRAIL_CONFIG_DIR: cfg, CLAUDE_PLUGIN_ROOT: PLUGIN.replaceAll("\\", "/") };
-    const child = spawn(cmd, args, { env, windowsHide: true });
+    const env = { ...process.env, CENTRAIL_CONFIG_DIR: cfg, CLAUDE_PLUGIN_ROOT: PLUGIN.replaceAll("\\", "/"), ...extra };
+    const child = spawn(cmd, args, { env, windowsHide: true, windowsVerbatimArguments });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));

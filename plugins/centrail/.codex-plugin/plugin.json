@@ -1,0 +1,6 @@
+{
+  "name": "centrail",
+  "version": "0.7.4",
+  "description": "Centrail uses an explicit Codex user hook installed by centrail install-hooks. The Claude Code plugin launcher belongs only to Claude Code.",
+  "hooks": { "hooks": {} }
+}

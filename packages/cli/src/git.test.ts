@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 
 // git.ts builds its runner with promisify(execFile); mocking the
 // promisify.custom hook on execFile makes `exec` resolve/reject through
@@ -14,6 +15,7 @@ vi.mock("node:child_process", async () => {
 import {
   cherryEquivalentShas,
   gitEnv,
+  gitExec,
   listBranchTips,
   listReachableShas,
   listRecentShas,
@@ -44,6 +46,18 @@ function routeGit(routes: Record<string, string | Error>): void {
 
 beforeEach(() => {
   execMock.mockReset();
+});
+
+describe("gitExec stream errors", () => {
+  it.each(["stdin", "stdout", "stderr"])("rejects an asynchronous %s error without an unhandled event", async (name) => {
+    const stream = new EventEmitter();
+    const result = Object.assign(new Promise(() => {}), { child: { [name]: stream } });
+    execMock.mockReturnValue(result);
+    const pending = gitExec(["--version"]);
+    const error = Object.assign(new Error("read ENOTCONN"), { code: "ENOTCONN" });
+    stream.emit("error", error);
+    await expect(pending).rejects.toBe(error);
+  });
 });
 
 describe("resolveDefaultBranch", () => {

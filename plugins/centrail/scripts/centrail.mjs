@@ -1066,7 +1066,7 @@ import { join as join5 } from "node:path";
 import { realpathSync } from "node:fs";
 
 // src/version.ts
-var CLI_VERSION = "0.7.3";
+var CLI_VERSION = "0.7.4";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
@@ -1587,7 +1587,7 @@ import { createInterface as createInterface2 } from "node:readline/promises";
 // src/commands/hooks-install.ts
 import { constants, realpathSync as realpathSync3 } from "node:fs";
 import { copyFile, mkdir as mkdir3, readFile as readFile8, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname4, join as join8 } from "node:path";
+import { dirname as dirname4, isAbsolute as isAbsolute2, join as join8, win32 as win322 } from "node:path";
 import { stat as stat7 } from "node:fs/promises";
 
 // src/commands/scope.ts
@@ -1619,7 +1619,13 @@ function gitEnv(base = process.env) {
   return env;
 }
 function exec(cmd, args, opts = {}) {
-  return execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
+  const result = execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
+  return new Promise((resolve, reject) => {
+    for (const stream of [result.child?.stdin, result.child?.stdout, result.child?.stderr]) {
+      stream?.on("error", reject);
+    }
+    result.then(resolve, reject);
+  });
 }
 function gitExec(args, opts = {}) {
   return exec("git", args, opts);
@@ -2590,21 +2596,37 @@ function claudeSettingsPath() {
 function codexHooksPath() {
   return join8(codexHomeDir(), "hooks.json");
 }
-function hookCommand(node = process.execPath, script = process.argv[1]) {
+function hookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
   const abs = safeRealpath(script);
-  return `${quote(node)} ${quote(abs)} hook stop`;
+  return `${quote(node, platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
+}
+function codexHookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
+  requireStandaloneBundle(script);
+  return `${hookCommand(node, script, platform)} --surface codex`;
+}
+function requireStandaloneBundle(script) {
+  if (/[\\/]scripts[\\/]centrail\.mjs$/.test(safeRealpath(script))) {
+    throw new Error("Install explicit hooks from a standalone Centrail CLI installation, then run centrail install-hooks. A plugin bundle cannot own the Codex launcher.");
+  }
 }
 function installStopHook(settings, command2) {
   const hooks = isObject6(settings.hooks) ? { ...settings.hooks } : {};
-  const stop = Array.isArray(hooks.Stop) ? hooks.Stop : [];
-  const kept = stop.filter((g) => !isCentrailGroup(g));
+  const cleaned = uninstallStopHook(settings);
+  const kept = Array.isArray(cleaned.hooks?.Stop) ? [...cleaned.hooks.Stop] : [];
   kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
   return { ...settings, hooks: { ...hooks, Stop: kept } };
 }
 function uninstallStopHook(settings) {
   if (!isObject6(settings.hooks) || !Array.isArray(settings.hooks.Stop))
     return settings;
-  const kept = settings.hooks.Stop.filter((g) => !isCentrailGroup(g));
+  const kept = settings.hooks.Stop.flatMap((g) => {
+    if (!isObject6(g) || !Array.isArray(g.hooks))
+      return [g];
+    const handlers = g.hooks.filter((h) => !isObject6(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
+    if (handlers.length === g.hooks.length)
+      return [g];
+    return handlers.length ? [{ ...g, hooks: handlers }] : [];
+  });
   const hooks = { ...settings.hooks };
   if (kept.length > 0)
     hooks.Stop = kept;
@@ -2616,6 +2638,8 @@ function uninstallStopHook(settings) {
   return out;
 }
 async function runInstallHooks(opts, path = claudeSettingsPath(), codexPath = null) {
+  if (!opts.remove)
+    requireStandaloneBundle(process.argv[1]);
   if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
     await runSetup({ interactive: process.stdin.isTTY === true });
   }
@@ -2626,17 +2650,22 @@ async function runInstallHooks(opts, path = claudeSettingsPath(), codexPath = nu
   for (const target of targets) {
     const { settings, indent } = await readSettingsFile(target);
     if (!opts.remove && target === path && pluginEnabled(settings)) {
-      console.log(`Claude Code runs centrail through its plugin (${PLUGIN_ID}); no hook added to ${target}.`);
+      const next2 = uninstallStopHook(settings);
+      if (JSON.stringify(next2) !== JSON.stringify(settings))
+        await writeSettingsFile(target, next2, indent);
+      console.log(`Claude Code runs centrail through its plugin (${PLUGIN_ID}); obsolete standalone Centrail hooks removed, no hook added.`);
       continue;
     }
-    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, hookCommand());
+    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, target === codex ? codexHookCommand() : hookCommand());
     await writeSettingsFile(target, next, indent);
     console.log(opts.remove ? `Removed the centrail Stop hook from ${target}.` : `Installed the centrail Stop hook in ${target}.`);
   }
   if (opts.remove)
     return;
+  if (codex)
+    console.log("Codex: review and trust the updated user hook, then reload/restart sessions. Other config layers and plugin caches are not edited.");
   console.log(
-    `Every ${codex ? "Claude Code and Codex" : "Claude Code"} turn now records session id, folder, repo identity, branch, head and the
+    `Once the hooks are enabled and trusted, each ${codex ? "Claude Code and Codex" : "Claude Code"} turn records session id, folder, repo identity, branch, head and the
 repos its files touched, locally, and starts a background \`centrail sync\` at most every 10 minutes.
 Nothing leaves this machine except what \`centrail inspect --last\` shows.`
   );
@@ -2648,10 +2677,65 @@ async function isDir(p) {
     return false;
   }
 }
-function isCentrailGroup(g) {
-  return isObject6(g) && Array.isArray(g.hooks) && g.hooks.some(
-    (h) => isObject6(h) && typeof h.command === "string" && h.command.includes("centrail") && h.command.includes(HOOK_MARK)
-  );
+function commandWords(command2) {
+  const words = [];
+  const windows = /"(?:[a-z]:\\|\\\\)/i.test(command2);
+  let word = "", quoted = "", started = false;
+  for (let i = 0; i < command2.length; i++) {
+    const char = command2[i];
+    if (/[\n\r]/.test(char))
+      return null;
+    if (quoted) {
+      if (char === quoted)
+        quoted = "";
+      else if (!windows && quoted === '"' && char === "\\" && /[\\"$`]/.test(command2[i + 1] ?? ""))
+        word += command2[++i];
+      else
+        word += char;
+    } else if (char === '"' || char === "'") {
+      quoted = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started)
+        words.push(word);
+      word = "";
+      started = false;
+    } else {
+      if (/[;&|<>$`]/.test(char))
+        return null;
+      word += char;
+      started = true;
+    }
+  }
+  if (quoted)
+    return null;
+  if (started)
+    words.push(word);
+  return words;
+}
+function isCentrailCommand(command2) {
+  const words = commandWords(command2);
+  if (!words)
+    return false;
+  const normal = words.map((w) => w.replaceAll("\\", "/"));
+  const base = (s) => s.split("/").pop() ?? "";
+  const cli = (s) => /(?:^|\/)centrail(?:\.cmd|\.exe|@[^/]*)?$/.test(s);
+  const bundle = (s) => /(?:^|\/)centrail(?:[-@][^/]*)?\/(?:.*\/)?(?:index\.js|centrail\.mjs)$/.test(s) || /\/scripts\/centrail\.mjs$/.test(s);
+  const stopArgs = (args) => [HOOK_MARK, `${HOOK_MARK} --surface codex`, `${HOOK_MARK} --centrail-hook`, `${HOOK_MARK} --centrail-hook --surface codex`].includes(args.join(" "));
+  const absolute2 = (s) => isAbsolute2(s) || win322.isAbsolute(s);
+  if (words.slice(2).includes("--centrail-hook") && stopArgs(words.slice(2)) && absolute2(words[0] ?? "") && absolute2(words[1] ?? ""))
+    return true;
+  if (cli(normal[0] ?? "") && stopArgs(normal.slice(1)))
+    return true;
+  if (/^node(?:\.exe)?$/.test(base(normal[0] ?? "")) && stopArgs(normal.slice(2)) && (words.includes("--centrail-hook") || bundle(normal[1] ?? "")))
+    return true;
+  if (/^npx(?:\.cmd)?$/.test(base(normal[0] ?? ""))) {
+    const args = normal.slice(1);
+    if (args[0] === "-y" || args[0] === "--yes")
+      args.shift();
+    return cli(args[0] ?? "") && stopArgs(args.slice(1));
+  }
+  return normal.length === 2 && /^(?:sh|bash)(?:\.exe)?$/.test(base(normal[0])) && /\/centrail\/(?:[^/]+\/)?scripts\/hook\.sh$/.test(normal[1]);
 }
 var PLUGIN_ID = "centrail@centrail";
 function pluginEnabled(settings) {
@@ -2700,8 +2784,15 @@ function safeRealpath(p) {
     return p;
   }
 }
-function quote(s) {
-  return `"${s.replace(/"/g, '\\"')}"`;
+function quote(s, platform) {
+  if (/[\n\r]/.test(s))
+    throw new Error("Cannot install a hook with a newline in an executable path.");
+  if (platform === "win32") {
+    if (/["%]/.test(s))
+      throw new Error("Cannot install a Windows hook with quotes or percent expansion in an executable path.");
+    return `"${s}"`;
+  }
+  return `"${s.replace(/[\\"$`]/g, "\\$&")}"`;
 }
 function isObject6(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -3254,6 +3345,69 @@ function spawnDetachedSync() {
     env: process.env
   });
   child.unref();
+}
+
+// src/commands/hooks-doctor.ts
+import { constants as constants3 } from "node:fs";
+import { access as access2 } from "node:fs/promises";
+import { isAbsolute as isAbsolute3, win32 as win323 } from "node:path";
+async function inspectUserHooks(claudePath = claudeSettingsPath(), codexPath = codexHooksPath()) {
+  const findings = [];
+  const errors = [];
+  let claudePlugin = false;
+  for (const [source, path] of [["Claude user settings", claudePath], ["Codex user hooks", codexPath]]) {
+    let settings;
+    try {
+      settings = (await readSettingsFile(path)).settings;
+    } catch {
+      errors.push(`${source}: cannot read configuration`);
+      continue;
+    }
+    if (source === "Claude user settings")
+      claudePlugin = pluginEnabled(settings);
+    const groups = Array.isArray(settings.hooks?.Stop) ? settings.hooks.Stop : [];
+    for (const group of groups) {
+      if (!group || !Array.isArray(group.hooks))
+        continue;
+      for (const handler of group.hooks) {
+        if (handler?.type !== "command" || typeof handler.command !== "string")
+          continue;
+        const command2 = handler.command;
+        const words = commandWords(command2);
+        const pluginLauncher = /^\$\{(?:CLAUDE_PLUGIN_ROOT|PLUGIN_ROOT)\}\/scripts\/(?:hook\.sh|centrail\.mjs)$/.test(words?.[1] ?? "");
+        const owned = isCentrailCommand(command2);
+        if (!owned && !pluginLauncher)
+          continue;
+        const paths = words?.slice(0, 2) ?? [];
+        const absolute2 = paths.length === 2 && paths.every((p) => isAbsolute3(p) || win323.isAbsolute(p));
+        const resolves = !pluginLauncher && absolute2 && (await Promise.all(paths.map(async (p, i) => {
+          try {
+            await access2(p, i === 0 ? constants3.X_OK : constants3.R_OK);
+            return true;
+          } catch {
+            return false;
+          }
+        }))).every(Boolean);
+        findings.push({ source, kind: !owned ? "unattributed plugin launcher" : pluginLauncher ? "plugin launcher" : "pinned CLI", resolves });
+      }
+    }
+  }
+  const claudeCount = findings.filter((f) => f.source === "Claude user settings" && f.kind !== "unattributed plugin launcher").length + Number(claudePlugin);
+  const codexCount = findings.filter((f) => f.source === "Codex user hooks" && f.kind !== "unattributed plugin launcher").length;
+  return { claudePlugin, findings, errors, possibleDuplicates: claudeCount > 1 || codexCount > 1 };
+}
+async function runHooksDoctor(claudePath, codexPath) {
+  const report = await inspectUserHooks(claudePath, codexPath);
+  console.log("Centrail hook check \u2014 user installation files only (read-only)");
+  console.log(`Claude user plugin setting: ${report.claudePlugin ? "enabled; plugin owns its launcher" : "disabled/absent; standalone hook expected"}`);
+  for (const finding of report.findings) {
+    console.log(`${finding.source}: ${finding.kind}; ${finding.resolves ? "executable and bundle resolve" : "unresolved or requires plugin context"}`);
+  }
+  for (const error of report.errors)
+    console.log(error);
+  console.log(`Possible duplicate user hooks: ${report.possibleDuplicates ? "yes" : "none found"}`);
+  console.log("Generic plugin-root launchers have ambiguous ownership and are never removed automatically.");
+  console.log("Active project/managed/TOML/plugin-cache hooks and trust are not verified here. Review Codex's hook inventory and Claude's /hooks; restart/reload after changes.");
 }
 
 // src/commands/import.ts
@@ -4256,8 +4410,9 @@ Usage:
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
   centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
-  centrail install-hooks            Auto-sync without the plugin: a Stop hook for Codex (and Claude Code)
+  centrail install-hooks            Codex Stop hook; standalone Claude hook when its user plugin is disabled
   centrail uninstall-hooks          Remove that hook
+  centrail doctor-hooks             Check user hook ownership, pinned paths and possible duplicates (read-only)
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
@@ -4274,7 +4429,7 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf-8");
 }
 try {
-  if (command !== "hook" && isInteractiveTerminal())
+  if (command !== "hook" && command !== "doctor-hooks" && isInteractiveTerminal())
     await recordNode();
   if (command === "connect") {
     await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
@@ -4288,13 +4443,18 @@ try {
     await runInstallHooks({ remove: false });
   } else if (command === "uninstall-hooks") {
     await runInstallHooks({ remove: true });
+  } else if (command === "doctor-hooks") {
+    await runHooksDoctor();
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {
+    const codex = rest.includes("--surface") && rest[rest.indexOf("--surface") + 1] === "codex";
     try {
-      await runStopHook(await readStdin(), "claude-code");
+      await runStopHook(await readStdin(), codex ? "codex" : "claude-code");
     } catch {
     }
+    if (codex)
+      process.stdout.write("{}\n");
   } else if (command === "setup") {
     await runSetup({ interactive: true });
   } else if (command === "repos") {
