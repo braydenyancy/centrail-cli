@@ -35,6 +35,10 @@ describe("bashPaths", () => {
     ['git -C "/w/a b/repo" log', ["/w/a b/repo"]],
     ["git -C '/w/a/repo' log", ["/w/a/repo"]],
     ["ls /w/a /w/b", ["/w/a", "/w/b"]],
+    // Windows: a drive path with either separator, bare or quoted.
+    ["cd C:\\w\\a && npm test", ["C:\\w\\a"]],
+    ['git -C "C:\\w\\a b\\repo" log', ["C:\\w\\a b\\repo"]],
+    ["ls C:/w/a d:/w/b", ["C:/w/a", "d:/w/b"]],
     ["FOO=/w/a/.env node x.js", ["/w/a/.env"]],
     ["curl https://example.com/w/a/x", []],
     ["echo http://h/p", []],

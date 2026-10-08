@@ -172,7 +172,7 @@ export function transcriptLine(o: {
 
 // Claude Code's project dir name for a cwd: every `/` and `.` becomes `-`.
 export function transcriptPath(claudeDir: string, cwd: string, sessionId: string): string {
-  return join(claudeDir, "projects", cwd.replace(/[/.]/g, "-"), `${sessionId}.jsonl`);
+  return join(claudeDir, "projects", cwd.replace(/[^A-Za-z0-9-]/g, "-"), `${sessionId}.jsonl`); // as Claude Code names it: C:\w -> C--w
 }
 
 export async function writeTranscript(claudeDir: string, cwd: string, sessionId: string, lines: string[]): Promise<string> {

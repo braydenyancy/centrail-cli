@@ -20,6 +20,9 @@ import {
   readUserEmail,
   RECENT_SHA_CAP,
   resolveDefaultBranch,
+  isWithin,
+  nativePath,
+  samePath,
 } from "./git.js";
 
 const ROOT = "/repo";
@@ -188,3 +191,34 @@ describe("readUserEmail", () => {
   });
 });
 
+
+// Git prints C:/x on Windows; everything else prints C:\x. Checked with an
+// explicit platform so Linux CI proves the Windows rules too.
+describe("paths git hands back, on each platform", () => {
+  it.each([
+    ["C:/w/repo", "win32", "C:\\w\\repo"],
+    ["c:/w/repo", "win32", "C:\\w\\repo"],
+    ["C:\\w\\repo", "win32", "C:\\w\\repo"],
+    ["/w/repo", "linux", "/w/repo"],
+    ["/w/repo", "darwin", "/w/repo"],
+  ] as const)("nativePath(%s) on %s → %s", (p, platform, want) => {
+    expect(nativePath(p, platform)).toBe(want);
+  });
+
+  it.each([
+    ["C:\\w\\repo\\src\\a.ts", "C:/w/repo", "win32", true],
+    ["c:\\W\\Repo", "C:\\w\\repo", "win32", true],
+    ["C:\\w\\repo-other", "C:\\w\\repo", "win32", false],
+    ["C:\\w\\repo\\a", "C:\\", "win32", true],
+    ["/w/repo/src", "/w/repo", "linux", true],
+    ["/w/repo-other", "/w/repo", "linux", false],
+    ["/w/Repo/src", "/w/repo", "linux", false],
+  ] as const)("isWithin(%s, %s) on %s → %s", (path, root, platform, want) => {
+    expect(isWithin(path, root, platform)).toBe(want);
+  });
+
+  it("samePath ignores case and separators only on Windows", () => {
+    expect(samePath("C:/W/Repo", "c:\\w\\repo", "win32")).toBe(true);
+    expect(samePath("/w/Repo", "/w/repo", "linux")).toBe(false);
+  });
+});

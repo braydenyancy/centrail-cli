@@ -135,7 +135,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
   if (served.cli?.minimum && isOlder(at.version, served.cli.minimum)) throw new CliOutdatedError(await parkOutdated(served.cli.minimum));
   const notice = state.updateNotice?.version === at.version ? state.updateNotice : undefined;
-  await compactSidecar(); // under the sync lock; hook appends are line-atomic
+  // Under the sync lock; hook appends are line-atomic. A compaction that
+  // fails (a file Windows will not let go of) leaves the sidecar long, not
+  // the sync undone.
+  await compactSidecar().catch(() => {});
   await learnConfigDirs();
   const resolver = await IdentityResolver.create(installId);
   const placer = new Placer(resolver);
@@ -324,7 +327,7 @@ async function learnConfigDirs(): Promise<void> {
   const learned: string[] = [];
   for (const line of (await readSidecar()).values()) {
     if (line.surface !== "claude-code" || !line.transcript) continue;
-    const i = line.transcript.lastIndexOf("/projects/");
+    const i = line.transcript.replace(/\\/g, "/").lastIndexOf("/projects/"); // same length: i indexes the original
     if (i <= 0) continue;
     const dir = line.transcript.slice(0, i);
     if (!known.includes(dir) && !learned.includes(dir)) learned.push(dir);
