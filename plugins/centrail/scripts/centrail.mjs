@@ -2047,10 +2047,10 @@ async function listRoots(repoRoot, ref) {
 function displayLabel(path) {
   const p = path.replace(/[\/\\]+$/, "");
   const home = homedir5().replace(/[\/\\]+$/, "");
-  if (p === home)
+  if (samePath(p, home))
     return "~";
   try {
-    if (realpathSync2(p) === realpathSync2(home))
+    if (samePath(realpathSync2.native(p), realpathSync2.native(home)))
       return "~";
   } catch {
   }

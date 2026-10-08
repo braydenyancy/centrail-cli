@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { RepoIdentity } from "@centrail/parsers";
-import { gitExec, resolveDefaultBranch, revRange } from "./git.js";
+import { gitExec, resolveDefaultBranch, revRange, samePath } from "./git.js";
 
 // Repo identity: the one string that is the same for every checkout of a
 // repo — every worktree, every clone, every machine, every user on a team.
@@ -170,9 +170,10 @@ async function listRoots(repoRoot: string, ref: string): Promise<string[]> {
 export function displayLabel(path: string): string {
   const p = path.replace(/[\/\\]+$/, "");
   const home = homedir().replace(/[\/\\]+$/, "");
-  if (p === home) return "~";
+  if (samePath(p, home)) return "~";
   try {
-    if (realpathSync(p) === realpathSync(home)) return "~";
+    // .native: on Windows it also expands 8.3 short names (C:\USERS~1).
+    if (samePath(realpathSync.native(p), realpathSync.native(home))) return "~";
   } catch {
     // a path that no longer exists cannot be the home directory
   }
