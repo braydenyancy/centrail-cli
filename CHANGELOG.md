@@ -5,6 +5,14 @@ versioning.
 
 ## [Unreleased]
 
+### 0.7.3 — plugin setup says to reload open Claude Code sessions
+- **Open sessions keep recording.** Claude Code loads a plugin when a
+  session starts, so a session already open when `connect` or
+  `setup-plugin` installs it runs without any centrail hook until
+  `/reload-plugins` or a restart. Setup now says so in one line. Usage still
+  synced from transcripts meanwhile; only the per-turn repo record was
+  missed.
+
 ### 0.7.2 — the plugin's hook finds Node when Claude Code's PATH has none
 - **No more "node: not found" on every turn.** Claude Code started from the
   Dock, a desktop app or an IDE often has a PATH without the Node that nvm,

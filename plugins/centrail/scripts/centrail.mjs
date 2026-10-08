@@ -1066,7 +1066,7 @@ import { join as join5 } from "node:path";
 import { realpathSync } from "node:fs";
 
 // src/version.ts
-var CLI_VERSION = "0.7.2";
+var CLI_VERSION = "0.7.3";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
@@ -2779,6 +2779,7 @@ async function setUpPlugin(claude, path) {
   console.log(`    to stop that: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Disable auto-update.`);
   if (removedHook)
     console.log("  \u2713 Removed the Stop hook `centrail install-hooks` wrote: the plugin's hook replaces it.");
+  console.log("  Claude Code sessions already open: run /reload-plugins in each, or restart them, so their turns are recorded.");
   return true;
 }
 var RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };

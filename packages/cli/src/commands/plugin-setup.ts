@@ -119,6 +119,9 @@ async function setUpPlugin(claude: ClaudeRunner, path: string): Promise<boolean>
   console.log("  ✓ Claude Code plugin installed. Claude Code updates it after each release (from its next launch);");
   console.log(`    to stop that: /plugin → Marketplaces → ${MARKETPLACE} → Disable auto-update.`);
   if (removedHook) console.log("  ✓ Removed the Stop hook `centrail install-hooks` wrote: the plugin's hook replaces it.");
+  // Claude Code loads a plugin when a session starts; one already open runs
+  // without it (and without the hook just removed) until it reloads.
+  console.log("  Claude Code sessions already open: run /reload-plugins in each, or restart them, so their turns are recorded.");
   return true;
 }
 
