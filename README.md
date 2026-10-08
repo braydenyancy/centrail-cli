@@ -48,16 +48,35 @@ the `release` branch, which moves to each published version once npm has it;
 Claude Code picks the new version up in the background and loads it on its
 next launch ("Plugin updated: centrail"). To opt out, disable auto-update in
 the same place and update with `/plugin` when you choose. A Stop hook
-`install-hooks` wrote earlier is removed when the plugin is set up, so the two
-never both run.
+`install-hooks` wrote earlier in the same user settings is removed when the
+plugin is set up. Other configuration layers remain their owner's responsibility.
 
 ### Without the plugin
 
-`install-hooks` writes the same hook into Codex's `hooks.json` (when Codex is
-installed) and, unless the plugin is enabled, Claude Code's settings. Install
+`install-hooks` writes an explicit pinned Node command into Codex's `hooks.json`
+(when Codex is installed), and a standalone Claude hook when its user plugin
+is disabled. Codex's command needs no plugin-root variable or Unix shell.
+The Claude plugin carries an explicit empty Codex hook override, so importing
+it into Codex does not register its Claude launcher as a second Stop hook. Install
 the CLI once (`npm i -g centrail`) so the hook has a fixed path to run; the
 hook pins the `node` that ran the install, so run it again after upgrading
-node.
+node. After upgrading to the hook-ownership patch, rerun `centrail install-hooks`
+to update existing Codex commands, review/trust the changed hook in Codex, and
+restart/reload sessions. Updating the package alone does not rewrite settings.
+
+`centrail doctor-hooks` checks the two user installation files without running
+hooks or printing commands, paths or config values. It reports pinned executable
+and bundle resolution, enabled Claude user-plugin settings, possible duplicates,
+and ambiguous plugin-root launchers. It does not inventory project, managed,
+inline TOML or cached-plugin hooks; review Codex's hook inventory and Claude's
+`/hooks` for the effective runtime sources. Hook sources are additive in Codex.
+
+Reinstall/uninstall preserves unrelated handlers, even when they share a Stop
+group with Centrail. Generic `${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh` entries copied
+without ownership evidence are reported for review rather than deleted. Uninstall
+removes owned standalone entries in these user files; disable/uninstall the Claude
+plugin through Claude to stop its plugin hook. See the [local investigation and
+rollout receipt](docs/hook-integration-2026-10.md).
 
 ### Staying current
 

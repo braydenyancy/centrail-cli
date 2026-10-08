@@ -1,10 +1,14 @@
-# centrail — Claude Code / Codex plugin
+# centrail — Claude Code plugin
 
 One `Stop` hook. Every turn it appends one line to a local sidecar — session id,
 folder, repo identity, branch, head, and the repos the turn's files touched —
 while the folder still exists, and at most every 10 minutes starts a detached
-`centrail sync`. The same `hooks.json` is read by Claude Code and by Codex (its
-Stop input is Claude-compatible).
+`centrail sync`. This launcher belongs to Claude Code. Compatible Stop input
+does not imply compatible launcher environments or installation ownership.
+Codex uses `centrail install-hooks`, which pins Node and the CLI bundle without
+plugin-root variables, a Unix shell, shell startup files or network resolution.
+`.codex-plugin/plugin.json` explicitly defines no hooks: Codex must not fall back
+to this plugin's default `hooks/hooks.json` alongside its explicit user hook.
 
 `scripts/centrail.mjs` is the CLI bundle of the same version, copied in at
 build time and pinned by the plugin version: nothing is resolved from the
@@ -32,4 +36,10 @@ the new one on its next launch.
 
 Nothing leaves the machine except what `npx centrail inspect --last` shows.
 `centrail install-hooks` does the same without the plugin, pinned to the node
-that ran it.
+that ran it. Reinstall explicit hooks after upgrading Node or the CLI. Codex
+must review/trust changed definitions and reload/restart sessions. Updating an
+old plugin cache requires its owning harness's update flow; this source change
+does not alter installed caches. `setup-plugin` operates on Claude's user settings
+only and removes identifiable standalone Centrail handlers there. It never writes
+Codex's hooks file. `doctor-hooks` is a read-only user-file check; the harness's
+own hook inventory is authoritative for other layers and trust.

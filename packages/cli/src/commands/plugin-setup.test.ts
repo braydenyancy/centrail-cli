@@ -73,6 +73,34 @@ describe("offerPlugin, on yes", () => {
     handHook,
   );
 
+  it("reinstall removes legacy direct-node and stale launcher handlers, preserves mixed groups, and never writes Codex", async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), "centrail-codex-"));
+    const previous = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    try {
+      const codexPath = join(codexHome, "hooks.json");
+      const codexRaw = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: handHook }] }] } });
+      await writeFile(codexPath, codexRaw);
+      const keep = { type: "command", command: "other-stop" };
+      await writeFile(settingsPath, JSON.stringify({ hooks: { Stop: [{ matcher: "*", hooks: [
+        keep,
+        { type: "command", command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/centrail.mjs" hook stop' },
+        { type: "command", command: 'sh "/old/plugins/centrail/0.7.2/scripts/hook.sh"' },
+      ] }] } }));
+      const deps = { settingsPath, claude: fakeClaude(), ask: async () => "y" };
+      await offerPlugin({ interactive: true, again: true }, deps);
+      const once = await settings();
+      expect(once.hooks.Stop).toEqual([{ matcher: "*", hooks: [keep] }]);
+      await offerPlugin({ interactive: true, again: true }, deps);
+      expect(await settings()).toEqual(once);
+      expect(await readFile(codexPath, "utf-8")).toBe(codexRaw);
+    } finally {
+      if (previous === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previous;
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it("adds the marketplace at #release, installs the plugin, turns its updates on, and removes only the hand-written hook", async () => {
     const raw = `${JSON.stringify(original, null, 4)}\n`;
     await writeFile(settingsPath, raw);

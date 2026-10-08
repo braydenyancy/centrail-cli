@@ -2,6 +2,7 @@
 import { runConnect } from "./commands/connect.js";
 import { runStopHook } from "./commands/hook.js";
 import { runInstallHooks } from "./commands/hooks-install.js";
+import { runHooksDoctor } from "./commands/hooks-doctor.js";
 import { offerPlugin } from "./commands/plugin-setup.js";
 import { runImport } from "./commands/import.js";
 import { runStatus } from "./commands/status.js";
@@ -30,8 +31,9 @@ Usage:
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
   centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
-  centrail install-hooks            Auto-sync without the plugin: a Stop hook for Codex (and Claude Code)
+  centrail install-hooks            Codex Stop hook; standalone Claude hook when its user plugin is disabled
   centrail uninstall-hooks          Remove that hook
+  centrail doctor-hooks             Check user hook ownership, pinned paths and possible duplicates (read-only)
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
@@ -50,7 +52,7 @@ async function readStdin(): Promise<string> {
 
 try {
   // A terminal knows where Node is; the plugin's hook, run by an app, may not.
-  if (command !== "hook" && isInteractiveTerminal()) await recordNode();
+  if (command !== "hook" && command !== "doctor-hooks" && isInteractiveTerminal()) await recordNode();
   if (command === "connect") {
     await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
   } else if (command === "status") {
@@ -63,15 +65,20 @@ try {
     await runInstallHooks({ remove: false });
   } else if (command === "uninstall-hooks") {
     await runInstallHooks({ remove: true });
+  } else if (command === "doctor-hooks") {
+    await runHooksDoctor();
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {
-    // Never fail the agent's turn: any error is swallowed, nothing is printed.
+    // Shared processor, separate output contract. Codex Stop expects JSON;
+    // Claude's plugin remains silent. The explicit installer selects Codex.
+    const codex = rest.includes("--surface") && rest[rest.indexOf("--surface") + 1] === "codex";
     try {
-      await runStopHook(await readStdin(), "claude-code");
+      await runStopHook(await readStdin(), codex ? "codex" : "claude-code");
     } catch {
       // intentionally silent
     }
+    if (codex) process.stdout.write("{}\n");
   } else if (command === "setup") {
     await runSetup({ interactive: true });
   } else if (command === "repos") {

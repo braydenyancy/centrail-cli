@@ -299,6 +299,41 @@ every release bumps.
 
 ## Release ordering
 
+### Local hook ownership (0.7.4 candidate)
+
+Claude Code's plugin owns its shell launcher and may rely on Claude's
+`CLAUDE_PLUGIN_ROOT` contract. Codex owns an explicit user hook installed by
+`install-hooks`, pinned to absolute Node and CLI bundle paths. The processing
+core accepts both Stop inputs; launchers and output contracts are separate.
+`--surface codex` selects the Codex fallback surface and emits an empty JSON
+object on stdout, including for malformed input; Claude's launcher stays silent.
+`--centrail-hook` marks newly emitted standalone commands for conservative
+cleanup even at a custom installation path. Explicit installation from the
+plugin bundle is refused before scope/setup or hook-settings writes, preventing
+a pinned Codex command from depending on Claude's replaceable cache.
+These switches change no wire fields.
+
+The plugin's Codex compatibility manifest explicitly supplies empty inline
+hooks, suppressing default `hooks/hooks.json` discovery. `setup-plugin` writes
+only Claude's user configuration. `install-hooks` replaces identifiable legacy
+Centrail handlers individually, removes obsolete standalone Claude handlers when
+the user plugin is enabled, and preserves unrelated handlers and group metadata.
+Uninstall owns the same user files and never uninstalls a harness-managed plugin.
+Unattributed generic plugin-root launchers, project/managed/inline TOML entries
+and stale plugin caches require review through their owning harness; no global
+exactly-once guarantee can be made while an independent registration remains.
+
+Existing pinned Codex entries must be reinstalled to receive the Codex output
+switch; a bundle update alone does not edit hook settings. Changed definitions
+need Codex trust review and sessions need reload/restart. Pinned Node/bundle
+paths must be refreshed after they move. Windows Codex uses its native command
+runner and needs no `sh`; Claude's shell plugin still requires Claude's Git Bash
+environment on Windows. With no Git on PATH, the pinned command can record a
+folder/session but cannot resolve repository identity. No migration, forced
+historical scan or server rollout is required for this local hook change.
+
+### Server/CLI sequence
+
 A new scanner surface (or wire change) touches both repositories. The order is
 fixed — the server must accept a payload before any published CLI can send it:
 

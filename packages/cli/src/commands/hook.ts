@@ -35,8 +35,8 @@ export type HookInput = {
   turn_id?: unknown; // Codex only ("Codex extension" in its stop.command.input schema)
 };
 
-// One plugin serves Claude Code and Codex: both run hooks.json's Stop
-// command with the same input shape. Codex adds `turn_id` and keeps its
+// The processing core accepts both harnesses; installation and launchers
+// have separate owners. Codex adds `turn_id` and keeps its
 // transcripts as `rollout-*.jsonl` under a sessions dir; either mark is
 // enough to read the transcript as a rollout and stamp the surface.
 export function detectSurface(input: HookInput, fallback: string): string {
