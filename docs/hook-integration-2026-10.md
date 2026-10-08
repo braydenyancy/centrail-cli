@@ -184,7 +184,7 @@ Linux receipts on **Node 24.21.0**:
 | Read-only doctor on installed user files | Passed: enabled Claude plugin, resolving Codex pinned paths, no owned user duplicates; no installed files changed. |
 | Codex 0.161.0 loader/dispatch receipt | Passed: 2 legacy registrations/rows → 1 candidate user registration/row. |
 | Bundle parity | Existing byte-for-byte bundle test passed; rebuild remains deterministic. |
-| CI matrix | Unchanged: Ubuntu/macOS/Windows × Node 20/24. These remote jobs have not run for this unpushed branch. |
+| CI matrix | Unchanged: Ubuntu/macOS/Windows × Node 20/24. Initial local receipt preceded the PR; see the remote follow-up below. |
 
 Before adding the plugin-cache installation guard, the complete suites also
 passed on the checkout's Node 26.8.2 (476 CLI tests and 166 parser tests). The first
@@ -193,9 +193,22 @@ the green receipts above. Sandbox subprocess restrictions initially produced
 EPERM/empty sidecars; real subprocess verification was rerun with the approved
 execution permission. Those sandbox artifacts were not treated as product failures.
 
+After push authorization, [PR #12](https://github.com/braydenyancy/centrail-cli/pull/12)
+ran the full native matrix. Five build/test jobs and both validation jobs passed;
+Windows Node 20 failed the new empty-PATH spawned-hook regression. Missing Git
+triggered a separate child stdio socket `ENOTCONN` event in Node 20.20.2, outside
+the promise rejection already handled by the hook. `git.ts` now rejects errors
+from all three child stdio streams, with deterministic regression coverage in
+`git.test.ts`; the empty-PATH spawned-command test remains required. The generated
+plugin bundle was rebuilt. This is a further proven runtime defect, not
+attribution of the original live incident. Native CI must validate the correction
+before merge or release. The corrected Linux Node 24 build and typecheck pass;
+the complete suite passes **480 CLI tests** in 34 files (27.37 s) and **166 parser
+tests** in 8 files (1.06 s), with the same optional parser control skipped.
+
 ## Rollout, rollback and remaining limits
 
-This is a **local candidate**, not protection already delivered to installed users.
+This is an **unreleased PR candidate**, not protection already delivered to installed users.
 No release action is authorized. First obtain the affected incident's sanitized
 command, source/hook identifier, platform, error and exit code, plus presence
 booleans for launcher variables and a redacted cwd category. Confirm whether the

@@ -1619,7 +1619,13 @@ function gitEnv(base = process.env) {
   return env;
 }
 function exec(cmd, args, opts = {}) {
-  return execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
+  const result = execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
+  return new Promise((resolve, reject) => {
+    for (const stream of [result.child?.stdin, result.child?.stdout, result.child?.stderr]) {
+      stream?.on("error", reject);
+    }
+    result.then(resolve, reject);
+  });
 }
 function gitExec(args, opts = {}) {
   return exec("git", args, opts);
