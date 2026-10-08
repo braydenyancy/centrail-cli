@@ -5,6 +5,16 @@ versioning.
 
 ## [Unreleased]
 
+### 0.7.2 — the plugin's hook finds Node when Claude Code's PATH has none
+- **No more "node: not found" on every turn.** Claude Code started from the
+  Dock, a desktop app or an IDE often has a PATH without the Node that nvm,
+  mise, fnm, Volta or Homebrew installed. The plugin's hook now runs
+  `scripts/hook.sh`, which tries PATH, then the Node that last ran `centrail`
+  in a terminal, then those tools' usual install spots. With none it says so
+  in one line: run `npx centrail setup-plugin` once in a terminal.
+- Every `centrail` command run in a terminal records its Node in the config
+  dir (`node`), rewritten only when it changes.
+
 ### 0.7.1 — Windows works, and every change is tested on macOS, Windows and Linux
 - **Windows repos are found.** Git prints `C:/x/repo` where Claude Code and
   Codex print `C:\x\repo`, so on Windows no turn ever matched its repo and
