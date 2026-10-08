@@ -95,6 +95,7 @@ describe("offerPlugin, on yes", () => {
     expect(await readFile(`${settingsPath}.centrail-backup`, "utf-8")).toBe(raw); // as found, before `claude` touched it
     expect((await readConfig()).pluginAnswer).toBe("yes");
     expect(said).toContain("Removed the Stop hook `centrail install-hooks` wrote");
+    expect(said).toContain("Claude Code sessions already open: run /reload-plugins in each, or restart them");
   });
 
   it("re-points a marketplace 0.6.1's README added at the default branch, which `claude` alone refuses to move", async () => {
