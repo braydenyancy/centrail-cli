@@ -15,7 +15,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "rm -rf dist && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --alias:@centrail/parsers=../parsers/src/index.ts --outfile=dist/index.js && cp dist/index.js ../../plugins/centrail/scripts/centrail.mjs",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "prepublishOnly": "npm run build"

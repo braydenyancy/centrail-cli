@@ -4,7 +4,46 @@ on:
   push:
     branches: [main]
 jobs:
+  # Every OS a user runs the CLI and its Claude Code plugin on, at the
+  # oldest Node it supports and the current LTS.
   build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 24]
+    runs-on: ${{ matrix.os }}
+    # Windows is reported, not yet required: git's C:/ paths against the
+    # C:\ paths everything else uses fail most of the suite there. The fix
+    # PR removes this line.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run build
+      # The plugin ships the committed bundle, not this build: a source
+      # change without its rebuilt bundle would ship the old CLI.
+      - name: Committed plugin bundle is the current build
+        run: git diff --exit-code -- plugins/
+      - run: npm run typecheck
+      - run: npm test
+
+  # Claude Code's own validator, over the marketplace and the plugin.
+  plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm i -g @anthropic-ai/claude-code
+      - run: claude plugin validate . --strict
+      - run: claude plugin validate plugins/centrail --strict
+
+  server-contract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,8 +52,6 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run build
-      - run: npm run typecheck
-      - run: npm test
       - id: scanner-surfaces
         run: node scripts/export-scanner-surfaces.mjs
       # Advisory on PRs: a new surface lands here BEFORE the server deploys

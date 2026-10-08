@@ -1,0 +1,3 @@
+# LF everywhere, on every OS: the plugin's bundle is compared byte for byte
+# with a fresh build, and a Windows checkout would otherwise get CRLF.
+* text=auto eol=lf

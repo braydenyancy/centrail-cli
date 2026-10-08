@@ -4,6 +4,7 @@
 // THAT file as the harness would — a Stop input on stdin — and expects a
 // sidecar line, nothing on stdout, exit 0.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,17 +44,7 @@ describe("plugins/centrail", () => {
     fx = await scratch();
     const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
     const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
-    const run = (input: string) =>
-      new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
-        const child = spawn(process.execPath, [join(PLUGIN, "scripts", "centrail.mjs"), "hook", "stop"], { env: { ...process.env, CENTRAIL_CONFIG_DIR: cfg, CLAUDE_PLUGIN_ROOT: PLUGIN } });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (d) => (stdout += d));
-        child.stderr.on("data", (d) => (stderr += d));
-        child.on("error", reject);
-        child.on("close", (code) => resolve({ stdout, stderr, code }));
-        child.stdin.end(input);
-      });
+    const run = (input: string) => runHook(process.execPath, [join(PLUGIN, "scripts", "centrail.mjs"), "hook", "stop"], cfg, input);
     const { stdout, stderr, code } = await run(JSON.stringify({ session_id: "s-plugin", cwd: repo, hook_event_name: "Stop", stop_hook_active: false }));
     expect([stdout, stderr, code]).toEqual(["", "", 0]);
     const lines = await readSidecar(join(cfg, "sessions.jsonl"));
@@ -61,4 +52,43 @@ describe("plugins/centrail", () => {
     expect(await run("not json")).toEqual({ stdout: "", stderr: "", code: 0 });
     await rm(cfg, { recursive: true, force: true });
   });
+
+  // Claude Code runs a hook's command string with `sh -c` on macOS and
+  // Linux and with Git Bash on Windows (code.claude.com/docs/en/hooks), and
+  // hands it CLAUDE_PLUGIN_ROOT with forward slashes. This runs hooks.json's
+  // own string that way, so a quoting or path assumption fails on the OS it
+  // fails on — and the folder it records must be the folder the agent was in.
+  it("runs hooks.json's command through the shell Claude Code uses, and records the agent's own folder", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
+    const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
+    const hooks = JSON.parse(await readFile(join(PLUGIN, "hooks", "hooks.json"), "utf-8"));
+    const command: string = hooks.hooks.Stop[0].hooks[0].command;
+    const input = JSON.stringify({ session_id: "s-shell", cwd: repo, hook_event_name: "Stop", stop_hook_active: false });
+    expect(await runHook(hookShell(), ["-c", command], cfg, input)).toEqual({ stdout: "", stderr: "", code: 0 });
+    const line = (await readSidecar(join(cfg, "sessions.jsonl"))).get("s-shell");
+    expect(line?.repo?.key).toBe("github.com/acme/r");
+    expect(line?.root).toBe(repo);
+    await rm(cfg, { recursive: true, force: true });
+  });
 });
+
+function hookShell(): string {
+  if (process.platform !== "win32") return "sh";
+  const gitBash = "C:\\Program Files\\Git\\bin\\bash.exe";
+  return existsSync(gitBash) ? gitBash : "bash";
+}
+
+function runHook(cmd: string, args: string[], cfg: string, input: string) {
+  return new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
+    const env = { ...process.env, CENTRAIL_CONFIG_DIR: cfg, CLAUDE_PLUGIN_ROOT: PLUGIN.replaceAll("\\", "/") };
+    const child = spawn(cmd, args, { env, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ stdout, stderr, code }));
+    child.stdin.end(input);
+  });
+}
