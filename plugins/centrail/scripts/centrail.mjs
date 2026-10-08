@@ -2597,8 +2597,23 @@ function codexHooksPath() {
   return join8(codexHomeDir(), "hooks.json");
 }
 function hookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
-  const abs = safeRealpath(script);
-  return `${quote(node, platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
+  const abs = stableInstallPath(safeRealpath(script));
+  return `${quote(stableInstallPath(node), platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
+}
+function stableInstallPath(p) {
+  const m = /^(.*[\\/]installs[\\/][^\\/]+[\\/])([^\\/]+)([\\/].*)$/.exec(p);
+  if (!m)
+    return p;
+  const [, base, version, rest2] = m;
+  const target = safeRealpath(p);
+  for (const alias of ["latest", version.split(".")[0]]) {
+    if (alias === version)
+      return p;
+    const candidate = `${base}${alias}${rest2}`;
+    if (safeRealpath(candidate) === target && candidate !== target)
+      return candidate;
+  }
+  return p;
 }
 function codexHookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
   requireStandaloneBundle(script);
