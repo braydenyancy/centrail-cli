@@ -2,18 +2,20 @@
 // differ from the transcript's — duplicated, misattributed, lost, or
 // leaking a path or username — across the real runSync / runStopHook,
 // real git and real files, against the stand-in server.
+import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { mkdir, mkdtemp, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
-import { StandIn, transcriptLine, writeTranscript } from "../testing/stand-in-server.js";
+import { StandIn, transcriptLine, transcriptPath, writeTranscript } from "../testing/stand-in-server.js";
+import { TEST_TIMEOUT } from "../testing/timeout.js";
 
-const home = await mkdtemp(join(tmpdir(), "centrail-adv-"));
+const home = await mkdtemp(join(realpathSync.native(tmpdir()), "centrail-adv-")); // long names: git answers long
 const claudeDir = join(home, "claude");
 const fakeHome = join(home, "jane"); // a username-shaped home directory
-process.env.HOME = fakeHome;
+process.env.HOME = process.env.USERPROFILE = fakeHome; // homedir() reads USERPROFILE on Windows
 process.env.CENTRAIL_CONFIG_DIR = join(home, "cfg");
 process.env.CLAUDE_CONFIG_DIR = claudeDir;
 process.env.CODEX_HOME = join(home, "codex");
@@ -148,7 +150,7 @@ describe("more collection must not mean more rows", () => {
     expect(row.metadata.repo).toBeUndefined(); // the Inbox's problem, honestly
     expect(row.metadata.cwd).toBeUndefined();
     // The transcript itself is swept.
-    await unlink(join(claudeDir, "projects", wt.replace(/[/.]/g, "-"), "sg.jsonl"));
+    await unlink(transcriptPath(claudeDir, wt, "sg"));
     const rowsBefore = new Map(server.rows);
     await runSync({ full: true });
     expect(server.rows).toEqual(rowsBefore);
@@ -501,7 +503,7 @@ describe("two live clones of one repo on one machine", () => {
 describe("a machine offline for a week", () => {
   // Ten syncs, one of them full, over every repo this file has built so far:
   // slow by construction, so it gets more than the default five seconds.
-  it("failed syncs leave the watermark; the first online sync lands everything once; a flaky capabilities call never downgrades the body to the 0.5 shape", { timeout: 30_000 }, async () => {
+  it("failed syncs leave the watermark; the first online sync lands everything once; a flaky capabilities call never downgrades the body to the 0.5 shape", { timeout: 4 * TEST_TIMEOUT }, async () => {
     server.fields = ["repo"];
     const repo = await fx.repo("offline", { remote: "https://github.com/acme/offline.git" });
     const t = (i: number) => T0 + 70 * 60_000 + i * 1000;

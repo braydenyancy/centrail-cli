@@ -112,12 +112,12 @@ describe("repoIdentity", () => {
     fx = await scratch();
     const fakeHome = join(fx.root, "jane");
     await fx.repo("jane", { remote: "https://github.com/jane/dotfiles" });
-    const prev = process.env.HOME;
-    process.env.HOME = fakeHome;
+    const prev = [process.env.HOME, process.env.USERPROFILE];
+    process.env.HOME = process.env.USERPROFILE = fakeHome; // homedir() reads USERPROFILE on Windows
     try {
       expect(await repoIdentity(fakeHome)).toEqual({ key: "github.com/jane/dotfiles", label: "~", source: "remote", root: expect.stringMatching(/^[0-9a-f]{40}$/) });
     } finally {
-      process.env.HOME = prev;
+      [process.env.HOME, process.env.USERPROFILE] = prev;
     }
   });
 });
