@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { acquireSyncLock, LOCK_STALE_MS } from "./config.js";
+import { acquireSyncLock, LOCK_STALE_MS, recordNode } from "./config.js";
 
 async function lockPath(): Promise<string> {
   return join(await mkdtemp(join(tmpdir(), "centrail-lock-")), "sync.lock");
@@ -65,5 +65,21 @@ describe("acquireSyncLock", () => {
     const again = await acquireSyncLock(lock);
     expect(again).not.toBeNull();
     await again!();
+  });
+});
+
+describe("recordNode", () => {
+  it("records the Node a terminal ran, and rewrites it only when it changes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "centrail-node-"));
+    const file = join(dir, "sub", "node");
+    await recordNode("/a/node", file);
+    expect(await readFile(file, "utf-8")).toBe("/a/node\n");
+    const first = (await stat(file)).mtimeMs;
+    await new Promise((r) => setTimeout(r, 20));
+    await recordNode("/a/node", file);
+    expect((await stat(file)).mtimeMs).toBe(first);
+    await recordNode("/b/node", file);
+    expect(await readFile(file, "utf-8")).toBe("/b/node\n");
+    await rm(dir, { recursive: true, force: true });
   });
 });

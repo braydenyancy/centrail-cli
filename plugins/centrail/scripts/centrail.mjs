@@ -1066,7 +1066,7 @@ import { join as join5 } from "node:path";
 import { realpathSync } from "node:fs";
 
 // src/version.ts
-var CLI_VERSION = "0.7.1";
+var CLI_VERSION = "0.7.2";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
@@ -1319,6 +1319,18 @@ async function readAuth() {
     };
   } catch {
     return null;
+  }
+}
+var NODE_PATH_FILE = join5(CONFIG_DIR, "node");
+async function recordNode(execPath = process.execPath, file = NODE_PATH_FILE) {
+  try {
+    const now = await readFile4(file, "utf-8").catch(() => "");
+    if (now.trim() === execPath)
+      return;
+    await mkdir(join5(file, ".."), { recursive: true });
+    await writeFile(file, `${execPath}
+`);
+  } catch {
   }
 }
 async function writeJsonAtomic(path, value, mode2) {
@@ -4261,6 +4273,8 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf-8");
 }
 try {
+  if (command !== "hook" && isInteractiveTerminal())
+    await recordNode();
   if (command === "connect") {
     await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
   } else if (command === "status") {

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/centrail.mjs\" hook stop",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\"",
             "timeout": 10
           }
         ]

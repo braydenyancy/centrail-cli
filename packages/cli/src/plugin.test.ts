@@ -3,9 +3,9 @@
 // version; never resolved from the network per turn), so the test runs
 // THAT file as the harness would — a Stop input on stdin — and expects a
 // sidecar line, nothing on stdout, exit 0.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,7 +24,7 @@ describe("plugins/centrail", () => {
     const hooks = JSON.parse(await readFile(join(PLUGIN, "hooks", "hooks.json"), "utf-8"));
     const stop = hooks.hooks.Stop;
     expect(stop).toHaveLength(1);
-    expect(stop[0].hooks).toEqual([{ type: "command", command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/centrail.mjs" hook stop', timeout: 10 }]);
+    expect(stop[0].hooks).toEqual([{ type: "command", command: 'sh "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh"', timeout: 10 }]);
     expect(Object.keys(hooks.hooks)).toEqual(["Stop"]); // nothing else: no prompts read, no tools gated
     const plugin = JSON.parse(await readFile(join(PLUGIN, ".claude-plugin", "plugin.json"), "utf-8"));
     const pkg = JSON.parse(await readFile(join(ROOT, "packages", "cli", "package.json"), "utf-8"));
@@ -71,7 +71,55 @@ describe("plugins/centrail", () => {
     expect(line?.root).toBe(repo);
     await rm(cfg, { recursive: true, force: true });
   });
+
+  // Claude Code started from the Dock or an IDE may have a PATH with no Node
+  // on it. The launcher must still find one: here a PATH holding only `sh`
+  // and `git`, and the Node a terminal recorded, wrapped so the test can see
+  // it was that one.
+  it.skipIf(process.platform === "win32")("finds the Node a terminal recorded when the app's PATH has none", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
+    const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
+    const bin = await bareBin(cfg);
+    const wrapper = join(cfg, "recorded-node");
+    await writeFile(wrapper, `#!/bin/sh\n: > "${join(cfg, "used-recorded")}"\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+    await writeFile(join(cfg, "node"), `${wrapper}\n`);
+    const input = JSON.stringify({ session_id: "s-recorded", cwd: repo, hook_event_name: "Stop" });
+    expect(await runHook("/bin/sh", ["-c", await hookCommand()], cfg, input, { PATH: bin, HOME: join(cfg, "home") })).toEqual({ stdout: "", stderr: "", code: 0 });
+    expect(existsSync(join(cfg, "used-recorded"))).toBe(true);
+    expect((await readSidecar(join(cfg, "sessions.jsonl"))).get("s-recorded")?.repo?.key).toBe("github.com/acme/r");
+    await rm(cfg, { recursive: true, force: true });
+  });
+
+  // Where a fixed install spot holds a Node (CI images do) there is no
+  // machine without one to test against.
+  const spots = ["/opt/homebrew/bin/node", "/usr/local/bin/node"];
+  it.skipIf(process.platform === "win32" || spots.some((p) => existsSync(p)))("with no Node anywhere, says so in one line instead of failing silently", async () => {
+    const cfg = await mkdtemp(join(tmpdir(), "centrail-plugin-"));
+    const bin = await bareBin(cfg);
+    const { stdout, stderr, code } = await runHook("/bin/sh", ["-c", await hookCommand()], cfg, "{}", { PATH: bin, HOME: join(cfg, "home") });
+    expect([stdout, code]).toEqual(["", 1]);
+    expect(stderr.trim().split("\n")).toEqual([expect.stringMatching(/^centrail: no Node\.js found .*npx centrail setup-plugin/)]);
+    await rm(cfg, { recursive: true, force: true });
+  });
 });
+
+async function hookCommand(): Promise<string> {
+  const hooks = JSON.parse(await readFile(join(PLUGIN, "hooks", "hooks.json"), "utf-8"));
+  return hooks.hooks.Stop[0].hooks[0].command;
+}
+
+// A PATH directory with only `sh` and `git`: what an app-launched Claude
+// Code without a Node on its PATH can still run.
+async function bareBin(dir: string): Promise<string> {
+  const bin = join(dir, "bin");
+  await mkdir(bin);
+  for (const tool of ["sh", "git"]) {
+    const found = execFileSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf-8" }).trim();
+    await symlink(found, join(bin, tool));
+  }
+  return bin;
+}
 
 function hookShell(): string {
   if (process.platform !== "win32") return "sh";
@@ -79,9 +127,9 @@ function hookShell(): string {
   return existsSync(gitBash) ? gitBash : "bash";
 }
 
-function runHook(cmd: string, args: string[], cfg: string, input: string) {
+function runHook(cmd: string, args: string[], cfg: string, input: string, extra: NodeJS.ProcessEnv = {}) {
   return new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
-    const env = { ...process.env, CENTRAIL_CONFIG_DIR: cfg, CLAUDE_PLUGIN_ROOT: PLUGIN.replaceAll("\\", "/") };
+    const env = { ...process.env, ...extra, CENTRAIL_CONFIG_DIR: cfg, CLAUDE_PLUGIN_ROOT: PLUGIN.replaceAll("\\", "/") };
     const child = spawn(cmd, args, { env, windowsHide: true });
     let stdout = "";
     let stderr = "";
