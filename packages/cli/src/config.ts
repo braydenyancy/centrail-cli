@@ -47,6 +47,22 @@ export async function readAuth(): Promise<AuthConfig | null> {
   }
 }
 
+// The Node that last ran centrail in a terminal. The plugin's hook launcher
+// (plugins/centrail/scripts/hook.sh) falls back to it when Claude Code's PATH
+// has none, as when Claude Code was started from the Dock or an IDE.
+export const NODE_PATH_FILE = join(CONFIG_DIR, "node");
+
+export async function recordNode(execPath: string = process.execPath, file: string = NODE_PATH_FILE): Promise<void> {
+  try {
+    const now = await readFile(file, "utf-8").catch(() => "");
+    if (now.trim() === execPath) return;
+    await mkdir(join(file, ".."), { recursive: true });
+    await writeFile(file, `${execPath}\n`);
+  } catch {
+    // best effort: the hook still tries PATH and the usual install spots
+  }
+}
+
 // Every config file is written through a temp file + rename, so a reader
 // racing the writer sees the old file or the new one, never a torn one.
 // rename is atomic within one filesystem on every platform we support.

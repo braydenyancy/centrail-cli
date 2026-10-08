@@ -6,6 +6,7 @@ import { offerPlugin } from "./commands/plugin-setup.js";
 import { runImport } from "./commands/import.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
+import { recordNode } from "./config.js";
 import { progressDone, setProgressMode } from "./progress.js";
 import { isInteractiveTerminal, runExclude, runInclude, runInspect, runRepos, runSetup, runSurfaces } from "./commands/scope.js";
 
@@ -48,6 +49,8 @@ async function readStdin(): Promise<string> {
 }
 
 try {
+  // A terminal knows where Node is; the plugin's hook, run by an app, may not.
+  if (command !== "hook" && isInteractiveTerminal()) await recordNode();
   if (command === "connect") {
     await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
   } else if (command === "status") {

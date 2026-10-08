@@ -10,6 +10,12 @@ Stop input is Claude-compatible).
 build time and pinned by the plugin version: nothing is resolved from the
 network per turn, and the sync that runs is the one you installed.
 
+The hook runs `scripts/hook.sh`, which finds a Node even when Claude Code
+was started from the Dock or an IDE whose PATH has none: PATH first, then the
+Node that last ran `centrail` in a terminal (recorded in its config dir),
+then Homebrew, Volta, mise, asdf, fnm and nvm. With none it prints one line
+saying to run `npx centrail setup-plugin` once in a terminal.
+
 ```
 claude plugin marketplace add braydenyancy/centrail-cli#release
 claude plugin install centrail@centrail
