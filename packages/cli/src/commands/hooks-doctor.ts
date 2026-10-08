@@ -42,8 +42,15 @@ export async function inspectUserHooks(claudePath = claudeSettingsPath(), codexP
   return { claudePlugin, findings, errors, possibleDuplicates: claudeCount > 1 || codexCount > 1 };
 }
 
-export async function runHooksDoctor(claudePath?: string, codexPath?: string): Promise<void> {
+// `--json` prints the same redacted report for tools (dvoid doctor) to read:
+// kinds and booleans only, never a command, path or config value. `version`
+// is the contract; a field that changes meaning gets a new version.
+export async function runHooksDoctor(claudePath?: string, codexPath?: string, opts: { json?: boolean } = {}): Promise<void> {
   const report = await inspectUserHooks(claudePath, codexPath);
+  if (opts.json) {
+    console.log(JSON.stringify({ version: 1, ...report }));
+    return;
+  }
   console.log("Centrail hook check — user installation files only (read-only)");
   console.log(`Claude user plugin setting: ${report.claudePlugin ? "enabled; plugin owns its launcher" : "disabled/absent; standalone hook expected"}`);
   for (const finding of report.findings) {

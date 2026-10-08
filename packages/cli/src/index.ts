@@ -13,12 +13,13 @@ import { isInteractiveTerminal, runExclude, runInclude, runInspect, runRepos, ru
 
 const [, , command, ...rest] = process.argv;
 
-const flags = { url: undefined as string | undefined, full: false, last: false, noBrowser: false };
+const flags = { url: undefined as string | undefined, full: false, last: false, noBrowser: false, json: false };
 for (let i = 0; i < rest.length; i++) {
   if (rest[i] === "--url") flags.url = rest[++i];
   else if (rest[i] === "--full") flags.full = true;
   else if (rest[i] === "--last") flags.last = true;
   else if (rest[i] === "--no-browser") flags.noBrowser = true;
+  else if (rest[i] === "--json") flags.json = true;
   else if (rest[i] === "--quiet") setProgressMode("quiet");
   else if (rest[i] === "--verbose") setProgressMode("verbose");
 }
@@ -33,7 +34,7 @@ Usage:
   centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
   centrail install-hooks            Codex Stop hook; standalone Claude hook when its user plugin is disabled
   centrail uninstall-hooks          Remove that hook
-  centrail doctor-hooks             Check user hook ownership, pinned paths and possible duplicates (read-only)
+  centrail doctor-hooks [--json]    Check user hook ownership, pinned paths and possible duplicates (read-only)
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
@@ -66,7 +67,7 @@ try {
   } else if (command === "uninstall-hooks") {
     await runInstallHooks({ remove: true });
   } else if (command === "doctor-hooks") {
-    await runHooksDoctor();
+    await runHooksDoctor(undefined, undefined, { json: flags.json });
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {

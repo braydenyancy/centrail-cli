@@ -3411,8 +3411,12 @@ async function inspectUserHooks(claudePath = claudeSettingsPath(), codexPath = c
   const codexCount = findings.filter((f) => f.source === "Codex user hooks" && f.kind !== "unattributed plugin launcher").length;
   return { claudePlugin, findings, errors, possibleDuplicates: claudeCount > 1 || codexCount > 1 };
 }
-async function runHooksDoctor(claudePath, codexPath) {
+async function runHooksDoctor(claudePath, codexPath, opts = {}) {
   const report = await inspectUserHooks(claudePath, codexPath);
+  if (opts.json) {
+    console.log(JSON.stringify({ version: 1, ...report }));
+    return;
+  }
   console.log("Centrail hook check \u2014 user installation files only (read-only)");
   console.log(`Claude user plugin setting: ${report.claudePlugin ? "enabled; plugin owns its launcher" : "disabled/absent; standalone hook expected"}`);
   for (const finding of report.findings) {
@@ -4402,7 +4406,7 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
 
 // src/index.ts
 var [, , command, ...rest] = process.argv;
-var flags = { url: void 0, full: false, last: false, noBrowser: false };
+var flags = { url: void 0, full: false, last: false, noBrowser: false, json: false };
 for (let i = 0; i < rest.length; i++) {
   if (rest[i] === "--url")
     flags.url = rest[++i];
@@ -4412,6 +4416,8 @@ for (let i = 0; i < rest.length; i++) {
     flags.last = true;
   else if (rest[i] === "--no-browser")
     flags.noBrowser = true;
+  else if (rest[i] === "--json")
+    flags.json = true;
   else if (rest[i] === "--quiet")
     setProgressMode("quiet");
   else if (rest[i] === "--verbose")
@@ -4427,7 +4433,7 @@ Usage:
   centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
   centrail install-hooks            Codex Stop hook; standalone Claude hook when its user plugin is disabled
   centrail uninstall-hooks          Remove that hook
-  centrail doctor-hooks             Check user hook ownership, pinned paths and possible duplicates (read-only)
+  centrail doctor-hooks [--json]    Check user hook ownership, pinned paths and possible duplicates (read-only)
   centrail inspect --last           Print the last payload exactly as it left this machine
   centrail setup                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
@@ -4459,7 +4465,7 @@ try {
   } else if (command === "uninstall-hooks") {
     await runInstallHooks({ remove: true });
   } else if (command === "doctor-hooks") {
-    await runHooksDoctor();
+    await runHooksDoctor(void 0, void 0, { json: flags.json });
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {

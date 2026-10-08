@@ -34,6 +34,15 @@ describe("user hook doctor", () => {
       finally { log.mockRestore(); }
       expect(output.join("\n")).not.toMatch(/private-name|centrail-doctor-|nodejs|CLAUDE_PLUGIN_ROOT/);
       expect(output.join("\n")).toContain("Codex user hooks: pinned CLI; executable and bundle resolve");
+      const json: string[] = [];
+      const jlog = vi.spyOn(console, "log").mockImplementation((line) => { json.push(String(line)); });
+      try { await runHooksDoctor(claude, codex, { json: true }); }
+      finally { jlog.mockRestore(); }
+      expect(json).toHaveLength(1);
+      const parsed = JSON.parse(json[0]!);
+      expect(parsed).toMatchObject({ version: 1, possibleDuplicates: false });
+      expect(parsed.findings).toContainEqual({ source: "Codex user hooks", kind: "pinned CLI", resolves: true });
+      expect(json[0]).not.toMatch(/private-name|centrail-doctor-|nodejs|CLAUDE_PLUGIN_ROOT/);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
