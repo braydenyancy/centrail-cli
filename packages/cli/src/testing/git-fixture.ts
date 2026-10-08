@@ -44,9 +44,10 @@ export type Scratch = {
   cleanup: () => Promise<void>;
 };
 
-// realpath: macOS hands out /var/folders/… while git answers /private/var/….
+// realpath: macOS hands out /var/folders/… while git answers /private/var/…,
+// and Windows a short RUNNER~1 that git answers long; .native expands both.
 export async function scratch(): Promise<Scratch> {
-  const root = await mkdtemp(join(realpathSync(tmpdir()), "centrail-git-"));
+  const root = await mkdtemp(join(realpathSync.native(tmpdir()), "centrail-git-"));
   const env = fixtureEnv(root);
   const git = async (cwd: string, ...args: string[]): Promise<string> => {
     const { stdout } = await run("git", ["-C", cwd, ...args], { env });

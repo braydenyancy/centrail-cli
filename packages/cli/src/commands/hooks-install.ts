@@ -1,9 +1,9 @@
 import { constants, realpathSync } from "node:fs";
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { claudeConfigDirs, codexHomeDir } from "@centrail/parsers";
 import { stat } from "node:fs/promises";
-import { readConfig } from "../config.js";
+import { readConfig, replaceFile } from "../config.js";
 import { runSetup } from "./scope.js";
 
 // `centrail install-hooks` / `uninstall-hooks`: one Stop entry in Claude
@@ -144,7 +144,7 @@ export async function writeSettingsFile(path: string, settings: Settings, indent
   await backUpSettings(path);
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(settings, null, indent)}\n`);
-  await rename(tmp, path);
+  await replaceFile(tmp, path);
 }
 
 // The file as centrail first found it, kept once beside it as

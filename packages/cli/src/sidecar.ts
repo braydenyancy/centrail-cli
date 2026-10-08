@@ -1,7 +1,7 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { RepoIdentity } from "@centrail/parsers";
-import { CONFIG_DIR } from "./config.js";
+import { CONFIG_DIR, replaceFile } from "./config.js";
 
 // The sidecar: one line per agent turn, written by the Stop hook while the
 // session's folder still exists. It carries the one thing a later scan
@@ -114,7 +114,7 @@ export async function compactSidecar(path: string = SIDECAR_PATH, now = Date.now
   for (const [sessionId, at] of lastSeen) if (at < expired) keep.delete(sessionId); // unparsable ts: NaN, kept
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile(tmp, [...keep.values(), ...recent].map((l) => `${l}\n`).join(""), { mode: 0o600 });
-  await rename(tmp, path);
+  await replaceFile(tmp, path);
 }
 
 function isSidecarLine(v: unknown): v is SidecarLine {

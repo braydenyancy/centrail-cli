@@ -57,7 +57,8 @@ export function claudeToolEvidence(block: { name: unknown; input: unknown }): Ev
 // at most one git spawn, so /tmp, /var, /opt, /srv stay: repos live
 // there). Order of first appearance, deduplicated.
 const SYSTEM_PREFIXES = ["/dev", "/proc", "/sys", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"];
-const BASH_PATH = /(?:^|[\s=:;|&(<>'"`])(?:'(\/[^']+)'|"(\/[^"]+)"|(\/[^\s'"`;|&<>()]+))/g;
+// An absolute path starts with `/`, or on Windows with a drive (`C:\`, `C:/`).
+const BASH_PATH = /(?:^|[\s=:;|&(<>'"`])(?:'((?:[A-Za-z]:[\\/]|\/)[^']+)'|"((?:[A-Za-z]:[\\/]|\/)[^"]+)"|((?:[A-Za-z]:[\\/]|\/)[^\s'"`;|&<>()]+))/g;
 
 export function bashPaths(command: string): string[] {
   const out: string[] = [];

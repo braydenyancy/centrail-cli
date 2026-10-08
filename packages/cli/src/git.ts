@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
 import { parseGitLogNumstat, type RepoCommit } from "@centrail/parsers";
 
@@ -33,7 +33,7 @@ function exec(
   args: string[],
   opts: { maxBuffer?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(cmd, args, { ...opts, env: gitEnv() });
+  return execFileAsync(cmd, args, { ...opts, env: gitEnv(), windowsHide: true });
 }
 
 // Every git spawn in the CLI goes through here, so the GIT_DIR scrub above
@@ -49,10 +49,37 @@ export function gitExec(
 export async function resolveRepoRoot(cwd: string): Promise<string | null> {
   try {
     const { stdout } = await exec("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
-    return stdout.trim() || null;
+    const root = stdout.trim();
+    return root ? nativePath(root) : null;
   } catch {
     return null;
   }
+}
+
+// Git prints `C:/x/repo` on Windows, where Node, Claude Code and Codex
+// print `C:\x\repo`. Every path git hands back goes through here, so the
+// two spellings of one folder compare equal. Elsewhere it is the identity.
+export function nativePath(p: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") return p;
+  const n = win32.normalize(p);
+  return /^[a-z]:/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
+}
+
+// Whether `path` is `root` or inside it, by whole path segments. Windows
+// paths compare without case and with either separator, as the filesystem
+// does.
+export function isWithin(path: string, root: string, platform: NodeJS.Platform = process.platform): boolean {
+  const [p, r] = platform === "win32" ? [winKey(path), winKey(root)] : [path, root];
+  const sep = platform === "win32" ? "\\" : "/";
+  return p === r || p.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
+}
+
+export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" ? winKey(a) === winKey(b) : a === b;
+}
+
+function winKey(p: string): string {
+  return win32.normalize(p).toLowerCase();
 }
 
 // The repo root for a path that may not exist (a file the turn created in
@@ -82,7 +109,7 @@ export async function nearestDirectory(path: string): Promise<string | null> {
 // checkout that may hold it. Null when none does.
 export function deepestRoot(roots: Iterable<string>, path: string): string | null {
   let best: string | null = null;
-  for (const r of roots) if ((path === r || path.startsWith(`${r}/`)) && (!best || r.length > best.length)) best = r;
+  for (const r of roots) if (isWithin(path, r) && (!best || r.length > best.length)) best = r;
   return best;
 }
 
@@ -92,7 +119,7 @@ export function deepestRoot(roots: Iterable<string>, path: string): string | nul
 // answers for `dir` only when no folder below it on the way has one. Stats,
 // never a spawn: this is what lets a known root stand in for git.
 export async function nestedCheckout(root: string, dir: string): Promise<boolean> {
-  for (let d = dir; d !== root && d.startsWith(`${root}/`); d = dirname(d)) {
+  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname(d)) {
     try {
       await stat(join(d, ".git"));
       return true;
@@ -110,10 +137,10 @@ export async function nestedCheckout(root: string, dir: string): Promise<boolean
 export async function readMainCheckout(repoRoot: string): Promise<string | null> {
   try {
     const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    const common = stdout.trim();
+    const common = stdout.trim() ? nativePath(stdout.trim()) : "";
     if (!common || basename(common) !== ".git") return null;
     const main = dirname(common);
-    return main === repoRoot ? null : main;
+    return samePath(main, repoRoot) ? null : main;
   } catch {
     return null;
   }
@@ -273,7 +300,7 @@ export async function branchPrefixes(repoRoot: string, defaultRef: string, tipRe
 export function patchIds(repoRoot: string, commits: { sha: string; base?: string }[]): Promise<Record<string, string>> {
   if (commits.length === 0) return Promise.resolve({});
   return new Promise((resolve) => {
-    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] as ["pipe", "pipe", "ignore"] };
+    const opts = { env: { ...gitEnv(), GIT_ATTR_NOSYSTEM: "1" }, stdio: ["pipe", "pipe", "ignore"] as ["pipe", "pipe", "ignore"], windowsHide: true };
     const diff = spawn(
       "git",
       ["-C", repoRoot, "-c", "core.quotePath=true", "-c", "core.attributesFile=/dev/null", "diff-tree", "--stdin", "-p", "--text", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic", "--no-ext-diff", "--no-textconv"],
