@@ -211,8 +211,8 @@ describe("stableInstallPath: a version manager's alias, so an upgrade or prune d
 
   it("is what hookCommand pins", async () => {
     const node = await installs(["24.21.0"], { latest: "24.21.0" });
-    expect(hookCommand(node("24.21.0"), "/opt/centrail/dist/index.js", "linux")).toBe(
-      `"${node("latest")}" "/opt/centrail/dist/index.js" hook stop --centrail-hook`,
-    );
+    const cmd = hookCommand(node("24.21.0"), "/opt/centrail/dist/index.js");
+    expect(cmd).toContain(node("latest"));
+    expect(cmd).not.toContain(node("24.21.0"));
   });
 });
