@@ -26,7 +26,9 @@ const DEFAULT_BASE_PATH = join(homedir(), ".copilot", "session-state");
 export async function scanCopilotLogs(opts: {
   basePath?: string;
   since?: Date;
+  wholeFiles?: boolean;
   onFile?: (done: number, total: number) => void;
+  onIssue?: (issue: { reason: "conflicting_copy"; externalId: string }) => void;
 }): Promise<ParsedUsageEvent[]> {
   const basePath = opts.basePath ?? DEFAULT_BASE_PATH;
 
@@ -38,20 +40,46 @@ export async function scanCopilotLogs(opts: {
     throw err;
   }
 
-  const events: ParsedUsageEvent[] = [];
+  const events = new Map<string, { event: ParsedUsageEvent; baseId: string; fingerprint: string }>();
+  const changedSessions = new Set<string>();
+  const conflicts = new Set<string>();
+  entries.sort();
   for (let i = 0; i < entries.length; i++) {
-    await readSession(basePath, entries[i], opts.since, events);
+    const parsed: ParsedUsageEvent[] = [];
+    await readSession(basePath, entries[i], parsed);
+    if (opts.since && opts.wholeFiles && parsed.length) {
+      try {
+        const files = await Promise.all([stat(join(basePath, entries[i], "events.jsonl")), stat(join(basePath, entries[i], "workspace.yaml"))]);
+        if (files.some((file) => Math.max(file.mtimeMs, file.ctimeMs) >= opts.since!.getTime())) {
+          changedSessions.add(parsed[0].metadata.sessionId!);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    const baseIds = new Map(parsed.map((event) => [event, event.externalId]));
+    for (const event of suffixDuplicateExternalIds(parsed)) {
+      const baseId = baseIds.get(event)!;
+      const fingerprint = JSON.stringify([event.model, event.inputTokens, event.outputTokens, event.cacheReadTokens, event.cacheWriteTokens]);
+      const previous = events.get(event.externalId);
+      if (previous && previous.fingerprint !== fingerprint) {
+        if (!conflicts.has(baseId)) opts.onIssue?.({ reason: "conflicting_copy", externalId: baseId });
+        conflicts.add(baseId);
+      }
+      if (!previous) events.set(event.externalId, { event, baseId, fingerprint });
+    }
     opts.onFile?.(i + 1, entries.length);
   }
 
-  return suffixDuplicateExternalIds(events);
+  return [...events.values()].filter(({ event, baseId }) => !conflicts.has(baseId) &&
+    (!opts.since || (opts.wholeFiles ? changedSessions.has(event.metadata.sessionId!) : event.occurredAt > opts.since)))
+    .map(({ event }) => event);
 }
 
 // Appends one session dir's events (entry: its name under the base path).
 async function readSession(
   basePath: string,
   entry: string,
-  since: Date | undefined,
   events: ParsedUsageEvent[],
 ): Promise<void> {
   const dir = join(basePath, entry);
@@ -76,7 +104,6 @@ async function readSession(
     const segDate = new Date(segment.timestamp ?? "");
     const occurredAt = Number.isNaN(segDate.getTime()) ? sessionStart : segDate;
     if (Number.isNaN(occurredAt.getTime())) continue;
-    if (since && occurredAt <= since) continue;
 
     for (const [model, m] of Object.entries(segment.modelMetrics)) {
       const usage = isObject(m) && isObject(m.usage) ? m.usage : null;

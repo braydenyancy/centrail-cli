@@ -1,0 +1,503 @@
+{
+  "schemaVersion": 1,
+  "upstreamCommit": "d4d1c751856e25913bce97bfbd7b254308863239",
+  "helperSha256": "d368b8d43468b64037834fbfd50eb72dbadc6c6dec3b3b83f931809f69ed2206",
+  "binarySha256": "1c23d335f6fe941e45b245f0946fb18e98a631b27c36ec4fe71fa770de10eda7",
+  "upstreamLockSha256": "a623b04afb0cdfeafa91f196f199bb41bf3842ebd949524ef5b50c2e70adfadd",
+  "centrailSources": {
+    "packages/parsers/src/index.ts": "0ef431160e8ba664c1f1bf34d02c3f92a95d38426610e43a65cddcdceae6145e",
+    "packages/parsers/src/providers/claude-code.ts": "258e86ffec103a67d9b83284fa0e10cd7abf36d8a775542b8d5caecdbdacf7f8",
+    "packages/parsers/src/providers/codex.ts": "498b3712cdbe56aa2b06b6ca4298c108f85b47454431182af68d700bf2fc4c56",
+    "packages/parsers/src/providers/copilot-cli.ts": "e7690152ed07f198deb707a44ebb9765f04821b6cd772a0ed7d63207a996f445",
+    "packages/parsers/src/providers/evidence.ts": "6d2e3915e2132ff9cc26f2803c8899e05daa50def0480749459e2c0a55bfe30f",
+    "packages/parsers/src/providers/external-id.ts": "5899e87fdf5e175b130d5eb860a041c00ffea36dedd3745935677d728223249d",
+    "packages/parsers/src/providers/gemini.ts": "8a6dcf2e048b263e210374fb66ae674571492881c11cc8382ca1410fc62ee1b5",
+    "packages/parsers/src/providers/git-attribution.ts": "b9b15905584627a242302b91f334749cc60aef6bef161cb857586b152bd3d01b",
+    "packages/parsers/src/providers/pi.ts": "02a24930f0141578938c98c8ac40ca6deaea1ba457378f73a2ff3fda77109003",
+    "packages/parsers/src/providers/ship-status.ts": "2adb49463f09da52a130d14378bb5ba058f35bfca0763a8f053911f80ffbf755"
+  },
+  "isolation": {
+    "mechanism": "bwrap unshare-all, clearenv, read-only fixtures, no pricing",
+    "probe": {
+      "homeAbsent": true,
+      "networkConnectErrno": 101
+    }
+  },
+  "cases": [
+    {
+      "fixture": "codex-copy.json",
+      "client": "codex",
+      "sourceReason": "One source usage event copied byte-for-byte: count once. Cached input is a subset of 100 prompt tokens; reasoning is inside 20 output tokens.",
+      "fixtureSha256": "f6076e1f236d681b9404e18aad54087ffdc19ad6ce7414001b6683520eb5dc1b",
+      "sourceFiles": {
+        ".codex/sessions/2026/10/01/a.jsonl": "f54610cb4fdf5abcafe0f188bedfe2c9d276bb12987ced2f3de3af3f32e58305",
+        ".codex/sessions/2026/10/01/b.jsonl": "f54610cb4fdf5abcafe0f188bedfe2c9d276bb12987ced2f3de3af3f32e58305"
+      },
+      "expected": [
+        {
+          "model": "gpt-5",
+          "provider": "openai",
+          "input": 70,
+          "output": 20,
+          "cacheRead": 30,
+          "cacheWrite": 0,
+          "session": "synthetic-codex-session",
+          "timestamp": 1790856000000
+        }
+      ],
+      "projections": {
+        "centrail": [
+          {
+            "model": "gpt-5",
+            "provider": "openai",
+            "input": 70,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 0,
+            "session": "synthetic-codex-session",
+            "timestamp": 1790856000000
+          }
+        ],
+        "tokscale": [
+          {
+            "model": "gpt-5",
+            "provider": "openai",
+            "input": 70,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 0,
+            "session": "a",
+            "timestamp": 1790856000000
+          }
+        ]
+      },
+      "differences": [
+        {
+          "implementation": "tokscale",
+          "expected": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 70,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-codex-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "actual": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 70,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "a",
+              "timestamp": 1790856000000
+            }
+          ]
+        }
+      ],
+      "identity": {
+        "centrail": [
+          "synthetic-codex-session:synthetic-turn:2026-10-01T12:00:00.000Z"
+        ],
+        "tokscale": [
+          "codex:token_count-total:synthetic-codex-session:openai:gpt-5:100:20:30:5"
+        ]
+      },
+      "repeatStable": true,
+      "raw": {
+        "centrail": {
+          "schemaVersion": 1,
+          "client": "codex",
+          "records": [
+            {
+              "externalId": "synthetic-codex-session:synthetic-turn:2026-10-01T12:00:00.000Z",
+              "provider": "openai",
+              "model": "gpt-5",
+              "inputTokens": 70,
+              "outputTokens": 20,
+              "cacheReadTokens": 30,
+              "cacheCreationTokens": 0,
+              "cacheWriteTokens": 0,
+              "cacheCreation5mTokens": 0,
+              "cacheCreation1hTokens": 0,
+              "occurredAt": "2026-10-01T12:00:00.000Z",
+              "metadata": {
+                "cwd": "/synthetic/project",
+                "sessionId": "synthetic-codex-session",
+                "turn": "synthetic-codex-session#synthetic-turn",
+                "touched": {
+                  "writes": [],
+                  "reads": []
+                }
+              }
+            }
+          ]
+        },
+        "tokscale": {
+          "cache": "memory",
+          "client": "codex",
+          "pricing": "disabled",
+          "records": [
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "codex:token_count-total:synthetic-codex-session:openai:gpt-5:100:20:30:5",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "a",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 70,
+                "output": 15,
+                "reasoning": 5
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "schemaVersion": 1,
+          "upstreamCommit": "d4d1c751856e25913bce97bfbd7b254308863239"
+        }
+      }
+    },
+    {
+      "fixture": "gemini-copy.json",
+      "client": "gemini",
+      "sourceReason": "One message copied byte-for-byte. Input100 includes cache30; output20 excludes thoughts10; total130 validates prompt plus output plus thoughts.",
+      "fixtureSha256": "81b6925387fc2c77da5b38279f77040f777b99c7ab34f25f4295d1348bc64932",
+      "sourceFiles": {
+        ".gemini/tmp/project/chats/session-b.json": "d6183a24eb83b8ae94e5aedbcce0625c13daf49ecf5983390be007889cec1135",
+        ".gemini/tmp/project/chats/session-a.json": "d6183a24eb83b8ae94e5aedbcce0625c13daf49ecf5983390be007889cec1135"
+      },
+      "expected": [
+        {
+          "model": "gemini-2.5-pro",
+          "provider": "google",
+          "input": 70,
+          "output": 30,
+          "cacheRead": 30,
+          "cacheWrite": 0,
+          "session": "synthetic-gemini-session",
+          "timestamp": 1790856000000
+        }
+      ],
+      "projections": {
+        "centrail": [
+          {
+            "model": "gemini-2.5-pro",
+            "provider": "google",
+            "input": 70,
+            "output": 30,
+            "cacheRead": 30,
+            "cacheWrite": 0,
+            "session": "synthetic-gemini-session",
+            "timestamp": 1790856000000
+          }
+        ],
+        "tokscale": [
+          {
+            "model": "gemini-2.5-pro",
+            "provider": "google",
+            "input": 70,
+            "output": 30,
+            "cacheRead": 30,
+            "cacheWrite": 0,
+            "session": "synthetic-gemini-session",
+            "timestamp": 1790856000000
+          },
+          {
+            "model": "gemini-2.5-pro",
+            "provider": "google",
+            "input": 70,
+            "output": 30,
+            "cacheRead": 30,
+            "cacheWrite": 0,
+            "session": "synthetic-gemini-session",
+            "timestamp": 1790856000000
+          }
+        ]
+      },
+      "differences": [
+        {
+          "implementation": "tokscale",
+          "expected": [
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 70,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "actual": [
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 70,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            },
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 70,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        }
+      ],
+      "identity": {
+        "centrail": [
+          "gemini:07ddd3c7716d4a42dd2dbe1d45ae46bf434701fb6a1fa07988ec84a36279408e"
+        ],
+        "tokscale": [
+          null,
+          null
+        ]
+      },
+      "repeatStable": true,
+      "raw": {
+        "centrail": {
+          "schemaVersion": 1,
+          "client": "gemini",
+          "records": [
+            {
+              "externalId": "gemini:07ddd3c7716d4a42dd2dbe1d45ae46bf434701fb6a1fa07988ec84a36279408e",
+              "provider": "google",
+              "model": "gemini-2.5-pro",
+              "inputTokens": 70,
+              "outputTokens": 30,
+              "cacheReadTokens": 30,
+              "cacheCreationTokens": 0,
+              "cacheWriteTokens": 0,
+              "cacheCreation5mTokens": 0,
+              "cacheCreation1hTokens": 0,
+              "occurredAt": "2026-10-01T12:00:00.000Z",
+              "metadata": {
+                "sessionId": "gemini:synthetic-gemini-session",
+                "messageId": "synthetic-message"
+              }
+            }
+          ]
+        },
+        "tokscale": {
+          "cache": "memory",
+          "client": "gemini",
+          "pricing": "disabled",
+          "records": [
+            {
+              "agent": null,
+              "client": "gemini",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": null,
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gemini-2.5-pro",
+              "parent_session_id": null,
+              "provider_id": "google",
+              "service_tier": null,
+              "session_id": "synthetic-gemini-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 70,
+                "output": 20,
+                "reasoning": 10
+              },
+              "workspace_key": null,
+              "workspace_label": null
+            },
+            {
+              "agent": null,
+              "client": "gemini",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": null,
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gemini-2.5-pro",
+              "parent_session_id": null,
+              "provider_id": "google",
+              "service_tier": null,
+              "session_id": "synthetic-gemini-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 70,
+                "output": 20,
+                "reasoning": 10
+              },
+              "workspace_key": null,
+              "workspace_label": null
+            }
+          ],
+          "schemaVersion": 1,
+          "upstreamCommit": "d4d1c751856e25913bce97bfbd7b254308863239"
+        }
+      }
+    },
+    {
+      "fixture": "pi-copy.json",
+      "client": "pi",
+      "sourceReason": "One provider response copied byte-for-byte. Pi usage buckets are disjoint; total=155.",
+      "fixtureSha256": "47e2a4b7d185e94d0f012d15e7bfab3f9dab3fd950534d8adc3ced12f0bbc4f1",
+      "sourceFiles": {
+        ".pi/agent/sessions/project/a.jsonl": "203fefbe39e3d35320227beab1e80975f15e6b6b3f5b3d4412e86d9721ecdc4c",
+        ".pi/agent/sessions/project/b.jsonl": "203fefbe39e3d35320227beab1e80975f15e6b6b3f5b3d4412e86d9721ecdc4c"
+      },
+      "expected": [
+        {
+          "model": "gpt-5",
+          "provider": "openai",
+          "input": 100,
+          "output": 20,
+          "cacheRead": 30,
+          "cacheWrite": 5,
+          "session": "synthetic-pi-session",
+          "timestamp": 1790856000000
+        }
+      ],
+      "projections": {
+        "centrail": [
+          {
+            "model": "gpt-5",
+            "provider": "openai",
+            "input": 100,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 5,
+            "session": "synthetic-pi-session",
+            "timestamp": 1790856000000
+          }
+        ],
+        "tokscale": [
+          {
+            "model": "gpt-5",
+            "provider": "openai",
+            "input": 100,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 5,
+            "session": "synthetic-pi-session",
+            "timestamp": 1790856000000
+          }
+        ]
+      },
+      "differences": [],
+      "identity": {
+        "centrail": [
+          "pi:ffd983b48dfcd14d4543a00363b330619fb53d70a4abd2d48d5e359c2c883e96"
+        ],
+        "tokscale": [
+          "pi:response:synthetic-response"
+        ]
+      },
+      "repeatStable": true,
+      "raw": {
+        "centrail": {
+          "schemaVersion": 1,
+          "client": "pi",
+          "records": [
+            {
+              "externalId": "pi:ffd983b48dfcd14d4543a00363b330619fb53d70a4abd2d48d5e359c2c883e96",
+              "provider": "openai",
+              "model": "gpt-5",
+              "inputTokens": 100,
+              "outputTokens": 20,
+              "cacheReadTokens": 30,
+              "cacheWriteTokens": 5,
+              "cacheCreationTokens": 5,
+              "cacheCreation5mTokens": 0,
+              "cacheCreation1hTokens": 0,
+              "occurredAt": "2026-10-01T12:00:00.000Z",
+              "metadata": {
+                "sessionId": "pi:synthetic-pi-session",
+                "cwd": "/synthetic/project",
+                "messageId": "synthetic-entry"
+              }
+            }
+          ]
+        },
+        "tokscale": {
+          "cache": "memory",
+          "client": "pi",
+          "pricing": "disabled",
+          "records": [
+            {
+              "agent": null,
+              "client": "pi",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "pi:response:synthetic-response",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "synthetic-pi-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 5,
+                "cache_write_1h": 0,
+                "input": 100,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "schemaVersion": 1,
+          "upstreamCommit": "d4d1c751856e25913bce97bfbd7b254308863239"
+        }
+      }
+    }
+  ]
+}

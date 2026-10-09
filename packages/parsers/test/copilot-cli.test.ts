@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -159,5 +159,52 @@ describe("scanCopilotLogs", () => {
     const base = await makeSession([ONE_MODEL]); // segment at 2026-06-21T21:47:17.588Z
     expect(await scanCopilotLogs({ basePath: base, since: new Date("2026-06-22T00:00:00.000Z") })).toHaveLength(0);
     expect(await scanCopilotLogs({ basePath: base, since: new Date("2026-06-20T00:00:00.000Z") })).toHaveLength(1);
+  });
+
+  it("wholeFiles replays imported historical segments and old corrections using stable IDs", async () => {
+    const base = await makeSession([ONE_MODEL]);
+    const path = join(base, "sess-abc", "events.jsonl");
+    const old = new Date("2026-06-01");
+    await utimes(path, old, old);
+    const since = new Date("2026-07-01");
+    const before = await scanCopilotLogs({ basePath: base, since, wholeFiles: true });
+    expect(before).toHaveLength(1);
+    expect(await scanCopilotLogs({ basePath: base, since, wholeFiles: true })).toEqual(before);
+    const corrected = JSON.parse(ONE_MODEL);
+    corrected.data.modelMetrics["gpt-5.3-codex"].usage.inputTokens = 150000;
+    await writeFile(path, JSON.stringify(corrected) + "\n");
+    const after = await scanCopilotLogs({ basePath: base, since, wholeFiles: true });
+    expect(after).toHaveLength(1);
+    expect(after[0].externalId).toBe(before[0].externalId);
+    expect(after[0].inputTokens).toBe(150000);
+    expect(await scanCopilotLogs({ basePath: base, since })).toEqual([]);
+  });
+
+  it("wholeFiles does not reread an unchanged store outside the file window", async () => {
+    const base = await makeSession([ONE_MODEL]);
+    expect(await scanCopilotLogs({ basePath: base, since: new Date(Date.now() + 1000), wholeFiles: true })).toEqual([]);
+  });
+
+  it("folds copied session directories without minting suffixes and survives deletion of either copy", async () => {
+    const base = await makeSession([ONE_MODEL]);
+    const before = await scanCopilotLogs({ basePath: base });
+    await cp(join(base, "sess-abc"), join(base, "copy"), { recursive: true });
+    expect(await scanCopilotLogs({ basePath: base })).toEqual(before);
+    await rm(join(base, "sess-abc"), { recursive: true });
+    expect(await scanCopilotLogs({ basePath: base })).toEqual(before);
+  });
+
+  it("quarantines conflicting copied segments including unchanged copies outside incremental window", async () => {
+    const base = await makeSession([ONE_MODEL]);
+    await cp(join(base, "sess-abc"), join(base, "copy"), { recursive: true });
+    const corrected = JSON.parse(ONE_MODEL);
+    corrected.data.modelMetrics["gpt-5.3-codex"].usage.inputTokens += 100;
+    await writeFile(join(base, "copy", "events.jsonl"), JSON.stringify(corrected) + "\n");
+    const since = new Date(Date.now() + 1000);
+    const changed = new Date(since.getTime() + 1000);
+    await utimes(join(base, "copy", "events.jsonl"), changed, changed);
+    const issues: unknown[] = [];
+    expect(await scanCopilotLogs({ basePath: base, since, wholeFiles: true, onIssue: (issue) => issues.push(issue) })).toEqual([]);
+    expect(issues).toEqual([{ reason: "conflicting_copy", externalId: expect.any(String) }]);
   });
 });

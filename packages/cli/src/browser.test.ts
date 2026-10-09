@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { browserCommand, openBrowser, shouldOpenBrowser } from "./browser.js";
+
+const child = vi.hoisted(() => ({ on: vi.fn(), unref: vi.fn() }));
+const spawn = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ spawn }));
+beforeEach(() => { spawn.mockReset().mockReturnValue(child); child.on.mockClear(); child.unref.mockClear(); });
 
 const URL_ = "https://centrail.org/connect?code=ABCD-EFGH";
 
@@ -30,8 +35,15 @@ describe("browserCommand", () => {
 });
 
 describe("openBrowser", () => {
+  it("launches the same-origin approval URL without executing a real desktop opener", () => {
+    expect(openBrowser(URL_, "https://centrail.org")).toBe(true);
+    expect(spawn).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining([URL_]), { detached: true, stdio: "ignore" });
+    expect(child.unref).toHaveBeenCalledOnce();
+    expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
+  });
   it("never opens a page on another origin than the server it pairs with", () => {
     expect(openBrowser("https://evil.example/connect", "https://centrail.org")).toBe(false);
     expect(openBrowser("not a url", "https://centrail.org")).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
   });
 });

@@ -50,6 +50,7 @@ export class StandIn {
   failCapabilities = false;
   deviceRefusal: "device_revoked" | "unknown_token" | null = null;
   fields: string[] = ["repo"];
+  surfaces: string[] = ["claude-code", "codex", "copilot-cli"];
   server!: Server;
   url = "";
 
@@ -78,7 +79,7 @@ export class StandIn {
             res.end("{}");
             return;
           }
-          res.end(JSON.stringify({ wireVersions: ["1"], surfaces: ["claude-code", "codex", "copilot-cli"], fields: this.fields }));
+          res.end(JSON.stringify({ wireVersions: ["1"], surfaces: this.surfaces, fields: this.fields }));
           return;
         }
         if (req.url === "/api/cli/device") {
