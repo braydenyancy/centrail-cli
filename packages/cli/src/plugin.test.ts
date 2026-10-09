@@ -202,6 +202,9 @@ function runHook(cmd: string, args: string[], cfg: string, input: string, extra:
     child.stderr.on("data", (d) => (stderr += d));
     child.on("error", reject);
     child.on("close", (code) => resolve({ stdout, stderr, code }));
+    // A launcher that fails before reading stdin closes the pipe under us; its
+    // exit code and stderr are the result, so the write's EPIPE is not.
+    child.stdin.on("error", () => {});
     child.stdin.end(input);
   });
 }

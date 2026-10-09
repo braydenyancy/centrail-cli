@@ -11,8 +11,9 @@ import { runSetup } from "./scope.js";
 // existing centrail entry is replaced, every other hook is left exactly as
 // found, and the file is rewritten atomically. The command pins the node
 // binary and bundle path that ran the install, so the hook keeps working
-// without a PATH and never triggers a network resolve per turn — and stops
-// working when that node is upgraded away. For Claude Code the plugin is the
+// without a PATH and never triggers a network resolve per turn. Under a version
+// manager's `installs/<tool>/<version>/` it pins the version alias instead
+// (stableInstallPath), so an upgrade or prune does not strand it. For Claude Code the plugin is the
 // primary path (plugin-setup.ts): its shell launcher discovers Node, and Claude
 // Code keeps its bundle current. Launchers are harness-specific. This stays
 // for Codex and for anyone without the plugin.
@@ -36,8 +37,28 @@ export function hookCommand(
   script: string = process.argv[1],
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const abs = safeRealpath(script);
-  return `${quote(node, platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
+  const abs = stableInstallPath(safeRealpath(script));
+  return `${quote(stableInstallPath(node), platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
+}
+
+// mise installs each tool version under `…/installs/<tool>/<version>/` and keeps
+// alias links beside it (`latest`, the major). A hook pinned to the version dir
+// breaks when that version is upgraded and pruned; pinned through an alias it
+// follows the upgrade. An alias is used only when it resolves to this very
+// install, so installing never switches versions. `latest` survives a major
+// bump; the major alias is the fallback when a newer major is installed beside
+// it. Without a matching alias (asdf, nvm, a plain install) the path is kept.
+export function stableInstallPath(p: string): string {
+  const m = /^(.*[\\/]installs[\\/][^\\/]+[\\/])([^\\/]+)([\\/].*)$/.exec(p);
+  if (!m) return p;
+  const [, base, version, rest] = m;
+  const target = safeRealpath(p);
+  for (const alias of ["latest", version.split(".")[0]]) {
+    if (alias === version) return p;
+    const candidate = `${base}${alias}${rest}`;
+    if (safeRealpath(candidate) === target && candidate !== target) return candidate;
+  }
+  return p;
 }
 
 export function codexHookCommand(node = process.execPath, script = process.argv[1], platform: NodeJS.Platform = process.platform): string {

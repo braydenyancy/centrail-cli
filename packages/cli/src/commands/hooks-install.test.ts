@@ -1,3 +1,4 @@
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 process.env.CENTRAIL_CONFIG_DIR = await mkdtemp(join(tmpdir(), "centrail-hooks-cfg-"));
 const { parseConfig, writeConfig } = await import("../config.js");
 await writeConfig(parseConfig({ scopeDecidedAt: "2026-06-01T00:00:00Z" }));
-const { hookCommand, codexHookCommand, installStopHook, runInstallHooks, uninstallStopHook } = await import("./hooks-install.js");
+const { hookCommand, codexHookCommand, installStopHook, runInstallHooks, stableInstallPath, uninstallStopHook } = await import("./hooks-install.js");
 // The installer must pin the CLI entry, not Vitest's worker entry. Model
 // process.argv as an actual CLI invocation rather than weakening ownership.
 const workerEntry = process.argv[1];
@@ -178,5 +179,40 @@ describe("Stop hook settings merge", () => {
     await writeFile(claude, "{ not json");
     await expect(runInstallHooks({ remove: false }, claude, join(dir, "codex.json"))).rejects.toThrow(/Cannot parse/);
     expect(await readFile(claude, "utf-8")).toBe("{ not json");
+  });
+});
+
+describe("stableInstallPath: a version manager's alias, so an upgrade or prune does not strand the hook", () => {
+  // mise's layout: installs/<tool>/<version>/… with alias links beside it.
+  async function installs(versions: string[], aliases: Record<string, string>) {
+    const root = join(await mkdtemp(join(tmpdir(), "centrail-installs-")), "installs");
+    for (const v of versions) {
+      mkdirSync(join(root, "node", v, "bin"), { recursive: true });
+      writeFileSync(join(root, "node", v, "bin", "node"), "");
+    }
+    // A junction needs no privilege on Windows and is a plain dir link elsewhere.
+    for (const [alias, v] of Object.entries(aliases)) symlinkSync(join(root, "node", v), join(root, "node", alias), "junction");
+    return (v: string) => join(root, "node", v, "bin", "node");
+  }
+
+  it.each([
+    ["latest when it is this install", ["24.21.0"], { latest: "24.21.0", "24": "24.21.0" }, "latest"],
+    ["the major when latest is a newer major", ["24.21.0", "26.0.0"], { latest: "26.0.0", "24": "24.21.0" }, "24"],
+    ["the version itself when no alias is this install", ["24.21.0", "26.0.0"], { latest: "26.0.0" }, "24.21.0"],
+    ["the version itself without aliases (asdf, plain installs)", ["24.21.0"], {}, "24.21.0"],
+  ])("picks %s", async (_, versions, aliases, expected) => {
+    const node = await installs(versions, aliases);
+    expect(stableInstallPath(node("24.21.0"))).toBe(node(expected));
+  });
+
+  it("leaves a path outside any installs/ tree alone", () => {
+    expect(stableInstallPath("/usr/bin/node")).toBe("/usr/bin/node");
+  });
+
+  it("is what hookCommand pins", async () => {
+    const node = await installs(["24.21.0"], { latest: "24.21.0" });
+    const cmd = hookCommand(node("24.21.0"), "/opt/centrail/dist/index.js");
+    expect(cmd).toContain(node("latest"));
+    expect(cmd).not.toContain(node("24.21.0"));
   });
 });
