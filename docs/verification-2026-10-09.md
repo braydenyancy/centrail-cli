@@ -30,8 +30,13 @@ browser. The generated plugin bundle was rebuilt from this combined source.
 An initial restricted-sandbox run could not create localhost/Git subprocesses
 and network namespaces. Tests and comparisons passed after granting the needed
 execution permissions; comparison processes still ran inside their own offline
-filesystem/network namespaces. Hosted CI has not yet run. Native macOS/Windows
-execution, production rollout and historical database cleanup are not claimed.
+filesystem/network namespaces. Hosted Node20/24 checks subsequently passed on Ubuntu, macOS and Windows,
+including fresh installs, build, bundle consistency, typecheck and tests. Plugin
+validation and the advisory server-contract job also passed. The first hosted
+comparison run found that npm tar extraction did not set ccusage executable
+permission; provisioning now explicitly sets it. The corpus, protocol and baseline
+were unchanged; the repaired job is tracked in PR #15. Production rollout and
+historical database cleanup are not claimed.
 
 Remaining collection limits are documented in
 [the integration notes](./tokscale-integration-2026-10.md): deleted ambiguous local

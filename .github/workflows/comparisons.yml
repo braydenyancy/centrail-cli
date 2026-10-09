@@ -38,6 +38,8 @@ jobs:
           mkdir "$RUNNER_TEMP/ccusage"
           npm pack @ccusage/ccusage-linux-x64@20.0.24 --pack-destination "$RUNNER_TEMP/ccusage"
           tar -xzf "$RUNNER_TEMP/ccusage/ccusage-ccusage-linux-x64-20.0.24.tgz" -C "$RUNNER_TEMP/ccusage"
+          # The raw package archive does not preserve an executable binary mode.
+          chmod +x "$RUNNER_TEMP/ccusage/package/bin/ccusage"
           git init "$RUNNER_TEMP/claude-monitor"
           git -C "$RUNNER_TEMP/claude-monitor" remote add origin https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor
           git -C "$RUNNER_TEMP/claude-monitor" fetch --depth 1 origin c59a83bf943f329f0e61f1a29c760353ee1860a5
