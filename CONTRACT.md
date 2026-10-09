@@ -25,16 +25,19 @@ device for it. A server that learns an install id from a device's consented
 events records it, so a first pairing (sent without one) is matched later.
 Older servers ignore the field.
 
-**One provider event, one account (decision A, 2026-10-07).** A machine that
-moves keeps its history where it was synced. The CLI forgets its watermarks
-whenever the account may have changed (`connect`), so the first sync after
-re-sends everything still on disk; the server stores an event only for the
-first account that synced its `externalId` and skips it for any other. The
-ingest response counts those as `heldElsewhere` (never naming the account),
-inside `skipped`, which is events − inserted:
-`{ inserted, skipped, updated, inboxCount, heldElsewhere }`. The CLI sums it
-across batches and, when it is above zero, prints it on its own line and
-reports `skipped` without it. Older servers omit it (read as 0).
+**Account-local event ownership (model review, 2026-10-07).** The CLI forgets
+its watermarks whenever the account may have changed (`connect`), so the first
+sync afterward re-sends everything still on disk. Each account can retain its
+own copy of an event; `(user_id, provider, external_id)` keeps re-sends within
+that account idempotent. The old account retains what it already received and
+the new account receives all locally recoverable history. This prevents one
+tenant from suppressing another tenant's evidence or learning that it exists.
+Public/team aggregate deduplication is a server reporting policy.
+
+The response remains `{ inserted, skipped, updated, inboxCount,
+heldElsewhere }` for wire compatibility. An account-local server returns
+`heldElsewhere: 0`. The CLI continues to understand a positive value from an
+older cross-account-ownership server and reports it separately from `skipped`.
 
 The approved poll answers `{ status: "approved", token, account?: { email } }`;
 the CLI stores the email for display only.
@@ -361,3 +364,38 @@ with no patch id, a default-branch commit with `patchId` only, and the
 worktree branch's commit with `patchId` and `branchPatchId`.
 The server repo carries a copy under its wire tests and parses it; when the
 shape changes, regenerate this file from a real sync and update both.
+
+## Additional local surfaces and billing evidence (October 2026)
+
+`pi` and `gemini-cli` require an answered scope and a capabilities response naming
+both the surface and the `billing-route` field. Otherwise sync skips their logs
+without advancing their watermarks. They use existing sync invocations; this does
+not install additional lifecycle hooks. Existing surfaces retain their old route
+semantics.
+
+For these two surfaces, each event sends top-level `billingProvider`, required by
+the server, and optional `serviceClass`:
+
+- `billingProvider`: `anthropic`, `openai`, `google`, `openrouter`, `amazon-bedrock`,
+  `google-vertex`, `azure`, `openai-codex`, `github-copilot`, or `unknown`.
+- `serviceClass`: `standard`, `priority`, `flex`, `batch`, or `unknown`.
+
+The CLI converts unrecognized provider/class labels to `unknown`; it never sends
+custom endpoint strings. The server validates the enums and stores only these
+explicit values in metadata. Unknown/routed/nonstandard tariffs cannot fall back
+to a model maker's standard rate. Client route fields on legacy surfaces are
+ignored to preserve existing identities and receipts. A recognized provider label
+still does not establish an actual API charge: Pi can use subscription OAuth with
+the same provider label. Monetary values remain estimates under their stated basis.
+
+Session identity is the existing `repo` capability policy: consented
+`metadata.sessionId` is plaintext, bounded by the server, and remains present when
+repo/branch names are hidden. New sources prefix it with `pi:` or `gemini:`.
+There is no hash migration or newly authorized transcript upload. Source-content
+fields remain excluded. Future session metrics must distinguish one stored event's
+session association from copied/forked history spanning multiple sessions.
+
+Whole-file incremental replay can resend historical records from modified files.
+Consent and scope still apply; idempotence and existing growth rules handle retries.
+A deleted source file does not request server deletion, and this change neither
+removes historical duplicate rows nor applies downward usage corrections.

@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import type { ParsedUsageEvent } from "./claude-code.js";
 import { suffixDuplicateExternalIds } from "./external-id.js";
 import { codexCallEvidence, mergeEvidence, type Evidence } from "./evidence.js";
@@ -37,28 +37,37 @@ export async function scanCodexLogs(opts: {
   since?: Date;
   wholeFiles?: boolean;
   onFile?: (done: number, total: number) => void;
+  onIssue?: (issue: { reason: "conflicting_copy"; externalId: string }) => void;
 }): Promise<ParsedUsageEvent[]> {
   const files = opts.basePath
     ? await findJsonlFiles(opts.basePath)
     : await findCodexUsageFiles();
-  const events: ParsedUsageEvent[] = [];
+  const eventsById = new Map<string, { event: ParsedUsageEvent; fingerprint: string; baseId: string }>();
+  const conflicts = new Set<string>();
   const metaByPath = new Map<string, ForkMeta>();
   for (const path of files) metaByPath.set(path, await readForkMeta(path));
   const pathBySession = new Map<string, string>();
   for (const [path, m] of metaByPath) if (m.sessionId && !pathBySession.has(m.sessionId)) pathBySession.set(m.sessionId, path);
   const parents = new Map<string, ParsedUsageEvent[]>();
 
-  const toRead: string[] = [];
+  const selected = new Set<string>();
+  const changedSessions = new Set<string>();
   for (const path of files) {
     if (opts.since) {
       try {
-        if ((await stat(path)).mtime < opts.since) continue;
+        const info = await stat(path);
+        if (Math.max(info.mtimeMs, info.ctimeMs) < opts.since.getTime()) continue;
       } catch {
         continue;
       }
     }
-    toRead.push(path);
+    selected.add(path);
+    const sessionId = metaByPath.get(path)?.sessionId;
+    if (sessionId) changedSessions.add(sessionId);
   }
+  // Unchanged copies are evidence too: otherwise a truncated changed copy can
+  // assign a later same-timestamp call the original's unsuffixed identity.
+  const toRead = files.filter((path) => selected.has(path) || changedSessions.has(metaByPath.get(path)?.sessionId ?? ""));
 
   for (let i = 0; i < toRead.length; i++) {
     const path = toRead[i];
@@ -67,27 +76,36 @@ export async function scanCodexLogs(opts: {
     let parsed = await parseSession(path, undefined);
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom) parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
+    // Disambiguate real repeated calls within a rollout, never across copies.
+    // Do this before filtering so full and incremental scans use the same IDs.
+    const baseIds = new Map(parsed.map((event) => [event, event.externalId]));
+    parsed = suffixDuplicateExternalIds(parsed);
     for (const e of parsed) {
       if (opts.since && e.occurredAt <= opts.since) {
         if (!opts.wholeFiles) continue;
-        e.metadata.context = true; // its session's earlier turn: placed, not sent
+        e.metadata.context = true; // historical context also replays through idempotent ingest
       }
-      events.push(e);
+      const previous = eventsById.get(e.externalId);
+      const baseId = baseIds.get(e)!;
+      const fingerprint = JSON.stringify([e.provider, e.model, e.inputTokens, e.outputTokens,
+        e.cacheReadTokens, e.cacheWriteTokens, e.cacheCreation5mTokens, e.cacheCreation1hTokens]);
+      if (previous && previous.fingerprint !== fingerprint) {
+        if (!conflicts.has(baseId)) opts.onIssue?.({ reason: "conflicting_copy", externalId: baseId });
+        conflicts.add(baseId);
+      }
+      if (!previous) eventsById.set(e.externalId, { event: e, fingerprint, baseId });
     }
     opts.onFile?.(i + 1, toRead.length);
   }
 
-  return suffixDuplicateExternalIds(events);
+  return [...eventsById.values()].filter(({ baseId }) => !conflicts.has(baseId)).map(({ event }) => event);
 }
 
-// A forked Codex session (session_meta.forked_from_id) starts by replaying
-// the parent's history into its own rollout with NEW timestamps — one user's
-// day read $9.64 → $73.89 (ccusage #1337). The replay is the parent's usage
-// recorded up to the fork, so that many leading events of the child are
-// dropped. Without the parent's rollout, the leading burst — events less
-// than a second apart — is the replay (ccusage's fallback, replay.rs).
+// A fork may replay only part of a parent's history, with fresh timestamps.
+// Suppress only a leading ordered match of cumulative and per-call usage;
+// parent length or timestamp bursts alone are not evidence of duplication.
 type ForkMeta = { sessionId?: string; forkedFrom?: string; forkedAt?: Date };
-const REPLAY_BURST_MS = 1000;
+const replayEvidence = new WeakMap<ParsedUsageEvent, string>();
 
 async function readForkMeta(path: string): Promise<ForkMeta> {
   let content: string;
@@ -120,19 +138,28 @@ async function dropForkReplay(
   parentPath: string | undefined,
   parents: Map<string, ParsedUsageEvent[]>,
 ): Promise<ParsedUsageEvent[]> {
-  if (parentPath) {
-    let parent = parents.get(parentPath);
-    if (!parent) {
-      parent = await parseSession(parentPath, undefined);
-      parents.set(parentPath, parent);
-    }
-    const at = fork.forkedAt?.getTime();
-    const replayed = at === undefined || Number.isNaN(at) ? parent.length : parent.filter((e) => e.occurredAt.getTime() <= at).length;
-    return child.slice(replayed);
+  if (!parentPath) return child;
+  let parent = parents.get(parentPath);
+  if (!parent) {
+    parent = await parseSession(parentPath, undefined);
+    parents.set(parentPath, parent);
   }
-  let burst = 0;
-  while (burst + 1 < child.length && child[burst + 1].occurredAt.getTime() - child[burst].occurredAt.getTime() < REPLAY_BURST_MS) burst++;
-  return burst > 0 ? child.slice(burst + 1) : child;
+  const at = fork.forkedAt?.getTime();
+  // Without a valid fork boundary we cannot establish which parent calls
+  // existed when the child began.
+  if (at === undefined || Number.isNaN(at)) return child;
+  const eligible = parent.filter((event) => event.occurredAt.getTime() <= at);
+  let cursor = 0;
+  let replayed = 0;
+  for (const event of child) {
+    const evidence = replayEvidence.get(event);
+    if (!evidence) break;
+    const match = eligible.findIndex((candidate, index) => index >= cursor && replayEvidence.get(candidate) === evidence);
+    if (match < 0) break;
+    cursor = match + 1;
+    replayed++;
+  }
+  return child.slice(replayed);
 }
 
 async function findCodexUsageFiles(): Promise<string[]> {
@@ -140,16 +167,12 @@ async function findCodexUsageFiles(): Promise<string[]> {
 
   for (const home of codexHomeDirs()) {
     const roots = [join(home, "sessions"), join(home, "archived_sessions")];
-    const seenRelativePaths = new Set<string>();
     let foundStandardRoot = false;
 
     for (const root of roots) {
       if (!(await isDirectory(root))) continue;
       foundStandardRoot = true;
       for (const path of await findJsonlFiles(root)) {
-        const key = relative(root, path);
-        if (seenRelativePaths.has(key)) continue;
-        seenRelativePaths.add(key);
         files.push(path);
       }
     }
@@ -250,7 +273,13 @@ async function parseSession(
       baselineValid = false;
     }
     const event = parsed.event;
-    if (event && (!since || event.occurredAt > since)) events.push(event);
+    if (event) {
+      const info = isObject(raw.payload.info) ? raw.payload.info : {};
+      const total = readTokenUsage(info.total_token_usage);
+      const last = readTokenUsage(info.last_token_usage);
+      if (total && last) replayEvidence.set(event, JSON.stringify([event.model, total, last]));
+      if (!since || event.occurredAt > since) events.push(event);
+    }
   }
 
   return events;

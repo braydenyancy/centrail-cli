@@ -53,7 +53,7 @@ describe("0.6 upgrade: one full re-send carries identity to rows the server alre
   it.each([
     ["a server that lists \"repo\"", ["repo", "match", "usage-extras"], true],
     ["a server that lists nothing", [], false],
-  ])("against %s: history older than the overlap is re-sent once, then never again", async (_, fields, identity) => {
+  ])("against %s: history in modified files is replayed idempotently even behind the overlap", async (_, fields, identity) => {
     const n = fields.length;
     const repo = await fx.repo(`mig-${n}`, { remote: `https://github.com/acme/mig-${n}.git` });
     const now = Date.now();
@@ -101,14 +101,14 @@ describe("0.6 upgrade: one full re-send carries identity to rows the server alre
     const stamped = (await readState()).scannerRevisions;
     for (const s of SCANNERS) {
       if (s.surface === "copilot-cli") continue; // switched off in this config: never scanned, never stamped
-      expect(stamped[s.surface], s.surface).toBe(s.revision);
+      expect(stamped[s.surface], s.surface).toBe(s.requiresSurfaceCapability ? undefined : s.revision);
     }
 
-    // Once. The next sync reads only its 24 h overlap.
+    // Recently modified files replay their entire content throughout the overlap.
     mark = server.ingestBodies.length;
     await runSync({ full: false });
     const again = sentSince(mark).map((e) => e.externalId);
-    expect(again).not.toContain(old);
+    expect(again).toContain(old);
     expect(again).toContain(recent);
   });
 
@@ -134,7 +134,7 @@ describe("0.6 upgrade: one full re-send carries identity to rows the server alre
 
     mark = server.ingestBodies.length;
     await runSync({ full: false });
-    expect(sentSince(mark).map((e) => e.externalId)).not.toContain(old);
+    expect(sentSince(mark).map((e) => e.externalId)).toContain(old);
   });
 });
 
@@ -171,7 +171,7 @@ describe("an older CLI syncing between two newer syncs", () => {
     const mark = server.ingestBodies.length;
     await runSync({ full: false });
     const sent = sentSince(mark).map((e) => e.externalId);
-    expect(sent).not.toContain("req_alt_old"); // behind 0.6's own pass: never again
+    expect(sent).toContain("req_alt_old"); // recently modified file: idempotent whole-file replay
     expect(sent).toContain("req_alt_mid"); // behind 0.5.1's watermark, but 0.5.1 sent it without identity…
     expect(server.rows.get("req_alt_mid")?.metadata).toMatchObject({ repo: { key: "github.com/acme/alt" } }); // …which this fills
     expect((await readState()).scannerRevisions["claude-code"]).toBe(SCANNERS[0].revision);

@@ -1,0 +1,1833 @@
+{
+  "schemaVersion": 1,
+  "protocol": {
+    "build.py": "59bd188af6651dc0429b6326f13f88326475258e6d80e4d682afe1d942597f45",
+    "ccusage_adapter.py": "4713756bd7b8b232f02b668dfcef305a364a265013dc5923a55ecd2f42e65d1c",
+    "centrail.mjs": "cdf46fe40406f7ed422f5dd602767b1d9e08a24fe9cc047d9adc15bb02c62dcf",
+    "claude_monitor_adapter.py": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b",
+    "claude_monitor_helper.py": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
+    "helper.rs": "070120a702168766fd2938eac4da235dbc2539feb7dbacb64f3a047f0aea56f9",
+    "run.py": "5e7a4f36b264f8b9e263a6fb9868ae365c48360f1853606863919422231f9c52",
+    "suite.py": "48813295ce7cc77d962bf6ce8935820b52049ab6954f986e31e9155e1d8fd4d4"
+  },
+  "toolPins": {
+    "tokscale": {
+      "schemaVersion": 1,
+      "upstreamCommit": "d4d1c751856e25913bce97bfbd7b254308863239",
+      "helperSha256": "070120a702168766fd2938eac4da235dbc2539feb7dbacb64f3a047f0aea56f9",
+      "upstreamLockSha256": "a623b04afb0cdfeafa91f196f199bb41bf3842ebd949524ef5b50c2e70adfadd"
+    },
+    "ccusage": "ccusage@20.0.24:linux-x64:sha256:d8979af0f2ca2ee523ee641ea01e2ea99cdf55d7f7c460eeedb623f8c599b397",
+    "claude-monitor": {
+      "commit": "c59a83bf943f329f0e61f1a29c760353ee1860a5",
+      "version": "4.0.0",
+      "pytzVersion": "2024.1",
+      "pytzWheelSha256": "328171f4e3623139da4983451950b28e95ac706e13f3f2630a879749e7a8b319",
+      "pythonContract": "CPython 3.12",
+      "helperSha256": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
+      "adapterSha256": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b"
+    }
+  },
+  "cases": {
+    "claude-copies.json": {
+      "fixtureSha256": "8bb8c56d093bd918eb76a920075f7fafaf5d6537b7477e3871735db5d30d9b3d",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 140,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "req_A"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "claude",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "msg_req_A:req_A",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "a",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 100,
+                "cache_write": 25,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 140,
+                "reasoning": 0
+              },
+              "workspace_key": "project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 140,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "a",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 10,
+            "output": 140,
+            "cacheRead": 100,
+            "cacheWrite": 25
+          },
+          "reportedTotalTokens": 275,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "records": [
+            {
+              "cache_creation_tokens": 25,
+              "cache_read_tokens": 100,
+              "cost_usd": 0.002254,
+              "input_tokens": 10,
+              "message_id": "msg_req_A",
+              "model": "claude-sonnet-4-5",
+              "output_tokens": 140,
+              "project": "/synthetic/project",
+              "request_id": "req_A",
+              "source": {
+                "account": "/fixtures/.claude/projects",
+                "kind": "claude_code_jsonl"
+              },
+              "timestamp": "2026-10-01T12:00:00+00:00"
+            }
+          ],
+          "aggregate": {
+            "input": 10,
+            "output": 140,
+            "cacheRead": 100,
+            "cacheWrite": 25
+          },
+          "sessionIdentity": "not exposed by UsageEntry",
+          "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+        }
+      }
+    },
+    "claude-spaced-json.json": {
+      "fixtureSha256": "15932c5672b8e7667fa8423d7a2f99116afbec9689f6677a16504ba5179af045",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 140,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "req_A"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "claude",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "msg_req_A:req_A",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "s1",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 100,
+                "cache_write": 25,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 140,
+                "reasoning": 0
+              },
+              "workspace_key": "project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 140,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 0,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "records": [
+            {
+              "cache_creation_tokens": 25,
+              "cache_read_tokens": 100,
+              "cost_usd": 0.000229,
+              "input_tokens": 10,
+              "message_id": "msg_req_A",
+              "model": "claude-sonnet-4-5",
+              "output_tokens": 5,
+              "project": "/synthetic/project",
+              "request_id": "req_A",
+              "source": {
+                "account": "/fixtures/.claude/projects",
+                "kind": "claude_code_jsonl"
+              },
+              "timestamp": "2026-10-01T12:00:00+00:00"
+            }
+          ],
+          "aggregate": {
+            "input": 10,
+            "output": 5,
+            "cacheRead": 100,
+            "cacheWrite": 25
+          },
+          "sessionIdentity": "not exposed by UsageEntry",
+          "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+        }
+      }
+    },
+    "claude-streaming.json": {
+      "fixtureSha256": "a69e92cd23da6191c19dc70660617c98e4fc4332a01970bf90491c2a7966ea85",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 140,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "req_A"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "claude",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "msg_req_A:req_A",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "s1",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 100,
+                "cache_write": 25,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 140,
+                "reasoning": 0
+              },
+              "workspace_key": "project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 140,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 10,
+            "output": 140,
+            "cacheRead": 100,
+            "cacheWrite": 25
+          },
+          "reportedTotalTokens": 275,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "records": [
+            {
+              "cache_creation_tokens": 25,
+              "cache_read_tokens": 100,
+              "cost_usd": 0.000229,
+              "input_tokens": 10,
+              "message_id": "msg_req_A",
+              "model": "claude-sonnet-4-5",
+              "output_tokens": 5,
+              "project": "/synthetic/project",
+              "request_id": "req_A",
+              "source": {
+                "account": "/fixtures/.claude/projects",
+                "kind": "claude_code_jsonl"
+              },
+              "timestamp": "2026-10-01T12:00:00+00:00"
+            }
+          ],
+          "aggregate": {
+            "input": 10,
+            "output": 5,
+            "cacheRead": 100,
+            "cacheWrite": 25
+          },
+          "sessionIdentity": "not exposed by UsageEntry",
+          "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+        }
+      }
+    },
+    "claude-subagents.json": {
+      "fixtureSha256": "e97db1586de632a367166f5952f7b516c3d888f31e4953cf04c5ce260d479c2b",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 10,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            },
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 20,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "req_A",
+            "req_B"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": "Claude Code Subagent",
+              "client": "claude",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "msg_req_B:req_B",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "s1",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 100,
+                "cache_write": 25,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "project",
+              "workspace_label": "project"
+            },
+            {
+              "agent": null,
+              "client": "claude",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "msg_req_A:req_A",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "s1",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 100,
+                "cache_write": 25,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 10,
+                "reasoning": 0
+              },
+              "workspace_key": "project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 10,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            },
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 20,
+              "cacheRead": 100,
+              "cacheWrite": 25,
+              "session": "s1",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 20,
+            "output": 30,
+            "cacheRead": 200,
+            "cacheWrite": 50
+          },
+          "reportedTotalTokens": 300,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "records": [
+            {
+              "cache_creation_tokens": 25,
+              "cache_read_tokens": 100,
+              "cost_usd": 0.000304,
+              "input_tokens": 10,
+              "message_id": "msg_req_A",
+              "model": "claude-sonnet-4-5",
+              "output_tokens": 10,
+              "project": "/synthetic/project",
+              "request_id": "req_A",
+              "source": {
+                "account": "/fixtures/.claude/projects",
+                "kind": "claude_code_jsonl"
+              },
+              "timestamp": "2026-10-01T12:00:00+00:00"
+            },
+            {
+              "cache_creation_tokens": 25,
+              "cache_read_tokens": 100,
+              "cost_usd": 0.000454,
+              "input_tokens": 10,
+              "message_id": "msg_req_B",
+              "model": "claude-sonnet-4-5",
+              "output_tokens": 20,
+              "project": "/synthetic/project",
+              "request_id": "req_B",
+              "source": {
+                "account": "/fixtures/.claude/projects",
+                "kind": "claude_code_jsonl"
+              },
+              "timestamp": "2026-10-01T12:00:00+00:00"
+            }
+          ],
+          "aggregate": {
+            "input": 20,
+            "output": 30,
+            "cacheRead": 200,
+            "cacheWrite": 50
+          },
+          "sessionIdentity": "not exposed by UsageEntry",
+          "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+        }
+      }
+    },
+    "codex-copy.json": {
+      "fixtureSha256": "1992bbb5abe8de23afa88cdf47750926bab7c9173e9280a76c2b179944d85138",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 70,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-codex-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "synthetic-codex-session:synthetic-turn:2026-10-01T12:00:00.000Z"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "codex:token_count-total:synthetic-codex-session:openai:gpt-5:100:20:30:5",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "a",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 70,
+                "output": 15,
+                "reasoning": 5
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 70,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "a",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 0,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "codex-live-archive.json": {
+      "fixtureSha256": "bc4d904ad167f502a52436a9a53acb8c3878b631d845b2fe1c35b9b6fbecf659",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "archive",
+              "timestamp": 1780315260000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 20,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "archive",
+              "timestamp": 1780315320000
+            }
+          ],
+          "externalIds": [
+            "archive:t1:2026-06-01T12:01:00.000Z",
+            "archive:t1:2026-06-01T12:02:00.000Z"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-06-01",
+              "dedup_key": "codex:token_count-total:archive:openai:gpt-5:100:0:0:0",
+              "duration_ms": 60000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "rollout-archive",
+              "session_title": null,
+              "timestamp": 1780315200000,
+              "tokens": {
+                "cache_read": 0,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 100,
+                "output": 0,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/repo",
+              "workspace_label": "repo"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-06-01",
+              "dedup_key": "codex:token_count-total:archive:openai:gpt-5:120:0:0:0",
+              "duration_ms": 60000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "rollout-archive",
+              "session_title": null,
+              "timestamp": 1780315260000,
+              "tokens": {
+                "cache_read": 0,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 20,
+                "output": 0,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/repo",
+              "workspace_label": "repo"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "rollout-archive",
+              "timestamp": 1780315200000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 20,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "rollout-archive",
+              "timestamp": 1780315260000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 100,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 100,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "codex-partial-fork.json": {
+      "fixtureSha256": "edab6dea1c6d53acc913c75743b3de366aca145388c9c3dbe34dc40b9b83544c",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "P",
+              "timestamp": 1780315260000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 150,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "C",
+              "timestamp": 1780315502000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 200,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "P",
+              "timestamp": 1780315320000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 300,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "P",
+              "timestamp": 1780315800000
+            }
+          ],
+          "externalIds": [
+            "C:c1:2026-06-01T12:05:02.000Z",
+            "P:p1:2026-06-01T12:01:00.000Z",
+            "P:p1:2026-06-01T12:02:00.000Z",
+            "P:p1:2026-06-01T12:10:00.000Z"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-06-01",
+              "dedup_key": "codex:token_count-total:P:openai:gpt-5:100:0:0:0",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "rollout-C",
+              "session_title": null,
+              "timestamp": 1780315501000,
+              "tokens": {
+                "cache_read": 0,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 100,
+                "output": 0,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/repo",
+              "workspace_label": "repo"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-06-01",
+              "dedup_key": "codex:token_count-total:P:openai:gpt-5:250:0:0:0",
+              "duration_ms": 1000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "rollout-C",
+              "session_title": null,
+              "timestamp": 1780315501000,
+              "tokens": {
+                "cache_read": 0,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 150,
+                "output": 0,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/repo",
+              "workspace_label": "repo"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-06-01",
+              "dedup_key": "codex:token_count-total:P:openai:gpt-5:300:0:0:0",
+              "duration_ms": 60000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "rollout-P",
+              "session_title": null,
+              "timestamp": 1780315260000,
+              "tokens": {
+                "cache_read": 0,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 200,
+                "output": 0,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/repo",
+              "workspace_label": "repo"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-06-01",
+              "dedup_key": "codex:token_count-total:P:openai:gpt-5:600:0:0:0",
+              "duration_ms": 480000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "rollout-P",
+              "session_title": null,
+              "timestamp": 1780315320000,
+              "tokens": {
+                "cache_read": 0,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 300,
+                "output": 0,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/repo",
+              "workspace_label": "repo"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "rollout-C",
+              "timestamp": 1780315501000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 150,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "rollout-C",
+              "timestamp": 1780315501000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 200,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "rollout-P",
+              "timestamp": 1780315260000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 300,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "rollout-P",
+              "timestamp": 1780315320000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 750,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 750,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "codex-sourced-tasks.json": {
+      "fixtureSha256": "65c67b07defc32ab3077bcaf9059c94dd40debc58ec7169231f27e2fa8b01fd8",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "synthetic-sourced-session",
+              "timestamp": 2208988801000
+            },
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "synthetic-sourced-session",
+              "timestamp": 2209075201000
+            },
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "synthetic-sourced-session",
+              "timestamp": 2209161601000
+            },
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "synthetic-sourced-session",
+              "timestamp": 2209248001000
+            }
+          ],
+          "externalIds": [
+            "synthetic-sourced-session:turn-4:2040-01-04T00:00:01.000Z",
+            "synthetic-sourced-session:turn-unknown:2040-01-01T00:00:01.000Z",
+            "synthetic-sourced-session:turn-unknown:2040-01-02T00:00:01.000Z",
+            "synthetic-sourced-session:turn-unknown:2040-01-03T00:00:01.000Z"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2040-01-01",
+              "dedup_key": "codex:token_count-total:synthetic-sourced-session:openai:gpt-5.2:10:3:2:0",
+              "duration_ms": 1000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5.2",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "sourced",
+              "session_title": null,
+              "timestamp": 2208988800000,
+              "tokens": {
+                "cache_read": 2,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 8,
+                "output": 3,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2040-01-02",
+              "dedup_key": "codex:token_count-total:synthetic-sourced-session:openai:gpt-5.2:20:6:4:0",
+              "duration_ms": 1000,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5.2",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "sourced",
+              "session_title": null,
+              "timestamp": 2209075200000,
+              "tokens": {
+                "cache_read": 2,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 8,
+                "output": 3,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2040-01-03",
+              "dedup_key": "codex:token_count-total:synthetic-sourced-session:openai:gpt-5.2:30:9:6:0",
+              "duration_ms": 750,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5.2",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "sourced",
+              "session_title": null,
+              "timestamp": 2209161600250,
+              "tokens": {
+                "cache_read": 2,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 8,
+                "output": 3,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            },
+            {
+              "agent": "Codex",
+              "client": "codex",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2040-01-04",
+              "dedup_key": "codex:token_count-total:synthetic-sourced-session:openai:gpt-5.2:40:12:8:0",
+              "duration_ms": 500,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5.2",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "sourced",
+              "session_title": null,
+              "timestamp": 2209248000500,
+              "tokens": {
+                "cache_read": 2,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 8,
+                "output": 3,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "sourced",
+              "timestamp": 2208988800000
+            },
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "sourced",
+              "timestamp": 2209075200000
+            },
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "sourced",
+              "timestamp": 2209161600250
+            },
+            {
+              "model": "gpt-5.2",
+              "provider": "openai",
+              "input": 8,
+              "output": 3,
+              "cacheRead": 2,
+              "cacheWrite": 0,
+              "session": "sourced",
+              "timestamp": 2209248000500
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 32,
+            "output": 12,
+            "cacheRead": 8,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 52,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "copilot-resume-copy.json": {
+      "fixtureSha256": "7919d016cfc583b318e50202ed5e5267e313f9916c130879303b4fe51c0bfe15",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 10,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "synthetic-copilot",
+              "timestamp": 1780315200000
+            },
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 50,
+              "output": 10,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "session": "synthetic-copilot",
+              "timestamp": 1780315800000
+            }
+          ],
+          "externalIds": [
+            "synthetic-copilot:gpt-5:2026-06-01T12:00:00.000Z",
+            "synthetic-copilot:gpt-5:2026-06-01T12:10:00.000Z"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [],
+          "projection": []
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 200,
+            "output": 20,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 220,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "gemini-copy.json": {
+      "fixtureSha256": "944a4a520f9f643e6dcee37978d6e3fa7f2d9a87d3806496e7ff07e916fafb9e",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 70,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "gemini:07ddd3c7716d4a42dd2dbe1d45ae46bf434701fb6a1fa07988ec84a36279408e"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "gemini",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": null,
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gemini-2.5-pro",
+              "parent_session_id": null,
+              "provider_id": "google",
+              "service_tier": null,
+              "session_id": "synthetic-gemini-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 70,
+                "output": 20,
+                "reasoning": 10
+              },
+              "workspace_key": null,
+              "workspace_label": null
+            },
+            {
+              "agent": null,
+              "client": "gemini",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": null,
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gemini-2.5-pro",
+              "parent_session_id": null,
+              "provider_id": "google",
+              "service_tier": null,
+              "session_id": "synthetic-gemini-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 70,
+                "output": 20,
+                "reasoning": 10
+              },
+              "workspace_key": null,
+              "workspace_label": null
+            }
+          ],
+          "projection": [
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 70,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            },
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 70,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 140,
+            "output": 40,
+            "cacheRead": 60,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 260,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "gemini-tool-overlap.json": {
+      "fixtureSha256": "26203b04d9562a610b24e43b13f9454549ddc74375c212854c4da15503662ce3",
+      "tools": {
+        "centrail": {
+          "projection": [],
+          "externalIds": [],
+          "issues": [
+            {
+              "reason": "unsupported_tool_usage",
+              "externalId": "gemini:07ddd3c7716d4a42dd2dbe1d45ae46bf434701fb6a1fa07988ec84a36279408e"
+            }
+          ]
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "gemini",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": null,
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gemini-2.5-pro",
+              "parent_session_id": null,
+              "provider_id": "google",
+              "service_tier": null,
+              "session_id": "synthetic-gemini-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 0,
+                "cache_write_1h": 0,
+                "input": 110,
+                "output": 20,
+                "reasoning": 10
+              },
+              "workspace_key": null,
+              "workspace_label": null
+            }
+          ],
+          "projection": [
+            {
+              "model": "gemini-2.5-pro",
+              "provider": "google",
+              "input": 110,
+              "output": 30,
+              "cacheRead": 30,
+              "cacheWrite": 0,
+              "session": "synthetic-gemini-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 110,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 0
+          },
+          "reportedTotalTokens": 160,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "pi-cache-duration.json": {
+      "fixtureSha256": "206778901a59845ad768dbff503c0515226cb2ccde111f01de455c4acf91ae7f",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 40,
+              "session": "synthetic-pi-cache-session",
+              "timestamp": 1790856000000
+            },
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 40,
+              "session": "synthetic-pi-cache-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "pi:1f7c738446db364e96fa8cae73ebdeff311cb221f1dca7fbf8bfee746edf0f98",
+            "pi:42184c7a5707d154892c0c9ff6f51620d3d93bbd7bfa981fc5f67f9f66871389"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "pi",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "pi:response:synthetic-response-full",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "synthetic-pi-cache-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 40,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            },
+            {
+              "agent": null,
+              "client": "pi",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "pi:response:synthetic-response-partial",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "claude-sonnet-4-5",
+              "parent_session_id": null,
+              "provider_id": "anthropic",
+              "service_tier": null,
+              "session_id": "synthetic-pi-cache-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 40,
+                "cache_write_1h": 0,
+                "input": 10,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 40,
+              "session": "synthetic-pi-cache-session",
+              "timestamp": 1790856000000
+            },
+            {
+              "model": "claude-sonnet-4-5",
+              "provider": "anthropic",
+              "input": 10,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 40,
+              "session": "synthetic-pi-cache-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 10,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 40
+          },
+          "reportedTotalTokens": 100,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "pi-copy.json": {
+      "fixtureSha256": "4b8616164e013621b07a8ac4f1fbd0c158577b40c98300dd750e205d4b99f5c4",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 5,
+              "session": "synthetic-pi-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "pi:ffd983b48dfcd14d4543a00363b330619fb53d70a4abd2d48d5e359c2c883e96"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "pi",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "pi:response:synthetic-response",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "synthetic-pi-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 5,
+                "cache_write_1h": 0,
+                "input": 100,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 5,
+              "session": "synthetic-pi-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 200,
+            "output": 40,
+            "cacheRead": 60,
+            "cacheWrite": 10
+          },
+          "reportedTotalTokens": 310,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "pi-missing-counter.json": {
+      "fixtureSha256": "aa11772f6c342ff97d77b7657fea825ef1bf661d1552df7883ff3053e5906d93",
+      "tools": {
+        "centrail": {
+          "projection": [],
+          "externalIds": [],
+          "issues": [
+            {
+              "reason": "invalid_usage",
+              "externalId": "pi:unidentified"
+            }
+          ]
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "pi",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "pi:response:synthetic-response",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "synthetic-pi-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 5,
+                "cache_write_1h": 0,
+                "input": 0,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 0,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 5,
+              "session": "synthetic-pi-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 0,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 5
+          },
+          "reportedTotalTokens": 155,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    },
+    "pi-partial-write.json": {
+      "fixtureSha256": "5ebcd56e78385fd87e24ffbc7507f8343cdda1a95fcd06147a56753f0df70e2d",
+      "tools": {
+        "centrail": {
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 5,
+              "session": "synthetic-pi-session",
+              "timestamp": 1790856000000
+            }
+          ],
+          "externalIds": [
+            "pi:ffd983b48dfcd14d4543a00363b330619fb53d70a4abd2d48d5e359c2c883e96"
+          ],
+          "issues": []
+        },
+        "tokscale": {
+          "records": [
+            {
+              "agent": null,
+              "client": "pi",
+              "cost": 0.0,
+              "cost_source": "unknown",
+              "date": "2026-10-01",
+              "dedup_key": "pi:response:synthetic-response",
+              "duration_ms": null,
+              "is_turn_start": false,
+              "message_count": 1,
+              "model_attribution_conflicted": false,
+              "model_id": "gpt-5",
+              "parent_session_id": null,
+              "provider_id": "openai",
+              "service_tier": null,
+              "session_id": "synthetic-pi-session",
+              "session_title": null,
+              "timestamp": 1790856000000,
+              "tokens": {
+                "cache_read": 30,
+                "cache_write": 5,
+                "cache_write_1h": 0,
+                "input": 100,
+                "output": 20,
+                "reasoning": 0
+              },
+              "workspace_key": "/synthetic/project",
+              "workspace_label": "project"
+            }
+          ],
+          "projection": [
+            {
+              "model": "gpt-5",
+              "provider": "openai",
+              "input": 100,
+              "output": 20,
+              "cacheRead": 30,
+              "cacheWrite": 5,
+              "session": "synthetic-pi-session",
+              "timestamp": 1790856000000
+            }
+          ]
+        },
+        "ccusage": {
+          "aggregate": {
+            "input": 100,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 5
+          },
+          "reportedTotalTokens": 155,
+          "identity": "not exposed by daily aggregate CLI",
+          "outputSemantics": "reported outputTokens; no invented reasoning breakdown"
+        },
+        "claude-monitor": {
+          "status": "not_applicable",
+          "reason": "client unsupported by pinned tool"
+        }
+      }
+    }
+  }
+}

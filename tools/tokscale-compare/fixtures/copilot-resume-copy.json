@@ -1,0 +1,48 @@
+{
+  "client": "copilot",
+  "reason": "Two resumed shutdown segments report100 and50 input, each for2 requests. A copied directory is duplicate evidence: retain150 input and20 output, as2 segment records, not4 reconstructed requests. No cache ambiguity in this case. Distinct sessionStartTime and intervening resume encode separate runs; this is a synthetic segment contract, not a claim all repeated shutdowns are disjoint.",
+  "provenance": {
+    "kind": "generated-regression",
+    "sourcePath": "packages/parsers/test/copilot-cli.test.ts",
+    "sourceSha256": "10955441ec59990e3bef86f94efddceddce4c319624755feb53a016e621353d7",
+    "license": "Apache-2.0",
+    "granularity": "session-shutdown-model-segment",
+    "containsRealUserData": false,
+    "transforms": [
+      "Synthetic counters, paths and session identifiers; duplicate complete directory.",
+      "Explicit resume and different sessionStartTime values distinguish two execution segments from repeated snapshots of one run."
+    ],
+    "formatReferences": [
+      "https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md",
+      "https://github.com/github/copilot-sdk/issues/2546"
+    ]
+  },
+  "files": {
+    ".copilot/session-state/original/workspace.yaml": "id: synthetic-copilot\ncwd: /synthetic/repo\nbranch: main\ncreated_at: 2026-06-01T11:59:00.000Z\n",
+    ".copilot/session-state/original/events.jsonl": "{\"type\":\"session.shutdown\",\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"data\":{\"modelMetrics\":{\"gpt-5\":{\"usage\":{\"inputTokens\":100,\"outputTokens\":10,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"reasoningTokens\":0},\"requests\":{\"count\":2}}},\"shutdownType\":\"routine\",\"sessionStartTime\":1780315140000},\"id\":\"synthetic-shutdown-1\"}\n{\"type\":\"session.resume\",\"timestamp\":\"2026-06-01T12:05:00.000Z\",\"data\":{\"sessionId\":\"synthetic-copilot\"},\"id\":\"synthetic-resume\"}\n{\"type\":\"session.shutdown\",\"timestamp\":\"2026-06-01T12:10:00.000Z\",\"data\":{\"modelMetrics\":{\"gpt-5\":{\"usage\":{\"inputTokens\":50,\"outputTokens\":10,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"reasoningTokens\":0},\"requests\":{\"count\":2}}},\"shutdownType\":\"routine\",\"sessionStartTime\":1780315500000},\"id\":\"synthetic-shutdown-2\"}\n",
+    ".copilot/session-state/copied-session/workspace.yaml": "id: synthetic-copilot\ncwd: /synthetic/repo\nbranch: main\ncreated_at: 2026-06-01T11:59:00.000Z\n",
+    ".copilot/session-state/copied-session/events.jsonl": "{\"type\":\"session.shutdown\",\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"data\":{\"modelMetrics\":{\"gpt-5\":{\"usage\":{\"inputTokens\":100,\"outputTokens\":10,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"reasoningTokens\":0},\"requests\":{\"count\":2}}},\"shutdownType\":\"routine\",\"sessionStartTime\":1780315140000},\"id\":\"synthetic-shutdown-1\"}\n{\"type\":\"session.resume\",\"timestamp\":\"2026-06-01T12:05:00.000Z\",\"data\":{\"sessionId\":\"synthetic-copilot\"},\"id\":\"synthetic-resume\"}\n{\"type\":\"session.shutdown\",\"timestamp\":\"2026-06-01T12:10:00.000Z\",\"data\":{\"modelMetrics\":{\"gpt-5\":{\"usage\":{\"inputTokens\":50,\"outputTokens\":10,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"reasoningTokens\":0},\"requests\":{\"count\":2}}},\"shutdownType\":\"routine\",\"sessionStartTime\":1780315500000},\"id\":\"synthetic-shutdown-2\"}\n"
+  },
+  "expected": [
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 100,
+      "output": 10,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "synthetic-copilot",
+      "timestamp": 1780315200000
+    },
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 50,
+      "output": 10,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "synthetic-copilot",
+      "timestamp": 1780315800000
+    }
+  ]
+}

@@ -2,16 +2,22 @@
   "name": "centrail-cli",
   "private": true,
   "version": "0.0.0",
-  "description": "Centrail CLI — sync local AI coding-agent usage (Claude Code, GitHub Copilot CLI, Codex) to centrail.org. Monorepo for the `centrail` bin and `@centrail/parsers`.",
+  "description": "Centrail CLI \u2014 sync local AI coding-agent usage (Claude Code, GitHub Copilot CLI, Codex) to centrail.org. Monorepo for the `centrail` bin and `@centrail/parsers`.",
   "license": "Apache-2.0",
   "type": "module",
-  "workspaces": ["packages/*"],
-  "engines": { "node": ">=20" },
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "pretest": "npm run build --workspace @centrail/parsers",
     "test": "npm run test --workspaces --if-present",
     "pretypecheck": "npm run build --workspace @centrail/parsers",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:comparisons": "python3 tools/tokscale-compare/suite.py",
+    "test:comparison-gate": "python3 -m unittest discover -s tools/tokscale-compare -p test_suite.py"
   }
 }

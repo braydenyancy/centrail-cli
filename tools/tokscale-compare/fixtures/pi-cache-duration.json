@@ -1,0 +1,35 @@
+{
+  "client": "pi",
+  "reason": "Two distinct assistant responses each write40 cache tokens. Explicit1h is15 then40, a subset of total writes. Common cacheWrite projection must count40 for each; Centrail generic residual25 then0 is not total cache creation. Raw records separately retain duration detail.",
+  "provenance": {
+    "kind": "synthetic",
+    "sourceReference": "https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/types.ts",
+    "sourceContract": "Usage.cacheWrite1h is subset of cacheWrite; all counts and identities invented.",
+    "containsRealUserData": false
+  },
+  "files": {
+    ".pi/agent/sessions/project/cache.jsonl": "{\"type\":\"session\",\"version\":3,\"id\":\"synthetic-pi-cache-session\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"cwd\":\"/synthetic/project\"}\n{\"type\":\"message\",\"id\":\"entry-partial\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"provider\":\"anthropic\",\"responseId\":\"synthetic-response-partial\",\"usage\":{\"input\":10,\"output\":20,\"cacheRead\":30,\"cacheWrite\":40,\"cacheWrite1h\":15,\"totalTokens\":100}}}\n{\"type\":\"message\",\"id\":\"entry-full\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"provider\":\"anthropic\",\"responseId\":\"synthetic-response-full\",\"usage\":{\"input\":10,\"output\":20,\"cacheRead\":30,\"cacheWrite\":40,\"cacheWrite1h\":40,\"totalTokens\":100}}}\n"
+  },
+  "expected": [
+    {
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "input": 10,
+      "output": 20,
+      "cacheRead": 30,
+      "cacheWrite": 40,
+      "session": "synthetic-pi-cache-session",
+      "timestamp": 1790856000000
+    },
+    {
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "input": 10,
+      "output": 20,
+      "cacheRead": 30,
+      "cacheWrite": 40,
+      "session": "synthetic-pi-cache-session",
+      "timestamp": 1790856000000
+    }
+  ]
+}
