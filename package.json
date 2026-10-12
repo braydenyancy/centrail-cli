@@ -12,6 +12,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "verify": "node scripts/verify.mjs",
     "build": "npm run build --workspaces --if-present",
     "pretest": "npm run build --workspace @centrail/parsers",
     "test": "npm run test --workspaces --if-present",

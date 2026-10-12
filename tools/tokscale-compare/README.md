@@ -22,21 +22,27 @@ origin, source references and transformations. None is a personal transcript.
 
 ## Prepare once, then run offline
 
-Requires Linux bubblewrap namespaces, Node 24, installed workspace dependencies,
-Python 3.12 and Rust 1.98.0. Provisioning is explicit and separate from tests; see
-[the Linux CI recipe](../../.github/workflows/comparisons.yml) for complete pinned
-clone/package/wheel commands. The workflow is added locally; a hosted CI result
-has not been claimed. It relaxes the unprivileged-user-namespace restriction only
-on that dedicated ephemeral runner so bubblewrap can create its isolated namespaces.
-
-After obtaining the pinned checkouts and ccusage executable:
+Requires Linux x64 bubblewrap namespaces, Node 24, installed workspace
+dependencies, system Python 3.12 with pip, Git and rustup. Provisioning is explicit
+and separate from tests. The versioned helper fetches exact source commits,
+installs Rust 1.98.0, obtains the pinned ccusage package and hashed pytz wheel,
+builds the comparator, and writes ignored `tools.local.json`:
 
 ```sh
-RUSTUP_TOOLCHAIN=1.98.0 python3 tools/tokscale-compare/build.py --checkout /tmp/tokscale-comparator --target /tmp/tokscale-comparator-build
-python3 -m pip download --require-hashes --no-deps --only-binary=:all: -r tools/tokscale-compare/monitor-requirements.txt -d /tmp/monitor-wheels
+python3.12 tools/tokscale-compare/provision.py --check
+python3.12 tools/tokscale-compare/provision.py
 ```
 
-Create ignored `tools/tokscale-compare/tools.local.json` (or pass `--config`):
+The helper probes isolation before downloading. `--directory <new-path>` selects
+a new tools directory; by default it creates a fresh temporary directory.
+`--config <path>` selects the config output. It does not install system packages
+or change host namespace settings. The dedicated
+[Linux CI runner](../../.github/workflows/comparisons.yml) supplies those
+prerequisites and relaxes its namespace policy only on an ephemeral host.
+`npm run verify -- --comparisons-setup` composes preparation and all verification;
+`npm run verify -- --comparisons` repeats with prepared tools offline.
+
+For tools prepared elsewhere, the ignored config shape is:
 
 ```json
 {

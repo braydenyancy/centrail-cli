@@ -28,33 +28,7 @@ jobs:
           sudo apt-get install -y bubblewrap python3-pip
           # The dedicated ephemeral job needs unprivileged namespaces for bwrap.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          git init "$RUNNER_TEMP/tokscale"
-          git -C "$RUNNER_TEMP/tokscale" remote add origin https://github.com/junhoyeo/tokscale
-          git -C "$RUNNER_TEMP/tokscale" fetch --depth 1 origin d4d1c751856e25913bce97bfbd7b254308863239
-          git -C "$RUNNER_TEMP/tokscale" checkout --detach FETCH_HEAD
-          rustup toolchain install 1.98.0 --profile minimal
-          export RUSTUP_TOOLCHAIN=1.98.0
-          python3 tools/tokscale-compare/build.py --checkout "$RUNNER_TEMP/tokscale" --target "$RUNNER_TEMP/tokscale-build"
-          mkdir "$RUNNER_TEMP/ccusage"
-          npm pack @ccusage/ccusage-linux-x64@20.0.24 --pack-destination "$RUNNER_TEMP/ccusage"
-          tar -xzf "$RUNNER_TEMP/ccusage/ccusage-ccusage-linux-x64-20.0.24.tgz" -C "$RUNNER_TEMP/ccusage"
-          # The raw package archive does not preserve an executable binary mode.
-          chmod +x "$RUNNER_TEMP/ccusage/package/bin/ccusage"
-          git init "$RUNNER_TEMP/claude-monitor"
-          git -C "$RUNNER_TEMP/claude-monitor" remote add origin https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor
-          git -C "$RUNNER_TEMP/claude-monitor" fetch --depth 1 origin c59a83bf943f329f0e61f1a29c760353ee1860a5
-          git -C "$RUNNER_TEMP/claude-monitor" checkout --detach FETCH_HEAD
-          python3 -m pip download --require-hashes --no-deps --only-binary=:all: -r tools/tokscale-compare/monitor-requirements.txt -d "$RUNNER_TEMP/wheels"
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          root = Path(os.environ['RUNNER_TEMP'])
-          config = {'tokscale': {'checkout': str(root/'tokscale'), 'binary': str(root/'tokscale-build/debug/examples/centrail_compare')},
-                    'ccusage': {'binary': str(root/'ccusage/package/bin/ccusage')},
-                    'claude-monitor': {'checkout': str(root/'claude-monitor'), 'python': '/usr/bin/python3',
-                                       'pytzWheel': str(root/'wheels/pytz-2024.1-py2.py3-none-any.whl')}}
-          Path('tools/tokscale-compare/tools.local.json').write_text(json.dumps(config))
-          PY
+          /usr/bin/python3 tools/tokscale-compare/provision.py --directory "$RUNNER_TEMP/comparison-tools"
       - name: Gate self-tests
         run: npm run test:comparison-gate
       - name: Run offline comparisons
