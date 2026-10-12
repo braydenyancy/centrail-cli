@@ -7,6 +7,7 @@
     "claude_monitor_adapter.py": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b",
     "claude_monitor_helper.py": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
     "helper.rs": "070120a702168766fd2938eac4da235dbc2539feb7dbacb64f3a047f0aea56f9",
+    "provision.py": "d55b789889c2167f5094fe76d7e6fe71c1321f2d2c933ffe1183f5e1d08450ff",
     "run.py": "5e7a4f36b264f8b9e263a6fb9868ae365c48360f1853606863919422231f9c52",
     "suite.py": "48813295ce7cc77d962bf6ce8935820b52049ab6954f986e31e9155e1d8fd4d4"
   },
