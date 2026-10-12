@@ -17,6 +17,7 @@
     "test": "npm run test --workspaces --if-present",
     "pretypecheck": "npm run build --workspace @centrail/parsers",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:server-contract": "node --test scripts/server-contract.test.mjs",
     "test:comparisons": "python3 tools/tokscale-compare/suite.py",
     "test:comparison-gate": "python3 -m unittest discover -s tools/tokscale-compare -p test_suite.py"
   }

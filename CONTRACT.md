@@ -337,23 +337,33 @@ historical scan or server rollout is required for this local hook change.
 
 ### Server/CLI sequence
 
-A new scanner surface (or wire change) touches both repositories. The order is
-fixed — the server must accept a payload before any published CLI can send it:
+A new scanner surface (or wire change) touches both repositories. The server
+must accept a payload before any published CLI can send it. Capability-gated
+scanners may merge earlier because sync skips their unsupported logs without
+advancing watermarks:
 
 1. **Server first.** Land and deploy the centrail change (ingest allowlist,
    wire fields, `/api/cli/capabilities`). The capabilities endpoint is the
    deployed source of truth this repo's CI checks against.
-2. **CLI second.** Merge the CLI change. The contract check in PR CI is
-   **advisory** (`continue-on-error`): a red check on a PR means the server
-   side has not deployed yet, or centrail.org was unreachable — it must not
-   block development.
+2. **CLI integration.** PR CI proves the contract policies against local
+   synthetic servers on every supported OS/Node combination, without relying
+   on production availability. Main CI fails closed if production rejects an
+   unconditional scanner or the wire version. Scanners explicitly marked
+   `requiresSurfaceCapability` are excluded from this merge-time check; they
+   remain disabled until the server advertises their surface and `billing-route`.
 3. **Tag last.** Push a `v*` tag only when the contract check is green. The
    publish workflow re-runs the same check against production and **fails
    closed** — nothing reaches npm unless the deployed server accepts every
-   scanner surface at the current wire version.
+   scanner surface at the current wire version, plus `billing-route` when any
+   scanner requires it. A missing surface, missing required field or unavailable
+   endpoint blocks publication.
 
 Escape hatches for the check itself: `CENTRAIL_CONTRACT_URL` points it at a
 staging deployment; `CENTRAIL_CONTRACT_ATTEMPTS` bounds the retry loop.
+`node scripts/export-scanner-surfaces.mjs required` selects the unconditional
+merge policy; the default `all` mode selects the publication policy and exports
+its required fields through `GITHUB_OUTPUT`. `npm run test:server-contract`
+reproduces both checks offline after building the parsers.
 
 ## Wire samples
 
