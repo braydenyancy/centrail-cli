@@ -2,6 +2,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const browser = vi.hoisted(() => ({ openBrowser: vi.fn(() => true), shouldOpenBrowser: vi.fn(() => true) }));
+vi.mock("../browser.js", () => browser);
+
 const dir = vi.hoisted(() => {
   // CONFIG_DIR is read at import: point it at a scratch dir first, so no
   // test ever reads or writes the real ~/.config/centrail.
@@ -35,6 +38,8 @@ function serverApproving(account?: { email: string }) {
 const pairBody = (fetchMock: ReturnType<typeof vi.fn>) => JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
 
 beforeEach(async () => {
+  browser.openBrowser.mockReset().mockReturnValue(true);
+  browser.shouldOpenBrowser.mockReset().mockReturnValue(true);
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -78,7 +83,23 @@ describe("runConnect privacy boundary", () => {
 describe("runConnect pairing", () => {
   const synced = { lastSyncAt: null, surfaces: { "claude-code": "2026-10-06T00:00:00.000Z" }, scannerRevisions: { "claude-code": 2 } };
 
-  it("stores who approved, and re-reads the history for a new account, which keeps what the old one holds", async () => {
+  it.each([
+    ["desktop", false, true, true],
+    ["explicit no-browser", true, true, false],
+    ["headless", false, false, false],
+  ])("%s pairing launches only when permitted, using the server verification URL", async (_, noBrowser, eligible, opens) => {
+    browser.shouldOpenBrowser.mockReturnValue(eligible);
+    vi.stubGlobal("fetch", serverApproving());
+    await runConnect({ baseUrl: "https://centrail.org", noBrowser });
+    if (opens) {
+      expect(browser.openBrowser).toHaveBeenCalledOnce();
+      expect(browser.openBrowser).toHaveBeenCalledWith("https://centrail.org/connect?code=ABCD-EFGH", "https://centrail.org");
+    }
+    else expect(browser.openBrowser).not.toHaveBeenCalled();
+    expect(await readAuth()).toMatchObject({ token: "tok-new" });
+  });
+
+  it("stores who approved and re-reads the locally available history into the new account", async () => {
     await writeJson("auth.json", { baseUrl: "https://centrail.org", token: "tok-a", deviceName: PRIVATE_DEVICE_NAME, account: { email: "a@example.test" } });
     await writeJson("state.json", synced);
     vi.stubGlobal("fetch", serverApproving({ email: "b@example.test" }));
@@ -90,8 +111,15 @@ describe("runConnect pairing", () => {
     expect((await readJson("state.json")).scannerRevisions).toEqual({ "claude-code": 2 });
     const said = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join("\n");
     expect(said).toContain("This machine is paired with a@example.test");
+    expect(said).toContain("The first sync re-reads its local history");
+    expect(said).toContain("into the new account; the old account keeps the copy it already received.");
+    const disclosureIndex = vi.mocked(console.log).mock.calls.findIndex((call) =>
+      String(call[0]).includes("into the new account; the old account keeps"));
+    expect(vi.mocked(console.log).mock.invocationCallOrder[disclosureIndex]).toBeLessThan(
+      vi.mocked(fetch).mock.invocationCallOrder[0],
+    );
     expect(said).toContain("Paired with b@example.test");
-    expect(said).toContain("What this machine synced to a@example.test stays there; b@example.test gets everything else.");
+    expect(said).toContain("a@example.test keeps its existing copy; b@example.test gets the local history this machine can still read.");
   });
 
   it("without a terminal never asks about the plugin and never touches Claude Code's settings", async () => {

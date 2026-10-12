@@ -1,0 +1,28 @@
+{
+  "client": "codex",
+  "reason": "One source usage event copied byte-for-byte: count once. Cached input is a subset of 100 prompt tokens; reasoning is inside 20 output tokens.",
+  "files": {
+    ".codex/sessions/2026/10/01/a.jsonl": "{\"type\": \"session_meta\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"payload\": {\"id\": \"synthetic-codex-session\", \"cwd\": \"/synthetic/project\"}}\n{\"type\": \"turn_context\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"payload\": {\"model\": \"gpt-5\", \"turn_id\": \"synthetic-turn\"}}\n{\"type\": \"event_msg\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"payload\": {\"type\": \"token_count\", \"info\": {\"total_token_usage\": {\"input_tokens\": 100, \"output_tokens\": 20, \"cached_input_tokens\": 30, \"reasoning_output_tokens\": 5}, \"last_token_usage\": {\"input_tokens\": 100, \"output_tokens\": 20, \"cached_input_tokens\": 30, \"reasoning_output_tokens\": 5}}}}\n",
+    ".codex/sessions/2026/10/01/b.jsonl": "{\"type\": \"session_meta\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"payload\": {\"id\": \"synthetic-codex-session\", \"cwd\": \"/synthetic/project\"}}\n{\"type\": \"turn_context\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"payload\": {\"model\": \"gpt-5\", \"turn_id\": \"synthetic-turn\"}}\n{\"type\": \"event_msg\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"payload\": {\"type\": \"token_count\", \"info\": {\"total_token_usage\": {\"input_tokens\": 100, \"output_tokens\": 20, \"cached_input_tokens\": 30, \"reasoning_output_tokens\": 5}, \"last_token_usage\": {\"input_tokens\": 100, \"output_tokens\": 20, \"cached_input_tokens\": 30, \"reasoning_output_tokens\": 5}}}}\n"
+  },
+  "expected": [
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 70,
+      "output": 20,
+      "cacheRead": 30,
+      "cacheWrite": 0,
+      "session": "synthetic-codex-session",
+      "timestamp": 1790856000000
+    }
+  ],
+  "provenance": {
+    "kind": "synthetic",
+    "origin": "Hand-authored source-format example; no personal transcript.",
+    "sourceReferences": [
+      "https://github.com/junhoyeo/tokscale/tree/d4d1c751856e25913bce97bfbd7b254308863239/crates/tokscale-core/src/sessions"
+    ],
+    "privacy": "Invented identifiers and /synthetic/project."
+  }
+}

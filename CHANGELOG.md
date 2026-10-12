@@ -5,6 +5,19 @@ versioning.
 
 ## [Unreleased]
 
+### 0.7.5-account-local.0 — local reconciliation candidate, not released
+- **Account moves replay locally available history.** Pairing disclosure now
+  explains before approval that the next sync copies recoverable local history
+  into the new account while the old account keeps its copy. This requires the
+  account-local server writer; older servers' `heldElsewhere` responses remain
+  readable for compatibility.
+- **Current hook ownership is preserved.** This candidate includes the 0.7.4
+  hook ownership source through `f712d2b`, including its Windows child-stdio
+  correction. It supersedes the stale 0.7.3 account-local candidate without
+  replacing released 0.7.3 or the separate 0.7.4 hook PR.
+- This prerelease identifier is local bookkeeping, not a release reservation.
+  See `docs/account-local-reconciliation-2026-10.md` for release dependencies.
+
 ### 0.7.3 — plugin setup says to reload open Claude Code sessions
 - **Open sessions keep recording.** Claude Code loads a plugin when a
   session starts, so a session already open when `connect` or

@@ -1,0 +1,342 @@
+{
+  "claude-copies.json": {
+    "status": "executed",
+    "pin": {
+      "commit": "c59a83bf943f329f0e61f1a29c760353ee1860a5",
+      "version": "4.0.0",
+      "pytzVersion": "2024.1",
+      "pytzWheelSha256": "328171f4e3623139da4983451950b28e95ac706e13f3f2630a879749e7a8b319",
+      "pythonContract": "CPython 3.12",
+      "helperSha256": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
+      "adapterSha256": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b"
+    },
+    "raw": [
+      {
+        "cache_creation_tokens": 25,
+        "cache_read_tokens": 100,
+        "cost_usd": 0.002254,
+        "input_tokens": 10,
+        "message_id": "msg_req_A",
+        "model": "claude-sonnet-4-5",
+        "output_tokens": 140,
+        "project": "/synthetic/project",
+        "request_id": "req_A",
+        "source": {
+          "account": "/fixtures/.claude/projects",
+          "kind": "claude_code_jsonl"
+        },
+        "timestamp": "2026-10-01T12:00:00+00:00"
+      }
+    ],
+    "executionProvenance": {
+      "pythonSha256": "1319c137ea5d30f1d7599943cb0e72666648c20a94cf5932dd095364d07dafeb",
+      "pythonVersion": "Python 3.12.3"
+    },
+    "observation": {
+      "records": [
+        {
+          "cache_creation_tokens": 25,
+          "cache_read_tokens": 100,
+          "cost_usd": 0.002254,
+          "input_tokens": 10,
+          "message_id": "msg_req_A",
+          "model": "claude-sonnet-4-5",
+          "output_tokens": 140,
+          "project": "/synthetic/project",
+          "request_id": "req_A",
+          "source": {
+            "account": "/fixtures/.claude/projects",
+            "kind": "claude_code_jsonl"
+          },
+          "timestamp": "2026-10-01T12:00:00+00:00"
+        }
+      ],
+      "aggregate": {
+        "input": 10,
+        "output": 140,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "sessionIdentity": "not exposed by UsageEntry",
+      "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+    },
+    "sourceComparison": {
+      "expected": {
+        "input": 10,
+        "output": 140,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "actual": {
+        "input": 10,
+        "output": 140,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "matches": true
+    }
+  },
+  "claude-spaced-json.json": {
+    "status": "executed",
+    "pin": {
+      "commit": "c59a83bf943f329f0e61f1a29c760353ee1860a5",
+      "version": "4.0.0",
+      "pytzVersion": "2024.1",
+      "pytzWheelSha256": "328171f4e3623139da4983451950b28e95ac706e13f3f2630a879749e7a8b319",
+      "pythonContract": "CPython 3.12",
+      "helperSha256": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
+      "adapterSha256": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b"
+    },
+    "raw": [
+      {
+        "cache_creation_tokens": 25,
+        "cache_read_tokens": 100,
+        "cost_usd": 0.000229,
+        "input_tokens": 10,
+        "message_id": "msg_req_A",
+        "model": "claude-sonnet-4-5",
+        "output_tokens": 5,
+        "project": "/synthetic/project",
+        "request_id": "req_A",
+        "source": {
+          "account": "/fixtures/.claude/projects",
+          "kind": "claude_code_jsonl"
+        },
+        "timestamp": "2026-10-01T12:00:00+00:00"
+      }
+    ],
+    "executionProvenance": {
+      "pythonSha256": "1319c137ea5d30f1d7599943cb0e72666648c20a94cf5932dd095364d07dafeb",
+      "pythonVersion": "Python 3.12.3"
+    },
+    "observation": {
+      "records": [
+        {
+          "cache_creation_tokens": 25,
+          "cache_read_tokens": 100,
+          "cost_usd": 0.000229,
+          "input_tokens": 10,
+          "message_id": "msg_req_A",
+          "model": "claude-sonnet-4-5",
+          "output_tokens": 5,
+          "project": "/synthetic/project",
+          "request_id": "req_A",
+          "source": {
+            "account": "/fixtures/.claude/projects",
+            "kind": "claude_code_jsonl"
+          },
+          "timestamp": "2026-10-01T12:00:00+00:00"
+        }
+      ],
+      "aggregate": {
+        "input": 10,
+        "output": 5,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "sessionIdentity": "not exposed by UsageEntry",
+      "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+    },
+    "sourceComparison": {
+      "expected": {
+        "input": 10,
+        "output": 140,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "actual": {
+        "input": 10,
+        "output": 5,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "matches": false
+    }
+  },
+  "claude-streaming.json": {
+    "status": "executed",
+    "pin": {
+      "commit": "c59a83bf943f329f0e61f1a29c760353ee1860a5",
+      "version": "4.0.0",
+      "pytzVersion": "2024.1",
+      "pytzWheelSha256": "328171f4e3623139da4983451950b28e95ac706e13f3f2630a879749e7a8b319",
+      "pythonContract": "CPython 3.12",
+      "helperSha256": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
+      "adapterSha256": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b"
+    },
+    "raw": [
+      {
+        "cache_creation_tokens": 25,
+        "cache_read_tokens": 100,
+        "cost_usd": 0.000229,
+        "input_tokens": 10,
+        "message_id": "msg_req_A",
+        "model": "claude-sonnet-4-5",
+        "output_tokens": 5,
+        "project": "/synthetic/project",
+        "request_id": "req_A",
+        "source": {
+          "account": "/fixtures/.claude/projects",
+          "kind": "claude_code_jsonl"
+        },
+        "timestamp": "2026-10-01T12:00:00+00:00"
+      }
+    ],
+    "executionProvenance": {
+      "pythonSha256": "1319c137ea5d30f1d7599943cb0e72666648c20a94cf5932dd095364d07dafeb",
+      "pythonVersion": "Python 3.12.3"
+    },
+    "observation": {
+      "records": [
+        {
+          "cache_creation_tokens": 25,
+          "cache_read_tokens": 100,
+          "cost_usd": 0.000229,
+          "input_tokens": 10,
+          "message_id": "msg_req_A",
+          "model": "claude-sonnet-4-5",
+          "output_tokens": 5,
+          "project": "/synthetic/project",
+          "request_id": "req_A",
+          "source": {
+            "account": "/fixtures/.claude/projects",
+            "kind": "claude_code_jsonl"
+          },
+          "timestamp": "2026-10-01T12:00:00+00:00"
+        }
+      ],
+      "aggregate": {
+        "input": 10,
+        "output": 5,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "sessionIdentity": "not exposed by UsageEntry",
+      "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+    },
+    "sourceComparison": {
+      "expected": {
+        "input": 10,
+        "output": 140,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "actual": {
+        "input": 10,
+        "output": 5,
+        "cacheRead": 100,
+        "cacheWrite": 25
+      },
+      "matches": false
+    }
+  },
+  "claude-subagents.json": {
+    "status": "executed",
+    "pin": {
+      "commit": "c59a83bf943f329f0e61f1a29c760353ee1860a5",
+      "version": "4.0.0",
+      "pytzVersion": "2024.1",
+      "pytzWheelSha256": "328171f4e3623139da4983451950b28e95ac706e13f3f2630a879749e7a8b319",
+      "pythonContract": "CPython 3.12",
+      "helperSha256": "cf62f4adac3b16b8c581af80389a985f3f2634320eb73c5a33d55038e338ad96",
+      "adapterSha256": "31c5ecc76d740c3f2cffd1ae0432a5c58171018bdefb521621ca1ff5d1fd562b"
+    },
+    "raw": [
+      {
+        "cache_creation_tokens": 25,
+        "cache_read_tokens": 100,
+        "cost_usd": 0.000304,
+        "input_tokens": 10,
+        "message_id": "msg_req_A",
+        "model": "claude-sonnet-4-5",
+        "output_tokens": 10,
+        "project": "/synthetic/project",
+        "request_id": "req_A",
+        "source": {
+          "account": "/fixtures/.claude/projects",
+          "kind": "claude_code_jsonl"
+        },
+        "timestamp": "2026-10-01T12:00:00+00:00"
+      },
+      {
+        "cache_creation_tokens": 25,
+        "cache_read_tokens": 100,
+        "cost_usd": 0.000454,
+        "input_tokens": 10,
+        "message_id": "msg_req_B",
+        "model": "claude-sonnet-4-5",
+        "output_tokens": 20,
+        "project": "/synthetic/project",
+        "request_id": "req_B",
+        "source": {
+          "account": "/fixtures/.claude/projects",
+          "kind": "claude_code_jsonl"
+        },
+        "timestamp": "2026-10-01T12:00:00+00:00"
+      }
+    ],
+    "executionProvenance": {
+      "pythonSha256": "1319c137ea5d30f1d7599943cb0e72666648c20a94cf5932dd095364d07dafeb",
+      "pythonVersion": "Python 3.12.3"
+    },
+    "observation": {
+      "records": [
+        {
+          "cache_creation_tokens": 25,
+          "cache_read_tokens": 100,
+          "cost_usd": 0.000304,
+          "input_tokens": 10,
+          "message_id": "msg_req_A",
+          "model": "claude-sonnet-4-5",
+          "output_tokens": 10,
+          "project": "/synthetic/project",
+          "request_id": "req_A",
+          "source": {
+            "account": "/fixtures/.claude/projects",
+            "kind": "claude_code_jsonl"
+          },
+          "timestamp": "2026-10-01T12:00:00+00:00"
+        },
+        {
+          "cache_creation_tokens": 25,
+          "cache_read_tokens": 100,
+          "cost_usd": 0.000454,
+          "input_tokens": 10,
+          "message_id": "msg_req_B",
+          "model": "claude-sonnet-4-5",
+          "output_tokens": 20,
+          "project": "/synthetic/project",
+          "request_id": "req_B",
+          "source": {
+            "account": "/fixtures/.claude/projects",
+            "kind": "claude_code_jsonl"
+          },
+          "timestamp": "2026-10-01T12:00:00+00:00"
+        }
+      ],
+      "aggregate": {
+        "input": 20,
+        "output": 30,
+        "cacheRead": 200,
+        "cacheWrite": 50
+      },
+      "sessionIdentity": "not exposed by UsageEntry",
+      "costBasis": "upstream built-in calculated estimate; not a billing oracle"
+    },
+    "sourceComparison": {
+      "expected": {
+        "input": 20,
+        "output": 30,
+        "cacheRead": 200,
+        "cacheWrite": 50
+      },
+      "actual": {
+        "input": 20,
+        "output": 30,
+        "cacheRead": 200,
+        "cacheWrite": 50
+      },
+      "matches": true
+    }
+  }
+}

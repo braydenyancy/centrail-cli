@@ -6,6 +6,9 @@ const maxAttempts = Number(process.env.CENTRAIL_CONTRACT_ATTEMPTS ?? "18");
 const expectedSurfaces = (process.env.CENTRAIL_EXPECTED_SURFACES ?? "")
   .split(",")
   .filter(Boolean);
+const expectedFields = (process.env.CENTRAIL_EXPECTED_FIELDS ?? "")
+  .split(",")
+  .filter(Boolean);
 
 if (expectedSurfaces.length === 0) {
   throw new Error("CENTRAIL_EXPECTED_SURFACES must contain at least one surface");
@@ -42,6 +45,11 @@ const acceptedSurfaces = new Set(
 const missing = expectedSurfaces.filter((surface) => !acceptedSurfaces.has(surface));
 if (missing.length > 0) {
   throw new Error(`deployed server does not accept surfaces: ${missing.join(", ")}`);
+}
+const acceptedFields = new Set(Array.isArray(contract.fields) ? contract.fields : []);
+const missingFields = expectedFields.filter((field) => !acceptedFields.has(field));
+if (missingFields.length > 0) {
+  throw new Error(`deployed server does not accept fields: ${missingFields.join(", ")}`);
 }
 
 process.stdout.write(

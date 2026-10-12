@@ -50,6 +50,8 @@ export type ParsedUsageEvent = {
   // Usage extras, priced differently and carried for the server to price
   // later: Claude's `usage.speed` ("fast" mode) and web-search requests.
   speed?: string;
+  // Observed processing class only; absent means the source did not report it.
+  serviceClass?: "standard" | "priority" | "flex" | "batch" | "unknown";
   webSearchRequests?: number;
   metadata: {
     cwd?: string; // dropped from the wire once the server accepts `repo`
@@ -329,10 +331,9 @@ async function listTranscripts(basePath: string, since: Date | undefined): Promi
       } catch {
         continue;
       }
-      // Skip files unchanged since last sync. Conservative cut: we use mtime,
-      // so a long-running session keeps reprocessing until it closes —
-      // dedup-by-externalId catches the duplicates downstream.
-      if (since && fileStat.mtime < since) continue;
+      // ctime catches imported transcripts whose original mtime was preserved.
+      // A changed file is replay evidence even when every event is historical.
+      if (since && Math.max(fileStat.mtimeMs, fileStat.ctimeMs) < since.getTime()) continue;
       files.push(path);
     }
   }

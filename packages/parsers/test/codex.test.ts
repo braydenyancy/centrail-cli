@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -85,11 +85,7 @@ async function makeSession(lines: string[], nested = true): Promise<string> {
 
 describe("scanCodexLogs", () => {
   it("is registered as a first-class CLI scanner", () => {
-    expect(SCANNERS.map(({ surface, revision }) => ({ surface, revision }))).toEqual([
-      { surface: "claude-code", revision: 3 },
-      { surface: "copilot-cli", revision: 2 },
-      { surface: "codex", revision: 2 },
-    ]);
+    expect(SCANNERS.find(({ surface }) => surface === "codex")).toMatchObject({ surface: "codex", revision: 3 });
   });
 
   it("parses each last_token_usage increment without double-counting cached input", async () => {
@@ -173,7 +169,7 @@ describe("scanCodexLogs", () => {
     expect(await scanCodexLogs({ basePath: join(base, "missing") })).toEqual([]);
   });
 
-  it("counts off the rollouts it reads: onFile(done, total) after each, files `since` skips not counted", async () => {
+  it("counts rollouts including imported historical copies discovered through ctime", async () => {
     const base = await makeSession([META, TURN, tokenCount()]);
     await writeFile(join(base, "2026", "07", "18", "second.jsonl"), `${[META, TURN, tokenCount()].join("\n")}\n`);
     const old = new Date("2026-06-01T00:00:00.000Z");
@@ -184,10 +180,10 @@ describe("scanCodexLogs", () => {
     expect(calls).toEqual([[1, 2], [2, 2]]);
     calls.length = 0;
     await scanCodexLogs({ basePath: base, since: new Date("2026-06-02T00:00:00.000Z"), onFile });
-    expect(calls).toEqual([[1, 1]]);
+    expect(calls).toEqual([[1, 2], [2, 2]]);
   });
 
-  it("wholeFiles returns the read file's events before since too, marked context, for the caller to place and not send", async () => {
+  it("wholeFiles returns the read file's events before since too, marked context, for timestamp-aware callers; sync may replay them", async () => {
     const base = await makeSession([META, TURN, tokenCount("2026-07-18T12:00:02.000Z"), tokenCount("2026-07-18T12:00:09.000Z")]);
     const events = await scanCodexLogs({ basePath: base, since: new Date("2026-07-18T12:00:05.000Z"), wholeFiles: true });
     expect(events.map((e) => [e.occurredAt.toISOString(), e.metadata.context ?? false])).toEqual([
@@ -235,6 +231,70 @@ describe("scanCodexLogs", () => {
     expect(events).toHaveLength(2);
     expect(events[0].externalId).toBe("sess-codex:turn-1:2026-07-18T12:00:02.000Z");
     expect(events[1].externalId).toBe("sess-codex:turn-1:2026-07-18T12:00:02.000Z:2");
+  });
+
+  it("copied and overlapping rollouts retain once-only IDs, including legitimate same-timestamp calls", async () => {
+    const base = await makeSession([META, TURN, tokenCount(), tokenCount()], false);
+    const first = await scanCodexLogs({ basePath: base });
+    await copyFile(join(base, "rollout.jsonl"), join(base, "copy.jsonl"));
+    expect(await scanCodexLogs({ basePath: base })).toEqual(first);
+    // A continuation overlaps both calls but adds a third one.
+    await writeFile(join(base, "copy.jsonl"), `${[META, TURN, tokenCount(), tokenCount(), tokenCount("2026-07-18T12:00:09.000Z")].join("\n")}\n`);
+    const events = await scanCodexLogs({ basePath: base });
+    expect(events).toHaveLength(3);
+    expect(new Set(events.map((e) => e.externalId)).size).toBe(3);
+    expect(events.filter((e) => e.occurredAt.toISOString().endsWith("02.000Z")).map((e) => e.externalId)).toEqual(first.map((e) => e.externalId));
+    await rm(join(base, "rollout.jsonl"));
+    expect(await scanCodexLogs({ basePath: base })).toEqual(events);
+  });
+
+  it("modified historical files expose old usage and growth to whole-file delivery", async () => {
+    const base = await makeSession([META, TURN, tokenCount()], false);
+    const since = new Date("2026-08-01T00:00:00Z");
+    const before = await scanCodexLogs({ basePath: base, since, wholeFiles: true });
+    expect(before).toHaveLength(1);
+    expect(before[0].metadata.context).toBe(true);
+    const corrected = line("event_msg", "2026-07-18T12:00:02.000Z", {
+      type: "token_count", info: { last_token_usage: { input_tokens: 1500, output_tokens: 80 } },
+    });
+    await writeFile(join(base, "rollout.jsonl"), `${[META, TURN, corrected].join("\n")}\n`);
+    const after = await scanCodexLogs({ basePath: base, since, wholeFiles: true });
+    expect(after[0].externalId).toBe(before[0].externalId);
+    expect(after[0].inputTokens).toBe(1500);
+  });
+
+  it("discovers a newly imported historical rollout whose original mtime was preserved", async () => {
+    const base = await makeSession([META, TURN, tokenCount()], false);
+    const old = new Date("2026-01-01");
+    await utimes(join(base, "rollout.jsonl"), old, old);
+    const events = await scanCodexLogs({ basePath: base, since: new Date("2026-02-01"), wholeFiles: true });
+    expect(events).toHaveLength(1);
+  });
+
+  it("quarantines a truncated copy whose same-timestamp suffix would name the wrong call", async () => {
+    const usage = (total: number, last: number) => line("event_msg", "2026-07-18T12:00:02.000Z", {
+      type: "token_count", info: { total_token_usage: { input_tokens: total, output_tokens: 0 }, last_token_usage: { input_tokens: last, output_tokens: 0 } },
+    });
+    const base = await makeSession([META, TURN, usage(100, 100), usage(300, 200)], false);
+    await writeFile(join(base, "truncated.jsonl"), `${[META, TURN, usage(300, 200)].join("\n")}\n`);
+    const issues: unknown[] = [];
+    expect(await scanCodexLogs({ basePath: base, onIssue: (issue) => issues.push(issue) })).toEqual([]);
+    expect(issues).toEqual([{ reason: "conflicting_copy", externalId: "sess-codex:turn-1:2026-07-18T12:00:02.000Z" }]);
+    // Only the truncated file changed in the next window. The unchanged full
+    // copy must still prevent a conflicting identity from reaching ingest.
+    const since = new Date(Date.now() + 1000);
+    const changed = new Date(since.getTime() + 1000);
+    await utimes(join(base, "truncated.jsonl"), changed, changed);
+    const incrementalIssues: unknown[] = [];
+    expect(await scanCodexLogs({ basePath: base, since, wholeFiles: true, onIssue: (issue) => incrementalIssues.push(issue) })).toEqual([]);
+    expect(incrementalIssues).toHaveLength(1);
+  });
+
+  it("keeps same-timestamp identities stable when a time window cuts earlier context", async () => {
+    const base = await makeSession([META, TURN, tokenCount(), tokenCount(), tokenCount("2026-07-18T12:00:09.000Z")], false);
+    const full = await scanCodexLogs({ basePath: base });
+    const incremental = await scanCodexLogs({ basePath: base, since: new Date("2026-07-18T12:00:05Z"), wholeFiles: true });
+    expect(incremental.map((e) => e.externalId)).toEqual(full.map((e) => e.externalId));
   });
 
   it("recovers per-call deltas from cumulative totals and event model metadata", async () => {
@@ -286,7 +346,7 @@ describe("Codex path resolution", () => {
     expect(codexHomeDir()).toBe("/work/codex");
   });
 
-  it("scans active and archived sessions without duplicate relative paths", async () => {
+  it("scans active and archived sessions and deduplicates event identities", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-homes-"));
     const work = join(root, "work");
     const personal = join(root, "personal");
@@ -386,9 +446,9 @@ describe("Codex fork replays (ccusage #1337, #1349)", () => {
     expect(sumInput(await scanCodexLogs({ basePath: base }))).toBe(650);
   });
 
-  it("with the parent's rollout gone: the leading burst after a fork marker is treated as replay", async () => {
+  it("with the parent's rollout gone: a timestamp burst alone must not delete usage", async () => {
     const base = await write({ "rollout-C.jsonl": child });
-    expect(sumInput(await scanCodexLogs({ basePath: base }))).toBe(50);
+    expect(sumInput(await scanCodexLogs({ basePath: base }))).toBe(350);
   });
 
   it("an incremental scan that skips the unchanged parent still drops the child's replay", async () => {
@@ -397,6 +457,20 @@ describe("Codex fork replays (ccusage #1337, #1349)", () => {
     await utimes(join(base, "rollout-P.jsonl"), new Date("2026-06-01T12:00:30Z"), new Date("2026-06-01T12:00:30Z"));
     const events = await scanCodexLogs({ basePath: base, since: new Date("2026-06-01T12:04:00Z") });
     expect(sumInput(events.filter((e) => e.metadata.sessionId === "C"))).toBe(50);
+  });
+
+  it("a partial replay removes only matching evidence and keeps the child's next call", async () => {
+    const partial = [meta("C", ts(5), "P"), turn(ts(5, 1), "c1"), inc(ts(5, 1), 100, 100), inc(ts(5, 2), 250, 150)];
+    const base = await write({ "P.jsonl": parent, "C.jsonl": partial });
+    const events = await scanCodexLogs({ basePath: base });
+    expect(sumInput(events)).toBe(750);
+    expect(events.filter((e) => e.metadata.sessionId === "C")).toHaveLength(1);
+  });
+
+  it("does not suppress a fast unmatched call merely because parent history is longer", async () => {
+    const own = [meta("C", ts(5), "P"), turn(ts(5, 1), "c1"), inc(ts(5, 1), 75, 75), inc(ts(5, 1), 150, 75)];
+    const base = await write({ "P.jsonl": parent, "C.jsonl": own });
+    expect(sumInput(await scanCodexLogs({ basePath: base }))).toBe(750);
   });
 
   it("a session that is not a fork keeps its first burst", async () => {

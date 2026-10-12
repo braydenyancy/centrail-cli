@@ -1,0 +1,40 @@
+{
+  "client": "codex",
+  "reason": "Active and archived directories contain the same relative filename and copied first request. The archive also retains a unique tail. Count copied prefix once and retain tail:120 input.",
+  "provenance": {
+    "kind": "generated-regression",
+    "sourcePath": "packages/parsers/test/codex.test.ts",
+    "sourceSha256": "28b9e8a08bf6e8c3cd167a0100c72e9af23f88cb988977a256011d10b7573c87",
+    "license": "Apache-2.0",
+    "transforms": [
+      "Recreated documented counters and source identity relations as compact JSONL with synthetic directories."
+    ],
+    "containsRealUserData": false
+  },
+  "files": {
+    ".codex/sessions/2026/06/01/rollout-archive.jsonl": "{\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"archive\",\"cwd\":\"/synthetic/repo\",\"timestamp\":\"2026-06-01T12:00:00.000Z\"}}\n{\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"t1\",\"model\":\"gpt-5\",\"cwd\":\"/synthetic/repo\"}}\n{\"timestamp\":\"2026-06-01T12:01:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n",
+    ".codex/archived_sessions/2026/06/01/rollout-archive.jsonl": "{\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"archive\",\"cwd\":\"/synthetic/repo\",\"timestamp\":\"2026-06-01T12:00:00.000Z\"}}\n{\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"t1\",\"model\":\"gpt-5\",\"cwd\":\"/synthetic/repo\"}}\n{\"timestamp\":\"2026-06-01T12:01:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n{\"timestamp\":\"2026-06-01T12:02:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":120,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":20,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n"
+  },
+  "expected": [
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 100,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "archive",
+      "timestamp": 1780315260000
+    },
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 20,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "archive",
+      "timestamp": 1780315320000
+    }
+  ]
+}

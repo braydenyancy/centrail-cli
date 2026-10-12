@@ -1,0 +1,28 @@
+{
+  "client": "gemini",
+  "reason": "One message copied byte-for-byte. Input100 includes cache30; output20 excludes thoughts10; total130 validates prompt plus output plus thoughts.",
+  "files": {
+    ".gemini/tmp/project/chats/session-a.json": "{\"sessionId\": \"synthetic-gemini-session\", \"startTime\": \"2026-10-01T12:00:00.000Z\", \"messages\": [{\"id\": \"synthetic-message\", \"type\": \"gemini\", \"model\": \"gemini-2.5-pro\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"tokens\": {\"input\": 100, \"output\": 20, \"cached\": 30, \"thoughts\": 10, \"tool\": 0, \"total\": 130}}], \"projectHash\": \"synthetic-project\", \"lastUpdated\": \"2026-10-01T12:00:00.000Z\"}",
+    ".gemini/tmp/project/chats/session-b.json": "{\"sessionId\": \"synthetic-gemini-session\", \"startTime\": \"2026-10-01T12:00:00.000Z\", \"messages\": [{\"id\": \"synthetic-message\", \"type\": \"gemini\", \"model\": \"gemini-2.5-pro\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"tokens\": {\"input\": 100, \"output\": 20, \"cached\": 30, \"thoughts\": 10, \"tool\": 0, \"total\": 130}}], \"projectHash\": \"synthetic-project\", \"lastUpdated\": \"2026-10-01T12:00:00.000Z\"}"
+  },
+  "expected": [
+    {
+      "model": "gemini-2.5-pro",
+      "provider": "google",
+      "input": 70,
+      "output": 30,
+      "cacheRead": 30,
+      "cacheWrite": 0,
+      "session": "synthetic-gemini-session",
+      "timestamp": 1790856000000
+    }
+  ],
+  "provenance": {
+    "kind": "synthetic",
+    "origin": "Hand-authored source-format example; no personal transcript.",
+    "sourceReferences": [
+      "https://github.com/junhoyeo/tokscale/tree/d4d1c751856e25913bce97bfbd7b254308863239/crates/tokscale-core/src/sessions"
+    ],
+    "privacy": "Invented identifiers and /synthetic/project."
+  }
+}

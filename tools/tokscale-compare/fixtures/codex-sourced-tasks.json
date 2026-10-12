@@ -1,0 +1,60 @@
+{
+  "client": "codex",
+  "reason": "Four request increments of10 prompt (2 cached) and3 output each; task_started entries are timing metadata, not usage. Source header added only to supply stable session identity.",
+  "provenance": {
+    "kind": "upstream-synthetic-fixture",
+    "origin": "Pinned Tokscale repository test fixture, not a real transcript.",
+    "url": "https://github.com/junhoyeo/tokscale/blob/d4d1c751856e25913bce97bfbd7b254308863239/crates/tokscale-core/tests/fixtures/codex_task_started_duration.jsonl",
+    "upstreamBytesSha256": "fb61def74d5983226ff5c69f948d27421c7a128f24934c0e4d94fd21bc544b07",
+    "transformations": [
+      "Prepended invented session_meta header; retained original fixture bytes verbatim afterward."
+    ],
+    "license": "MIT; ../UPSTREAM-LICENSE",
+    "privacy": "Reviewed fixture contains synthetic future timestamps/model/usage only."
+  },
+  "files": {
+    ".codex/sessions/2040/01/01/sourced.jsonl": "{\"type\": \"session_meta\", \"timestamp\": \"2040-01-01T00:00:00Z\", \"payload\": {\"id\": \"synthetic-sourced-session\", \"cwd\": \"/synthetic/project\"}}\n{\"timestamp\":\"2040-01-01T00:00:00Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.2\"}}\n{\"timestamp\":\"2040-01-01T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":2,\"output_tokens\":3},\"last_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":2,\"output_tokens\":3}}}}\n{\"timestamp\":\"2040-01-02T00:00:00.250Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\",\"started_at\":2209075200}}\n{\"timestamp\":\"2040-01-02T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":20,\"cached_input_tokens\":4,\"output_tokens\":6},\"last_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":2,\"output_tokens\":3}}}}\n{\"timestamp\":\"2040-01-03T00:00:00.250Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-3\"}}\n{\"timestamp\":\"2040-01-03T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":30,\"cached_input_tokens\":6,\"output_tokens\":9},\"last_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":2,\"output_tokens\":3}}}}\n{\"timestamp\":\"2040-01-04T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-4\",\"started_at\":2209248000}}\n{\"timestamp\":\"2040-01-04T00:00:00.500Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.2\",\"turn_id\":\"turn-4\"}}\n{\"timestamp\":\"2040-01-04T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":40,\"cached_input_tokens\":8,\"output_tokens\":12},\"last_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":2,\"output_tokens\":3}}}}\n"
+  },
+  "expected": [
+    {
+      "model": "gpt-5.2",
+      "provider": "openai",
+      "input": 8,
+      "output": 3,
+      "cacheRead": 2,
+      "cacheWrite": 0,
+      "session": "synthetic-sourced-session",
+      "timestamp": 2208988801000
+    },
+    {
+      "model": "gpt-5.2",
+      "provider": "openai",
+      "input": 8,
+      "output": 3,
+      "cacheRead": 2,
+      "cacheWrite": 0,
+      "session": "synthetic-sourced-session",
+      "timestamp": 2209075201000
+    },
+    {
+      "model": "gpt-5.2",
+      "provider": "openai",
+      "input": 8,
+      "output": 3,
+      "cacheRead": 2,
+      "cacheWrite": 0,
+      "session": "synthetic-sourced-session",
+      "timestamp": 2209161601000
+    },
+    {
+      "model": "gpt-5.2",
+      "provider": "openai",
+      "input": 8,
+      "output": 3,
+      "cacheRead": 2,
+      "cacheWrite": 0,
+      "session": "synthetic-sourced-session",
+      "timestamp": 2209248001000
+    }
+  ]
+}

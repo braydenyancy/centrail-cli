@@ -25,6 +25,7 @@ jobs:
         run: node scripts/check-server-contract.mjs
         env:
           CENTRAIL_EXPECTED_SURFACES: ${{ steps.scanner-surfaces.outputs.surfaces }}
+          CENTRAIL_EXPECTED_FIELDS: ${{ steps.scanner-surfaces.outputs.fields }}
       - run: npm publish --workspaces --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -9,10 +9,15 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
 import { StandIn, transcriptLine, writeTranscript, type Row } from "../testing/stand-in-server.js";
 import { inTerminal } from "../testing/terminal.js";
+
+// Pairing protocol is real here, but launching the user's desktop browser
+// is an external side effect, not part of the stand-in server fixture.
+const browser = vi.hoisted(() => ({ openBrowser: vi.fn(() => true), shouldOpenBrowser: vi.fn(() => true) }));
+vi.mock("../browser.js", () => browser);
 
 const home = await mkdtemp(join(tmpdir(), "centrail-consent-"));
 const claudeDir = join(home, "claude");
@@ -191,10 +196,10 @@ describe("upgrading from 0.5.x: nothing beyond the 0.5.1 wire leaves before the 
     expect(server.out("req_old")).toBe(30);
     expect((await readConfig()).pendingBackfill).toBe(false);
 
-    // Once.
+    // Replaying the recently modified file leaves one row per event.
     const again = server.ingestBodies.length;
     await inTerminal({ tty: false }, () => runSync({ full: false }));
-    expect(sentSince(again).map((e) => e.externalId)).not.toContain("req_old");
+    expect(sentSince(again).map((e) => e.externalId)).toContain("req_old");
   });
 
   it("a sync in a terminal with the question unanswered asks it once, as `connect` does, records the answer and goes on with identity", async () => {
@@ -233,6 +238,9 @@ describe("upgrading from 0.5.x: nothing beyond the 0.5.1 wire leaves before the 
       // "Sync all?" no; exclude row 1, the folder.
       // No `claude` here: the plugin offer must never run the real one.
       const { output } = await inTerminal({ tty: true, input: ["n", "1"] }, () => runConnect({ baseUrl: server.url }, { claude: null }));
+      expect(browser.openBrowser).toHaveBeenCalledOnce();
+      expect(browser.openBrowser).toHaveBeenCalledWith(`${server.url}/pair`, server.url);
+      expect(output).toContain("Opened in your browser");
       expect(output.split(PROMPT)).toHaveLength(2);
       const cfg = await readConfig();
       expect(cfg.scopeDecidedAt).not.toBeNull();

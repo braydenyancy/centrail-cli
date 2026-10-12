@@ -1,0 +1,28 @@
+{
+  "client": "pi",
+  "reason": "One provider response copied byte-for-byte. Pi usage buckets are disjoint; total=155.",
+  "files": {
+    ".pi/agent/sessions/project/a.jsonl": "{\"type\": \"session\", \"version\": 3, \"id\": \"synthetic-pi-session\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"cwd\": \"/synthetic/project\"}\n{\"type\": \"message\", \"id\": \"synthetic-entry\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"message\": {\"role\": \"assistant\", \"model\": \"gpt-5\", \"provider\": \"openai\", \"responseId\": \"synthetic-response\", \"usage\": {\"input\": 100, \"output\": 20, \"cacheRead\": 30, \"cacheWrite\": 5, \"totalTokens\": 155}}}\n",
+    ".pi/agent/sessions/project/b.jsonl": "{\"type\": \"session\", \"version\": 3, \"id\": \"synthetic-pi-session\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"cwd\": \"/synthetic/project\"}\n{\"type\": \"message\", \"id\": \"synthetic-entry\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"message\": {\"role\": \"assistant\", \"model\": \"gpt-5\", \"provider\": \"openai\", \"responseId\": \"synthetic-response\", \"usage\": {\"input\": 100, \"output\": 20, \"cacheRead\": 30, \"cacheWrite\": 5, \"totalTokens\": 155}}}\n"
+  },
+  "expected": [
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 100,
+      "output": 20,
+      "cacheRead": 30,
+      "cacheWrite": 5,
+      "session": "synthetic-pi-session",
+      "timestamp": 1790856000000
+    }
+  ],
+  "provenance": {
+    "kind": "synthetic",
+    "origin": "Hand-authored source-format example; no personal transcript.",
+    "sourceReferences": [
+      "https://github.com/junhoyeo/tokscale/tree/d4d1c751856e25913bce97bfbd7b254308863239/crates/tokscale-core/src/sessions"
+    ],
+    "privacy": "Invented identifiers and /synthetic/project."
+  }
+}

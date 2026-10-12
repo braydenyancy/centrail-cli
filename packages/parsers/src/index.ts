@@ -6,6 +6,8 @@ import {
 } from "./providers/claude-code.js";
 import { scanCopilotLogs } from "./providers/copilot-cli.js";
 import { scanCodexLogs } from "./providers/codex.js";
+import { scanPiLogs } from "./providers/pi.js";
+import { scanGeminiLogs } from "./providers/gemini.js";
 
 export {
   collapseUsageEvents,
@@ -30,6 +32,8 @@ export {
 } from "./providers/evidence.js";
 
 export { scanCopilotLogs } from "./providers/copilot-cli.js";
+export { scanPiLogs, piSessionsDir } from "./providers/pi.js";
+export { scanGeminiLogs } from "./providers/gemini.js";
 export {
   codexHomeDir,
   codexHomeDirs,
@@ -54,8 +58,8 @@ export {
 } from "./providers/ship-status.js";
 
 // A surface is one tool whose local logs we read. The CLI iterates this
-// registry; the server derives provider from each event's model. Adding a
-// surface = one entry here + its scanner module.
+// registry. New surfaces also require server capability and billing-route
+// support; legacy surfaces retain their existing model-derived provider rules.
 export type Scanner = {
   surface: string;
   // Increment when a scanner starts discovering previously missed historical
@@ -63,11 +67,13 @@ export type Scanner = {
   // perform one safe full backfill on upgrade: the server dedupes on
   // externalId and keeps the larger count, so it is a re-send, never a row.
   revision: number;
-  // `since` picks which files are read (by mtime) and which events return.
+  // New formats require explicit server and consented billing-route support.
+  requiresSurfaceCapability?: boolean;
+  // `since` selects changed files and their replay candidates.
   // `wholeFiles` returns every event of a file read, those outside `since`
   // marked `metadata.context`: the caller places them with their session,
-  // as a full scan would, and sends only the rest. A scanner without turns
-  // (Copilot) may ignore it. `onFile` is called after each file (a Copilot
+  // as a full scan would. Sync also sends historical context to recover late
+  // imports and growing usage. `onFile` is called after each file (a Copilot
   // session) is read, with the count read and the count `since` left to
   // read, so a caller can show a full scan moving.
   scan: (opts: {
@@ -77,24 +83,35 @@ export type Scanner = {
   }) => Promise<ParsedUsageEvent[]>;
 };
 
-// 0.6.0 bumps every surface once (claude-code 2→3, copilot-cli and codex
-// 1→2): each install re-sends its whole history, and to a server that lists
-// "repo" those events carry the § 3.10 identity metadata 0.5.1 never sent,
-// so the server can fill it into the rows it already holds.
+// A discovery/identity repair replays each existing surface once; existing
+// stored history is not deleted or repriced. New surfaces have separate marks
+// and require a server which understands their billing-route evidence.
 export const SCANNERS: Scanner[] = [
   {
     surface: "claude-code",
-    revision: 3,
+    revision: 4,
     scan: (opts) => scanClaudeCodeLogs(opts),
   },
   {
     surface: "copilot-cli",
-    revision: 2,
-    scan: (opts) => scanCopilotLogs(opts),
+    revision: 3,
+    scan: (opts) => scanCopilotLogs({ ...opts, onIssue: (issue) => console.warn(`copilot-cli: quarantined conflicting copy (${issue.externalId})`) }),
   },
   {
     surface: "codex",
-    revision: 2,
-    scan: (opts) => scanCodexLogs(opts),
+    revision: 3,
+    scan: (opts) => scanCodexLogs({ ...opts, onIssue: (issue) => console.warn(`codex: quarantined conflicting copy (${issue.externalId})`) }),
+  },
+  {
+    surface: "pi",
+    revision: 1,
+    requiresSurfaceCapability: true,
+    scan: (opts) => scanPiLogs({ ...opts, onIssue: (issue) => console.warn(`pi: quarantined usage (${issue.reason})`) }),
+  },
+  {
+    surface: "gemini-cli",
+    revision: 1,
+    requiresSurfaceCapability: true,
+    scan: (opts) => scanGeminiLogs({ ...opts, onIssue: (issue) => console.warn(`gemini-cli: quarantined usage (${issue.reason})`) }),
   },
 ];

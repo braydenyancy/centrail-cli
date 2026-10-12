@@ -76,7 +76,7 @@ afterEach(() => {
   else delete (process.stderr as { isTTY?: boolean }).isTTY;
 });
 
-describe("events another account holds (one provider event, one account)", () => {
+describe("compatibility with a server that still enforces cross-account ownership", () => {
   it("are said once, on their own line, and not counted again as skipped", async () => {
     routes["/api/cli/ingest"] = () => json({ inserted: 1, skipped: 1205, updated: 0, inboxCount: 0, heldElsewhere: 1204 });
 

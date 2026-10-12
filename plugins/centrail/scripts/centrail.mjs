@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/commands/connect.ts
-import { readdir as readdir4 } from "node:fs/promises";
+import { readdir as readdir6 } from "node:fs/promises";
 
 // ../parsers/src/providers/claude-code.ts
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -249,7 +249,7 @@ async function listTranscripts(basePath, since) {
       } catch {
         continue;
       }
-      if (since && fileStat.mtime < since)
+      if (since && Math.max(fileStat.mtimeMs, fileStat.ctimeMs) < since.getTime())
         continue;
       files.push(path);
     }
@@ -510,14 +510,42 @@ async function scanCopilotLogs(opts) {
       return [];
     throw err;
   }
-  const events = [];
+  const events = /* @__PURE__ */ new Map();
+  const changedSessions = /* @__PURE__ */ new Set();
+  const conflicts = /* @__PURE__ */ new Set();
+  entries.sort();
   for (let i = 0; i < entries.length; i++) {
-    await readSession(basePath, entries[i], opts.since, events);
+    const parsed = [];
+    await readSession(basePath, entries[i], parsed);
+    if (opts.since && opts.wholeFiles && parsed.length) {
+      try {
+        const files = await Promise.all([stat2(join3(basePath, entries[i], "events.jsonl")), stat2(join3(basePath, entries[i], "workspace.yaml"))]);
+        if (files.some((file) => Math.max(file.mtimeMs, file.ctimeMs) >= opts.since.getTime())) {
+          changedSessions.add(parsed[0].metadata.sessionId);
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT")
+          throw error;
+      }
+    }
+    const baseIds = new Map(parsed.map((event) => [event, event.externalId]));
+    for (const event of suffixDuplicateExternalIds(parsed)) {
+      const baseId = baseIds.get(event);
+      const fingerprint = JSON.stringify([event.model, event.inputTokens, event.outputTokens, event.cacheReadTokens, event.cacheWriteTokens]);
+      const previous = events.get(event.externalId);
+      if (previous && previous.fingerprint !== fingerprint) {
+        if (!conflicts.has(baseId))
+          opts.onIssue?.({ reason: "conflicting_copy", externalId: baseId });
+        conflicts.add(baseId);
+      }
+      if (!previous)
+        events.set(event.externalId, { event, baseId, fingerprint });
+    }
     opts.onFile?.(i + 1, entries.length);
   }
-  return suffixDuplicateExternalIds(events);
+  return [...events.values()].filter(({ event, baseId }) => !conflicts.has(baseId) && (!opts.since || (opts.wholeFiles ? changedSessions.has(event.metadata.sessionId) : event.occurredAt > opts.since))).map(({ event }) => event);
 }
-async function readSession(basePath, entry, since, events) {
+async function readSession(basePath, entry, events) {
   const dir = join3(basePath, entry);
   let dirStat;
   try {
@@ -537,8 +565,6 @@ async function readSession(basePath, entry, since, events) {
     const segDate = new Date(segment.timestamp ?? "");
     const occurredAt = Number.isNaN(segDate.getTime()) ? sessionStart : segDate;
     if (Number.isNaN(occurredAt.getTime()))
-      continue;
-    if (since && occurredAt <= since)
       continue;
     for (const [model, m] of Object.entries(segment.modelMetrics)) {
       const usage = isObject3(m) && isObject3(m.usage) ? m.usage : null;
@@ -624,7 +650,7 @@ function numOr02(v) {
 // ../parsers/src/providers/codex.ts
 import { readdir as readdir3, readFile as readFile3, stat as stat3 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join4, relative } from "node:path";
+import { join as join4 } from "node:path";
 function codexHomeDir() {
   return codexHomeDirs()[0];
 }
@@ -637,7 +663,8 @@ function codexHomeDirs() {
 }
 async function scanCodexLogs(opts) {
   const files = opts.basePath ? await findJsonlFiles(opts.basePath) : await findCodexUsageFiles();
-  const events = [];
+  const eventsById = /* @__PURE__ */ new Map();
+  const conflicts = /* @__PURE__ */ new Set();
   const metaByPath = /* @__PURE__ */ new Map();
   for (const path of files)
     metaByPath.set(path, await readForkMeta(path));
@@ -646,37 +673,63 @@ async function scanCodexLogs(opts) {
     if (m.sessionId && !pathBySession.has(m.sessionId))
       pathBySession.set(m.sessionId, path);
   const parents = /* @__PURE__ */ new Map();
-  const toRead = [];
+  const selected = /* @__PURE__ */ new Set();
+  const changedSessions = /* @__PURE__ */ new Set();
   for (const path of files) {
     if (opts.since) {
       try {
-        if ((await stat3(path)).mtime < opts.since)
+        const info = await stat3(path);
+        if (Math.max(info.mtimeMs, info.ctimeMs) < opts.since.getTime())
           continue;
       } catch {
         continue;
       }
     }
-    toRead.push(path);
+    selected.add(path);
+    const sessionId = metaByPath.get(path)?.sessionId;
+    if (sessionId)
+      changedSessions.add(sessionId);
   }
+  const toRead = files.filter((path) => selected.has(path) || changedSessions.has(metaByPath.get(path)?.sessionId ?? ""));
   for (let i = 0; i < toRead.length; i++) {
     const path = toRead[i];
     let parsed = await parseSession(path, void 0);
     const fork = metaByPath.get(path);
     if (fork?.forkedFrom)
       parsed = await dropForkReplay(parsed, fork, pathBySession.get(fork.forkedFrom), parents);
+    const baseIds = new Map(parsed.map((event) => [event, event.externalId]));
+    parsed = suffixDuplicateExternalIds(parsed);
     for (const e of parsed) {
       if (opts.since && e.occurredAt <= opts.since) {
         if (!opts.wholeFiles)
           continue;
         e.metadata.context = true;
       }
-      events.push(e);
+      const previous = eventsById.get(e.externalId);
+      const baseId = baseIds.get(e);
+      const fingerprint = JSON.stringify([
+        e.provider,
+        e.model,
+        e.inputTokens,
+        e.outputTokens,
+        e.cacheReadTokens,
+        e.cacheWriteTokens,
+        e.cacheCreation5mTokens,
+        e.cacheCreation1hTokens
+      ]);
+      if (previous && previous.fingerprint !== fingerprint) {
+        if (!conflicts.has(baseId))
+          opts.onIssue?.({ reason: "conflicting_copy", externalId: baseId });
+        conflicts.add(baseId);
+      }
+      if (!previous)
+        eventsById.set(e.externalId, { event: e, fingerprint, baseId });
     }
     opts.onFile?.(i + 1, toRead.length);
   }
-  return suffixDuplicateExternalIds(events);
+  return [...eventsById.values()].filter(({ baseId }) => !conflicts.has(baseId)).map(({ event }) => event);
 }
-var REPLAY_BURST_MS = 1e3;
+var replayEvidence = /* @__PURE__ */ new WeakMap();
 async function readForkMeta(path) {
   let content;
   try {
@@ -703,36 +756,41 @@ async function readForkMeta(path) {
   return {};
 }
 async function dropForkReplay(child, fork, parentPath, parents) {
-  if (parentPath) {
-    let parent = parents.get(parentPath);
-    if (!parent) {
-      parent = await parseSession(parentPath, void 0);
-      parents.set(parentPath, parent);
-    }
-    const at = fork.forkedAt?.getTime();
-    const replayed = at === void 0 || Number.isNaN(at) ? parent.length : parent.filter((e) => e.occurredAt.getTime() <= at).length;
-    return child.slice(replayed);
+  if (!parentPath)
+    return child;
+  let parent = parents.get(parentPath);
+  if (!parent) {
+    parent = await parseSession(parentPath, void 0);
+    parents.set(parentPath, parent);
   }
-  let burst = 0;
-  while (burst + 1 < child.length && child[burst + 1].occurredAt.getTime() - child[burst].occurredAt.getTime() < REPLAY_BURST_MS)
-    burst++;
-  return burst > 0 ? child.slice(burst + 1) : child;
+  const at = fork.forkedAt?.getTime();
+  if (at === void 0 || Number.isNaN(at))
+    return child;
+  const eligible = parent.filter((event) => event.occurredAt.getTime() <= at);
+  let cursor = 0;
+  let replayed = 0;
+  for (const event of child) {
+    const evidence = replayEvidence.get(event);
+    if (!evidence)
+      break;
+    const match = eligible.findIndex((candidate, index) => index >= cursor && replayEvidence.get(candidate) === evidence);
+    if (match < 0)
+      break;
+    cursor = match + 1;
+    replayed++;
+  }
+  return child.slice(replayed);
 }
 async function findCodexUsageFiles() {
   const files = [];
   for (const home of codexHomeDirs()) {
     const roots = [join4(home, "sessions"), join4(home, "archived_sessions")];
-    const seenRelativePaths = /* @__PURE__ */ new Set();
     let foundStandardRoot = false;
     for (const root of roots) {
       if (!await isDirectory(root))
         continue;
       foundStandardRoot = true;
       for (const path of await findJsonlFiles(root)) {
-        const key = relative(root, path);
-        if (seenRelativePaths.has(key))
-          continue;
-        seenRelativePaths.add(key);
         files.push(path);
       }
     }
@@ -813,8 +871,15 @@ async function parseSession(path, since) {
       baselineValid = false;
     }
     const event = parsed.event;
-    if (event && (!since || event.occurredAt > since))
-      events.push(event);
+    if (event) {
+      const info = isObject4(raw.payload.info) ? raw.payload.info : {};
+      const total = readTokenUsage(info.total_token_usage);
+      const last = readTokenUsage(info.last_token_usage);
+      if (total && last)
+        replayEvidence.set(event, JSON.stringify([event.model, total, last]));
+      if (!since || event.occurredAt > since)
+        events.push(event);
+    }
   }
   return events;
 }
@@ -938,12 +1003,340 @@ function stringOr2(v) {
   return typeof v === "string" && v.length > 0 ? v : void 0;
 }
 
+// ../parsers/src/providers/pi.ts
+import { createHash } from "node:crypto";
+import { readdir as readdir4, readFile as readFile4, stat as stat4 } from "node:fs/promises";
+import { homedir as homedir4 } from "node:os";
+import { join as join5 } from "node:path";
+function piSessionsDir() {
+  const configured = process.env.PI_CODING_AGENT_DIR;
+  const agentDir = configured === "~" ? homedir4() : configured?.startsWith("~/") || configured?.startsWith("~\\") ? join5(homedir4(), configured.slice(2)) : configured || join5(homedir4(), ".pi", "agent");
+  return join5(agentDir, "sessions");
+}
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function text(value) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 240 && !/[\u0000-\u001F\u007F\uD800-\uDFFF\uFFFD]/u.test(value);
+}
+function count(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 1e9;
+}
+async function filesUnder(root) {
+  let entries;
+  try {
+    entries = await readdir4(root, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return [];
+    throw error;
+  }
+  const files = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join5(root, entry.name);
+    if (entry.isDirectory())
+      files.push(...await filesUnder(path));
+    else if (entry.isFile() && entry.name.endsWith(".jsonl"))
+      files.push(path);
+  }
+  return files;
+}
+function parseFile(bytes, onIssue) {
+  let session;
+  const events = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let start = 0;
+  while (start < bytes.length) {
+    const newline = bytes.indexOf(10, start);
+    const end = newline === -1 ? bytes.length : newline;
+    const rawLine = bytes.subarray(start, end);
+    start = end + 1;
+    let line;
+    try {
+      line = decoder.decode(rawLine);
+    } catch {
+      continue;
+    }
+    if (!line.trim())
+      continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!object(entry))
+      continue;
+    if (!session) {
+      if (entry.type === "title")
+        continue;
+      if (entry.type !== "session" || !text(entry.id))
+        return [];
+      session = entry;
+      continue;
+    }
+    if (entry.type !== "message" || !object(entry.message))
+      continue;
+    const message = entry.message;
+    if (message.role !== "assistant")
+      continue;
+    const invalid = () => onIssue?.({ reason: "invalid_usage", externalId: "pi:unidentified" });
+    if (!object(message.usage)) {
+      invalid();
+      continue;
+    }
+    const usage = message.usage;
+    if (![usage.input, usage.output, usage.cacheRead, usage.cacheWrite].every(count)) {
+      invalid();
+      continue;
+    }
+    if (usage.cacheWrite1h !== void 0 && (!count(usage.cacheWrite1h) || usage.cacheWrite1h > usage.cacheWrite)) {
+      invalid();
+      continue;
+    }
+    if (!text(message.model) || !text(message.provider) || !text(entry.timestamp)) {
+      invalid();
+      continue;
+    }
+    const occurredAt = new Date(entry.timestamp);
+    if (!Number.isFinite(occurredAt.getTime())) {
+      invalid();
+      continue;
+    }
+    if (!text(message.responseId) && !text(entry.id)) {
+      invalid();
+      continue;
+    }
+    const identity = text(message.responseId) ? ["response", message.provider, message.responseId] : ["entry", message.provider, message.model, entry.id, occurredAt.toISOString()];
+    const externalId = `pi:${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
+    events.push({
+      externalId,
+      provider: message.provider,
+      model: message.model,
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite - (message.provider === "anthropic" ? usage.cacheWrite1h ?? 0 : 0),
+      cacheCreationTokens: usage.cacheWrite,
+      cacheCreation5mTokens: 0,
+      cacheCreation1hTokens: usage.cacheWrite1h ?? 0,
+      occurredAt,
+      metadata: {
+        sessionId: `pi:${session.id}`,
+        ...text(session.cwd) ? { cwd: session.cwd } : {},
+        ...text(entry.id) ? { messageId: entry.id } : {}
+      }
+    });
+  }
+  return events;
+}
+async function scanPiLogs(opts = {}) {
+  const files = await filesUnder(opts.basePath ?? piSessionsDir());
+  const events = [];
+  const seen = /* @__PURE__ */ new Set();
+  const identities = /* @__PURE__ */ new Map();
+  const conflicts = /* @__PURE__ */ new Set();
+  const selected = /* @__PURE__ */ new Set();
+  for (const [index, path] of files.entries()) {
+    try {
+      const info = await stat4(path);
+      const changed = !opts.since || Math.max(info.mtimeMs, info.ctimeMs) >= opts.since.getTime();
+      for (const event of parseFile(await readFile4(path), changed ? opts.onIssue : void 0)) {
+        if (changed)
+          selected.add(event.externalId);
+        const fingerprint = JSON.stringify([
+          event.externalId,
+          event.model,
+          event.occurredAt.toISOString(),
+          event.inputTokens,
+          event.outputTokens,
+          event.cacheReadTokens,
+          event.cacheWriteTokens,
+          event.cacheCreation1hTokens
+        ]);
+        if (seen.has(fingerprint))
+          continue;
+        seen.add(fingerprint);
+        const previous = identities.get(event.externalId);
+        if (previous && previous !== fingerprint) {
+          conflicts.add(event.externalId);
+        }
+        identities.set(event.externalId, fingerprint);
+        events.push(event);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT")
+        throw error;
+    } finally {
+      opts.onFile?.(index + 1, files.length);
+    }
+  }
+  for (const externalId of conflicts) {
+    if (selected.has(externalId))
+      opts.onIssue?.({ reason: "conflicting_usage", externalId });
+  }
+  return events.filter((event) => selected.has(event.externalId) && !conflicts.has(event.externalId));
+}
+
+// ../parsers/src/providers/gemini.ts
+import { createHash as createHash2 } from "node:crypto";
+import { readdir as readdir5, readFile as readFile5, stat as stat5 } from "node:fs/promises";
+import { homedir as homedir5 } from "node:os";
+import { basename as basename2, dirname, join as join6 } from "node:path";
+var isObject5 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isText = (value) => typeof value === "string" && value.trim().length > 0 && value.length <= 240 && !/[\u0000-\u001F\u007F\uD800-\uDFFF\uFFFD]/u.test(value);
+var isCount = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 1e9;
+function geminiSessionsDirs() {
+  const home = process.env.GEMINI_CLI_HOME || homedir5();
+  return [join6(home, ".gemini", "tmp"), join6(home, ".cache", ".gemini", "tmp")];
+}
+async function discover(root) {
+  let entries;
+  try {
+    entries = await readdir5(root, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return [];
+    throw error;
+  }
+  const files = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join6(root, entry.name);
+    if (entry.isDirectory())
+      files.push(...await discover(path));
+    else if (entry.isFile() && /\.(json|jsonl)$/.test(entry.name) && (entry.name.startsWith("session-") || basename2(dirname(path)) === "chats"))
+      files.push(path);
+  }
+  return files;
+}
+function eventFor(message, sessionId, onIssue) {
+  if (message.type !== "gemini" || !isText(message.id) || !isText(message.model) || !isText(message.timestamp) || !isObject5(message.tokens))
+    return;
+  const occurredAt = new Date(message.timestamp);
+  if (!Number.isFinite(occurredAt.getTime()))
+    return;
+  const externalId = `gemini:${createHash2("sha256").update(JSON.stringify([message.id, message.timestamp])).digest("hex")}`;
+  const tokens = message.tokens;
+  const thoughts = tokens.thoughts ?? 0;
+  const tool = tokens.tool ?? 0;
+  if (![tokens.input, tokens.output, tokens.cached, tokens.total, thoughts, tool].every(isCount) || tokens.cached > tokens.input) {
+    onIssue?.({ reason: "invalid_usage", externalId });
+    return;
+  }
+  if (tool !== 0) {
+    onIssue?.({ reason: "unsupported_tool_usage", externalId });
+    return;
+  }
+  const output = tokens.output + thoughts;
+  if (!isCount(output) || tokens.input + output !== tokens.total) {
+    onIssue?.({ reason: "invalid_usage", externalId });
+    return;
+  }
+  return {
+    externalId,
+    provider: "google",
+    model: message.model,
+    inputTokens: tokens.input - tokens.cached,
+    outputTokens: output,
+    cacheReadTokens: tokens.cached,
+    cacheCreationTokens: 0,
+    cacheWriteTokens: 0,
+    cacheCreation5mTokens: 0,
+    cacheCreation1hTokens: 0,
+    occurredAt,
+    metadata: { sessionId: `gemini:${sessionId}`, messageId: message.id }
+  };
+}
+function parseRecords(bytes, jsonl, onIssue) {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const records = [];
+  if (!jsonl) {
+    try {
+      records.push(JSON.parse(decoder.decode(bytes)));
+    } catch {
+      return [];
+    }
+  } else {
+    let start = 0;
+    while (start < bytes.length) {
+      const newline = bytes.indexOf(10, start);
+      const end = newline === -1 ? bytes.length : newline;
+      const line = bytes.subarray(start, end);
+      start = end + 1;
+      try {
+        records.push(JSON.parse(decoder.decode(line)));
+      } catch {
+      }
+    }
+  }
+  let sessionId;
+  const latest = /* @__PURE__ */ new Map();
+  const recordMessage = (value) => {
+    if (isObject5(value) && value.type === "gemini" && isText(value.id) && isObject5(value.tokens))
+      latest.set(value.id, value);
+  };
+  for (const record of records) {
+    if (!isObject5(record))
+      continue;
+    const metadata = isObject5(record.$set) ? record.$set : record;
+    if (isText(metadata.sessionId)) {
+      if (sessionId && sessionId !== metadata.sessionId)
+        return [];
+      sessionId = metadata.sessionId;
+    }
+    if (Array.isArray(metadata.messages))
+      metadata.messages.forEach(recordMessage);
+    recordMessage(record);
+  }
+  if (!sessionId)
+    return [];
+  return [...latest.values()].flatMap((message) => {
+    const event = eventFor(message, sessionId, onIssue);
+    return event ? [event] : [];
+  });
+}
+async function scanGeminiLogs(opts = {}) {
+  const roots = opts.basePath === void 0 ? geminiSessionsDirs() : [opts.basePath];
+  const files = (await Promise.all(roots.map(discover))).flat();
+  const events = /* @__PURE__ */ new Map();
+  const fingerprints = /* @__PURE__ */ new Map();
+  const conflicts = /* @__PURE__ */ new Set();
+  const selected = /* @__PURE__ */ new Set();
+  for (const [index, file] of files.entries()) {
+    try {
+      const info = await stat5(file);
+      const changed = !opts.since || Math.max(info.mtimeMs, info.ctimeMs) >= opts.since.getTime();
+      for (const event of parseRecords(await readFile5(file), file.endsWith(".jsonl"), changed ? opts.onIssue : void 0)) {
+        if (changed)
+          selected.add(event.externalId);
+        const fingerprint = JSON.stringify([event.model, event.occurredAt.toISOString(), event.inputTokens, event.outputTokens, event.cacheReadTokens]);
+        const previous = fingerprints.get(event.externalId);
+        if (previous && previous !== fingerprint) {
+          conflicts.add(event.externalId);
+        }
+        fingerprints.set(event.externalId, fingerprint);
+        events.set(event.externalId, event);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT")
+        throw error;
+    } finally {
+      opts.onFile?.(index + 1, files.length);
+    }
+  }
+  for (const externalId of conflicts) {
+    if (selected.has(externalId))
+      opts.onIssue?.({ reason: "conflicting_usage", externalId });
+  }
+  return [...events.values()].filter((event) => selected.has(event.externalId) && !conflicts.has(event.externalId));
+}
+
 // ../parsers/src/providers/git-attribution.ts
 var RECORD_SEP = "";
 var UNIT_SEP = "";
-function parseGitLogNumstat(text) {
+function parseGitLogNumstat(text2) {
   const commits = [];
-  for (const record of text.split(RECORD_SEP)) {
+  for (const record of text2.split(RECORD_SEP)) {
     if (!record.trim())
       continue;
     const lines = record.split("\n");
@@ -1041,32 +1434,44 @@ function computeCommitFates(facts) {
 var SCANNERS = [
   {
     surface: "claude-code",
-    revision: 3,
+    revision: 4,
     scan: (opts) => scanClaudeCodeLogs(opts)
   },
   {
     surface: "copilot-cli",
-    revision: 2,
-    scan: (opts) => scanCopilotLogs(opts)
+    revision: 3,
+    scan: (opts) => scanCopilotLogs({ ...opts, onIssue: (issue) => console.warn(`copilot-cli: quarantined conflicting copy (${issue.externalId})`) })
   },
   {
     surface: "codex",
-    revision: 2,
-    scan: (opts) => scanCodexLogs(opts)
+    revision: 3,
+    scan: (opts) => scanCodexLogs({ ...opts, onIssue: (issue) => console.warn(`codex: quarantined conflicting copy (${issue.externalId})`) })
+  },
+  {
+    surface: "pi",
+    revision: 1,
+    requiresSurfaceCapability: true,
+    scan: (opts) => scanPiLogs({ ...opts, onIssue: (issue) => console.warn(`pi: quarantined usage (${issue.reason})`) })
+  },
+  {
+    surface: "gemini-cli",
+    revision: 1,
+    requiresSurfaceCapability: true,
+    scan: (opts) => scanGeminiLogs({ ...opts, onIssue: (issue) => console.warn(`gemini-cli: quarantined usage (${issue.reason})`) })
   }
 ];
 
 // src/config.ts
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile as readFile4, rename, rm, stat as stat4, writeFile } from "node:fs/promises";
-import { homedir as homedir4 } from "node:os";
-import { join as join5 } from "node:path";
+import { chmod, mkdir, readFile as readFile6, rename, rm, stat as stat6, writeFile } from "node:fs/promises";
+import { homedir as homedir6 } from "node:os";
+import { join as join7 } from "node:path";
 
 // src/update.ts
 import { realpathSync } from "node:fs";
 
 // src/version.ts
-var CLI_VERSION = "0.7.4";
+var CLI_VERSION = "0.7.5-account-local.0";
 var WIRE_VERSION = "1";
 function versionHeaders() {
   return {
@@ -1232,16 +1637,16 @@ function realpath(p) {
 // src/watermarks.ts
 var SHARED_WATERMARK_SURFACES = /* @__PURE__ */ new Set(["claude-code", "copilot-cli", "codex"]);
 function parseSyncState(raw) {
-  const obj = isObject5(raw) ? raw : {};
+  const obj = isObject6(raw) ? raw : {};
   const surfaces = {};
-  if (isObject5(obj.surfaces)) {
+  if (isObject6(obj.surfaces)) {
     for (const [surface, value] of Object.entries(obj.surfaces)) {
       if (typeof value === "string")
         surfaces[surface] = value;
     }
   }
   const scannerRevisions = {};
-  if (isObject5(obj.scannerRevisions)) {
+  if (isObject6(obj.scannerRevisions)) {
     for (const [surface, value] of Object.entries(obj.scannerRevisions)) {
       if (typeof value === "number" && Number.isInteger(value) && value > 0) {
         scannerRevisions[surface] = value;
@@ -1295,18 +1700,18 @@ function validDate(iso) {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? void 0 : date;
 }
-function isObject5(v) {
+function isObject6(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
 // src/config.ts
-var CONFIG_DIR = process.env.CENTRAIL_CONFIG_DIR?.trim() || join5(homedir4(), ".config", "centrail");
-var AUTH_PATH = join5(CONFIG_DIR, "auth.json");
-var DISCONNECTED_PATH = join5(CONFIG_DIR, "auth.disconnected.json");
-var STATE_PATH = join5(CONFIG_DIR, "state.json");
+var CONFIG_DIR = process.env.CENTRAIL_CONFIG_DIR?.trim() || join7(homedir6(), ".config", "centrail");
+var AUTH_PATH = join7(CONFIG_DIR, "auth.json");
+var DISCONNECTED_PATH = join7(CONFIG_DIR, "auth.disconnected.json");
+var STATE_PATH = join7(CONFIG_DIR, "state.json");
 async function readAuth() {
   try {
-    const raw = JSON.parse(await readFile4(AUTH_PATH, "utf-8"));
+    const raw = JSON.parse(await readFile6(AUTH_PATH, "utf-8"));
     if (typeof raw.baseUrl !== "string" || typeof raw.token !== "string" || typeof raw.deviceName !== "string") {
       return null;
     }
@@ -1321,13 +1726,13 @@ async function readAuth() {
     return null;
   }
 }
-var NODE_PATH_FILE = join5(CONFIG_DIR, "node");
+var NODE_PATH_FILE = join7(CONFIG_DIR, "node");
 async function recordNode(execPath = process.execPath, file = NODE_PATH_FILE) {
   try {
-    const now = await readFile4(file, "utf-8").catch(() => "");
+    const now = await readFile6(file, "utf-8").catch(() => "");
     if (now.trim() === execPath)
       return;
-    await mkdir(join5(file, ".."), { recursive: true });
+    await mkdir(join7(file, ".."), { recursive: true });
     await writeFile(file, `${execPath}
 `);
   } catch {
@@ -1370,7 +1775,7 @@ async function parkAuth(reason) {
 }
 async function readDisconnected() {
   try {
-    const raw = JSON.parse(await readFile4(DISCONNECTED_PATH, "utf-8"));
+    const raw = JSON.parse(await readFile6(DISCONNECTED_PATH, "utf-8"));
     const reason = raw.reason === "device_revoked" || raw.reason === "unknown_token" ? raw.reason : "unauthorized";
     return {
       at: typeof raw.disconnectedAt === "string" ? raw.disconnectedAt : "",
@@ -1388,7 +1793,7 @@ function disconnectedMessage(d) {
 }
 async function readState() {
   try {
-    return parseSyncState(JSON.parse(await readFile4(STATE_PATH, "utf-8")));
+    return parseSyncState(JSON.parse(await readFile6(STATE_PATH, "utf-8")));
   } catch {
     return parseSyncState(null);
   }
@@ -1402,17 +1807,17 @@ async function parkOutdated(minimum) {
   await writeState(state);
   return state.outdated;
 }
-var LOCK_PATH = join5(CONFIG_DIR, "sync.lock");
+var LOCK_PATH = join7(CONFIG_DIR, "sync.lock");
 var LOCK_STALE_MS = 15 * 60 * 1e3;
 var LOCK_OWNER_FILE = "owner.json";
 async function acquireSyncLock(lockPath = LOCK_PATH) {
-  await mkdir(join5(lockPath, ".."), { recursive: true });
+  await mkdir(join7(lockPath, ".."), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await mkdir(lockPath);
       const owner = { pid: process.pid, nonce: randomUUID() };
       try {
-        await writeFile(join5(lockPath, LOCK_OWNER_FILE), JSON.stringify(owner), {
+        await writeFile(join7(lockPath, LOCK_OWNER_FILE), JSON.stringify(owner), {
           mode: 384
         });
       } catch (err) {
@@ -1433,7 +1838,7 @@ async function acquireSyncLock(lockPath = LOCK_PATH) {
         return null;
       let ageMs;
       try {
-        ageMs = Date.now() - (await stat4(lockPath)).mtimeMs;
+        ageMs = Date.now() - (await stat6(lockPath)).mtimeMs;
       } catch {
         continue;
       }
@@ -1447,7 +1852,7 @@ async function acquireSyncLock(lockPath = LOCK_PATH) {
 async function readLockOwner(lockPath) {
   try {
     const raw = JSON.parse(
-      await readFile4(join5(lockPath, LOCK_OWNER_FILE), "utf-8")
+      await readFile6(join7(lockPath, LOCK_OWNER_FILE), "utf-8")
     );
     if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.nonce !== "string" || raw.nonce.length === 0) {
       return null;
@@ -1465,7 +1870,7 @@ function processIsAlive(pid) {
     return err.code !== "ESRCH";
   }
 }
-var CONFIG_PATH = join5(CONFIG_DIR, "config.json");
+var CONFIG_PATH = join7(CONFIG_DIR, "config.json");
 var DEFAULT_CONFIG = {
   installId: null,
   mode: "all",
@@ -1507,7 +1912,7 @@ function stringList(v) {
 }
 async function readConfig() {
   try {
-    return parseConfig(JSON.parse(await readFile4(CONFIG_PATH, "utf-8")));
+    return parseConfig(JSON.parse(await readFile6(CONFIG_PATH, "utf-8")));
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -1529,13 +1934,13 @@ async function ensureInstallId() {
   await writeConfig(cfg);
   return cfg.installId;
 }
-var LAST_SYNC_PATH = join5(CONFIG_DIR, "last-sync.json");
+var LAST_SYNC_PATH = join7(CONFIG_DIR, "last-sync.json");
 async function writeLastSync(body) {
   await writeJsonAtomic(LAST_SYNC_PATH, body, 384);
 }
 async function readLastSync() {
   try {
-    return await readFile4(LAST_SYNC_PATH, "utf-8");
+    return await readFile6(LAST_SYNC_PATH, "utf-8");
   } catch {
     return null;
   }
@@ -1581,25 +1986,25 @@ function openBrowser(url, baseUrl) {
 import { execFile as execFile2 } from "node:child_process";
 import { constants as constants2 } from "node:fs";
 import { access } from "node:fs/promises";
-import { delimiter, join as join9 } from "node:path";
+import { delimiter, join as join11 } from "node:path";
 import { createInterface as createInterface2 } from "node:readline/promises";
 
 // src/commands/hooks-install.ts
 import { constants, realpathSync as realpathSync3 } from "node:fs";
-import { copyFile, mkdir as mkdir3, readFile as readFile8, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname4, isAbsolute as isAbsolute2, join as join8, win32 as win322 } from "node:path";
-import { stat as stat7 } from "node:fs/promises";
+import { copyFile, mkdir as mkdir3, readFile as readFile10, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname5, isAbsolute as isAbsolute2, join as join10, win32 as win322 } from "node:path";
+import { stat as stat9 } from "node:fs/promises";
 
 // src/commands/scope.ts
 import { createInterface } from "node:readline/promises";
 
 // src/resolver.ts
-import { stat as stat6 } from "node:fs/promises";
+import { stat as stat8 } from "node:fs/promises";
 
 // src/git.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
-import { readFile as readFile5, stat as stat5 } from "node:fs/promises";
-import { basename as basename2, dirname, join as join6, win32 } from "node:path";
+import { readFile as readFile7, stat as stat7 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname2, join as join8, win32 } from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var GIT_REDIRECT_VARS = [
@@ -1660,11 +2065,11 @@ async function nearestDirectory(path) {
   let dir = path;
   for (; ; ) {
     try {
-      if ((await stat5(dir)).isDirectory())
+      if ((await stat7(dir)).isDirectory())
         return dir;
     } catch {
     }
-    const parent = dirname(dir);
+    const parent = dirname2(dir);
     if (parent === dir)
       return null;
     dir = parent;
@@ -1678,9 +2083,9 @@ function deepestRoot(roots, path) {
   return best;
 }
 async function nestedCheckout(root, dir) {
-  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname(d)) {
+  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname2(d)) {
     try {
-      await stat5(join6(d, ".git"));
+      await stat7(join8(d, ".git"));
       return true;
     } catch {
     }
@@ -1691,9 +2096,9 @@ async function readMainCheckout(repoRoot) {
   try {
     const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
     const common = stdout.trim() ? nativePath(stdout.trim()) : "";
-    if (!common || basename2(common) !== ".git")
+    if (!common || basename3(common) !== ".git")
       return null;
-    const main = dirname(common);
+    const main = dirname2(common);
     return samePath(main, repoRoot) ? null : main;
   } catch {
     return null;
@@ -1808,7 +2213,7 @@ function patchIds(repoRoot, commits) {
       opts
     );
     const ids = spawn2("git", ["-C", repoRoot, "patch-id", "--stable"], opts);
-    let text = "";
+    let text2 = "";
     let ok = true;
     let open2 = 2;
     const done = (code) => {
@@ -1818,7 +2223,7 @@ function patchIds(repoRoot, commits) {
         return;
       const out = {};
       if (ok) {
-        for (const line of text.split("\n")) {
+        for (const line of text2.split("\n")) {
           const [id, sha] = line.trim().split(/\s+/);
           if (id && sha)
             out[sha] = id;
@@ -1834,7 +2239,7 @@ function patchIds(repoRoot, commits) {
       child.stdin.on("error", () => ok = false);
     }
     diff.stdout.pipe(ids.stdin);
-    ids.stdout.on("data", (d) => text += d);
+    ids.stdout.on("data", (d) => text2 += d);
     diff.stdin.end(commits.map((c) => c.base ? `${c.sha} ${c.base}` : c.sha).join("\n") + "\n");
   });
 }
@@ -1945,7 +2350,7 @@ async function readRepoSize(repoRoot) {
   let totalLoc = 0;
   for (const rel of files) {
     try {
-      const content = await readFile5(`${repoRoot}/${rel}`);
+      const content = await readFile7(`${repoRoot}/${rel}`);
       if (content.byteLength > LOC_BYTES_CAP)
         continue;
       if (content.includes(0))
@@ -1960,9 +2365,9 @@ async function readRepoSize(repoRoot) {
 // src/identity.ts
 import { createHmac } from "node:crypto";
 import { realpathSync as realpathSync2 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { readFile as readFile6 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname2, join as join7 } from "node:path";
+import { homedir as homedir7 } from "node:os";
+import { readFile as readFile8 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname3, join as join9 } from "node:path";
 function remoteKey(url) {
   const raw = url.trim();
   if (!raw)
@@ -2064,7 +2469,7 @@ async function listRoots(repoRoot, ref) {
 }
 function displayLabel(path) {
   const p = path.replace(/[\/\\]+$/, "");
-  const home = homedir5().replace(/[\/\\]+$/, "");
+  const home = homedir7().replace(/[\/\\]+$/, "");
   if (samePath(p, home))
     return "~";
   try {
@@ -2072,7 +2477,7 @@ function displayLabel(path) {
       return "~";
   } catch {
   }
-  return basename3(p);
+  return basename4(p);
 }
 async function repoIdentity(repoRoot) {
   const label = displayLabel(repoRoot);
@@ -2092,15 +2497,15 @@ async function staleWorktree(dir) {
   let d = dir;
   for (; ; ) {
     try {
-      const text = await readFile6(join7(d, ".git"), "utf-8");
-      const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
+      const text2 = await readFile8(join9(d, ".git"), "utf-8");
+      const m = /^gitdir:\s*(.+?)\s*$/m.exec(text2);
       const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
       return wt ? { folder: d, main: wt[1] } : null;
     } catch (err) {
       if (err.code === "EISDIR")
         return null;
     }
-    const parent = dirname2(d);
+    const parent = dirname3(d);
     if (parent === d)
       return null;
     d = parent;
@@ -2123,26 +2528,26 @@ async function readHeadState(repoRoot) {
 }
 
 // src/resolver.ts
-import { basename as basename4 } from "node:path";
+import { basename as basename5 } from "node:path";
 
 // src/sidecar.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile7, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname3 } from "node:path";
+import { appendFile, mkdir as mkdir2, readFile as readFile9, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname4 } from "node:path";
 var SIDECAR_PATH = `${CONFIG_DIR}/sessions.jsonl`;
 async function appendSidecar(line, path = SIDECAR_PATH) {
-  await mkdir2(dirname3(path), { recursive: true });
+  await mkdir2(dirname4(path), { recursive: true });
   await appendFile(path, `${JSON.stringify(line)}
 `, { mode: 384 });
 }
 async function readSidecar(path = SIDECAR_PATH) {
   const out = /* @__PURE__ */ new Map();
-  let text;
+  let text2;
   try {
-    text = await readFile7(path, "utf-8");
+    text2 = await readFile9(path, "utf-8");
   } catch {
     return out;
   }
-  for (const raw of text.split("\n")) {
+  for (const raw of text2.split("\n")) {
     if (!raw.trim())
       continue;
     let line;
@@ -2159,9 +2564,9 @@ async function readSidecar(path = SIDECAR_PATH) {
 }
 var SIDECAR_RETENTION_DAYS = 90;
 async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
-  let text;
+  let text2;
   try {
-    text = await readFile7(path, "utf-8");
+    text2 = await readFile9(path, "utf-8");
   } catch {
     return;
   }
@@ -2169,7 +2574,7 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   const recent = [];
   const cutoff = now - 60 * 60 * 1e3;
   const lastSeen = /* @__PURE__ */ new Map();
-  for (const raw of text.split("\n")) {
+  for (const raw of text2.split("\n")) {
     if (!raw.trim())
       continue;
     let line;
@@ -2336,7 +2741,7 @@ var IdentityResolver = class _IdentityResolver {
         const mainRoot = stale ? await this.rootFor(stale.main) : null;
         const id = mainRoot ? await this.identityForRoot(mainRoot) : null;
         if (id && stale)
-          return { ...id, label: basename4(stale.folder) };
+          return { ...id, label: basename5(stale.folder) };
         return folderIdentity(cwd, this.installId);
       }
       if (fromSidecar)
@@ -2375,7 +2780,7 @@ var IdentityResolver = class _IdentityResolver {
     let known = this.existsByCwd.get(cwd);
     if (known === void 0) {
       try {
-        known = (await stat6(cwd)).isDirectory();
+        known = (await stat8(cwd)).isDirectory();
       } catch {
         known = false;
       }
@@ -2436,12 +2841,12 @@ function renderRepoRows(rows, cfg) {
     return `${String(i + 1).padStart(3)}. ${mark} ${shortKey(r.key).padEnd(width)}  ${label.padEnd(24).slice(0, 24)}  ${String(r.sessions).padStart(5)} sessions${note}`;
   });
 }
-function parseSelection(answer, count2) {
+function parseSelection(answer, count3) {
   const trimmed = answer.trim().toLowerCase();
   if (!trimmed)
     return null;
   const only = trimmed.startsWith("only");
-  const nums = (only ? trimmed.slice(4) : trimmed).split(/[\s,]+/).map((t) => Number.parseInt(t, 10)).filter((n) => Number.isInteger(n) && n >= 1 && n <= count2);
+  const nums = (only ? trimmed.slice(4) : trimmed).split(/[\s,]+/).map((t) => Number.parseInt(t, 10)).filter((n) => Number.isInteger(n) && n >= 1 && n <= count3);
   if (nums.length === 0)
     return null;
   return { mode: only ? "allow" : "all", picks: [...new Set(nums)].map((n) => n - 1) };
@@ -2591,10 +2996,10 @@ async function runSurfaces(args) {
 // src/commands/hooks-install.ts
 var HOOK_MARK = "hook stop";
 function claudeSettingsPath() {
-  return join8(claudeConfigDirs()[0], "settings.json");
+  return join10(claudeConfigDirs()[0], "settings.json");
 }
 function codexHooksPath() {
-  return join8(codexHomeDir(), "hooks.json");
+  return join10(codexHomeDir(), "hooks.json");
 }
 function hookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
   const abs = stableInstallPath(safeRealpath(script));
@@ -2625,19 +3030,19 @@ function requireStandaloneBundle(script) {
   }
 }
 function installStopHook(settings, command2) {
-  const hooks = isObject6(settings.hooks) ? { ...settings.hooks } : {};
+  const hooks = isObject7(settings.hooks) ? { ...settings.hooks } : {};
   const cleaned = uninstallStopHook(settings);
   const kept = Array.isArray(cleaned.hooks?.Stop) ? [...cleaned.hooks.Stop] : [];
   kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
   return { ...settings, hooks: { ...hooks, Stop: kept } };
 }
 function uninstallStopHook(settings) {
-  if (!isObject6(settings.hooks) || !Array.isArray(settings.hooks.Stop))
+  if (!isObject7(settings.hooks) || !Array.isArray(settings.hooks.Stop))
     return settings;
   const kept = settings.hooks.Stop.flatMap((g) => {
-    if (!isObject6(g) || !Array.isArray(g.hooks))
+    if (!isObject7(g) || !Array.isArray(g.hooks))
       return [g];
-    const handlers = g.hooks.filter((h) => !isObject6(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
+    const handlers = g.hooks.filter((h) => !isObject7(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
     if (handlers.length === g.hooks.length)
       return [g];
     return handlers.length ? [{ ...g, hooks: handlers }] : [];
@@ -2687,7 +3092,7 @@ Nothing leaves this machine except what \`centrail inspect --last\` shows.`
 }
 async function isDir(p) {
   try {
-    return (await stat7(p)).isDirectory();
+    return (await stat9(p)).isDirectory();
   } catch {
     return false;
   }
@@ -2754,12 +3159,12 @@ function isCentrailCommand(command2) {
 }
 var PLUGIN_ID = "centrail@centrail";
 function pluginEnabled(settings) {
-  return isObject6(settings.enabledPlugins) && settings.enabledPlugins[PLUGIN_ID] === true;
+  return isObject7(settings.enabledPlugins) && settings.enabledPlugins[PLUGIN_ID] === true;
 }
 async function readSettingsFile(path) {
   let raw;
   try {
-    raw = await readFile8(path, "utf-8");
+    raw = await readFile10(path, "utf-8");
   } catch (err) {
     if (err.code === "ENOENT")
       return { settings: {}, indent: "  " };
@@ -2771,12 +3176,12 @@ async function readSettingsFile(path) {
   } catch (err) {
     throw new Error(`Cannot parse ${path}: ${err.message}`);
   }
-  if (!isObject6(parsed))
+  if (!isObject7(parsed))
     throw new Error(`Cannot parse ${path}: not a JSON object`);
   return { settings: parsed, indent: /^([ \t]+)"/m.exec(raw)?.[1] ?? "  " };
 }
 async function writeSettingsFile(path, settings, indent = "  ") {
-  await mkdir3(dirname4(path), { recursive: true });
+  await mkdir3(dirname5(path), { recursive: true });
   await backUpSettings(path);
   const tmp = `${path}.${process.pid}.tmp`;
   await writeFile3(tmp, `${JSON.stringify(settings, null, indent)}
@@ -2809,7 +3214,7 @@ function quote(s, platform) {
   }
   return `"${s.replace(/[\\"$`]/g, "\\$&")}"`;
 }
-function isObject6(v) {
+function isObject7(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -2891,15 +3296,15 @@ async function setUpPlugin(claude, path) {
 var RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
 function marketplaceEntry(settings) {
   const all = settings.extraKnownMarketplaces;
-  const entry = isObject7(all) ? all[MARKETPLACE] : void 0;
-  return isObject7(entry) ? entry : void 0;
+  const entry = isObject8(all) ? all[MARKETPLACE] : void 0;
+  return isObject8(entry) ? entry : void 0;
 }
 function withMarketplace(settings, entry) {
-  const all = isObject7(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
+  const all = isObject8(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
   return { ...settings, extraKnownMarketplaces: { ...all, [MARKETPLACE]: entry } };
 }
 function isReleaseSource(source) {
-  return isObject7(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
+  return isObject8(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
 }
 async function readOrSay(path) {
   try {
@@ -2917,7 +3322,7 @@ async function findClaude(env = process.env) {
     if (!dir)
       continue;
     for (const ext of exts) {
-      const bin = join9(dir, `claude${ext}`);
+      const bin = join11(dir, `claude${ext}`);
       try {
         await access(bin, constants2.X_OK);
       } catch {
@@ -2949,7 +3354,7 @@ async function askLine(prompt) {
     rl.close();
   }
 }
-function isObject7(v) {
+function isObject8(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -2983,8 +3388,8 @@ async function runConnect(opts, pluginDeps = {}) {
   if (previous) {
     console.log("");
     console.log(`  This machine is paired${previous.account ? ` with ${previous.account.email}` : ""}. Approving below re-pairs it;`);
-    console.log("  approve as another account and it moves there: what it synced stays with the old account,");
-    console.log("  and its usage from now on goes to the new one.");
+    console.log("  approve as another account and it moves there. The first sync re-reads its local history");
+    console.log("  into the new account; the old account keeps the copy it already received.");
   }
   const config = await readConfig();
   const installId = config.scopeDecidedAt && config.installId ? config.installId : void 0;
@@ -3042,7 +3447,7 @@ async function runConnect(opts, pluginDeps = {}) {
         await forgetWatermarks();
       console.log(email ? `  \u2713 Paired with ${email}` : `  \u2713 Paired (${PRIVATE_DEVICE_NAME})`);
       if (email && previous?.account?.email && previous.account.email !== email) {
-        console.log(`  What this machine synced to ${previous.account.email} stays there; ${email} gets everything else.`);
+        console.log(`  ${previous.account.email} keeps its existing copy; ${email} gets the local history this machine can still read.`);
       }
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
@@ -3075,7 +3480,7 @@ async function reportDetectedLogs() {
   let total = 0;
   for (const dir of dirs) {
     try {
-      const entries = await readdir4(dir);
+      const entries = await readdir6(dir);
       found.push(dir);
       total += entries.length;
     } catch {
@@ -3109,8 +3514,8 @@ var FIELDS_SHOWN_ONCE = `
 // src/commands/hook.ts
 import { spawn as spawn3 } from "node:child_process";
 import { realpathSync as realpathSync4 } from "node:fs";
-import { mkdir as mkdir4, open, readdir as readdir5, rm as rm2, stat as stat8 } from "node:fs/promises";
-import { dirname as dirname5, join as join10 } from "node:path";
+import { mkdir as mkdir4, open, readdir as readdir7, rm as rm2, stat as stat10 } from "node:fs/promises";
+import { dirname as dirname6, join as join12 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id)
@@ -3177,15 +3582,15 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(mains).length > 0)
     line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join10(dirname5(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join12(dirname6(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl"))
     return [];
-  const dir = join10(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join12(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir5(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join10(dir, f));
+    return (await readdir7(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join12(dir, f));
   } catch {
     return [];
   }
@@ -3229,14 +3634,14 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
       } catch {
         continue;
       }
-      if (!isObject8(line))
+      if (!isObject9(line))
         continue;
       let ev = null;
-      if (line.type === "assistant" && isObject8(line.message))
+      if (line.type === "assistant" && isObject9(line.message))
         ev = lineEvidence(line.message);
-      else if (line.type === "turn_context" && isObject8(line.payload) && typeof line.payload.cwd === "string")
+      else if (line.type === "turn_context" && isObject9(line.payload) && typeof line.payload.cwd === "string")
         turnCwd = line.payload.cwd;
-      else if (line.type === "response_item" && isObject8(line.payload) && line.payload.type === "function_call")
+      else if (line.type === "response_item" && isObject9(line.payload) && line.payload.type === "function_call")
         ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
       if (!ev)
         continue;
@@ -3287,7 +3692,7 @@ function logicalRoot(dir, root) {
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
 }
-function isObject8(v) {
+function isObject9(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 var CLOCK_STEP_MS = 60 * 1e3;
@@ -3316,7 +3721,7 @@ async function maybeAutoSync(now, deps, claimPath) {
   (deps.spawnSync ?? spawnDetachedSync)();
 }
 async function compactLocked(now, deps) {
-  const release = await acquireSyncLock(deps.lockPath ?? join10(dirname5(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  const release = await acquireSyncLock(deps.lockPath ?? join12(dirname6(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
   if (!release)
     return;
   try {
@@ -3333,14 +3738,14 @@ async function claimAutoSync(claimPath, now) {
     } catch (err) {
       const code = err.code;
       if (code === "ENOENT") {
-        await mkdir4(dirname5(claimPath), { recursive: true });
+        await mkdir4(dirname6(claimPath), { recursive: true });
         continue;
       }
       if (code !== "EEXIST")
         return false;
       let at;
       try {
-        at = (await stat8(claimPath)).mtimeMs;
+        at = (await stat10(claimPath)).mtimeMs;
       } catch {
         continue;
       }
@@ -3430,36 +3835,36 @@ async function runHooksDoctor(claudePath, codexPath, opts = {}) {
 }
 
 // src/commands/import.ts
-import { readFile as readFile9 } from "node:fs/promises";
+import { readFile as readFile11 } from "node:fs/promises";
 var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_MODEL = 100;
 function parseCcusageExport(json) {
-  if (!isObject9(json))
+  if (!isObject10(json))
     throw new Error("Not a ccusage export: expected a JSON object");
   const merged = /* @__PURE__ */ new Map();
   const add = (day, breakdown) => {
-    if (!isObject9(breakdown))
+    if (!isObject10(breakdown))
       throw new Error("Not a ccusage export: a model breakdown is not an object");
     if (typeof breakdown.modelName !== "string" || !breakdown.modelName)
       throw new Error("Not a ccusage export: a model breakdown has no modelName");
     const model = breakdown.modelName.slice(0, MAX_MODEL);
     const key = `${day}\0${model}`;
     const row = merged.get(key) ?? { day, model, inputTokens: 0, outputTokens: 0, contextTokens: 0 };
-    row.inputTokens += count(breakdown.inputTokens);
-    row.outputTokens += count(breakdown.outputTokens);
-    row.contextTokens += count(breakdown.cacheReadTokens) + count(breakdown.cacheCreationTokens);
+    row.inputTokens += count2(breakdown.inputTokens);
+    row.outputTokens += count2(breakdown.outputTokens);
+    row.contextTokens += count2(breakdown.cacheReadTokens) + count2(breakdown.cacheCreationTokens);
     merged.set(key, row);
   };
   if (Array.isArray(json.daily)) {
     for (const d of json.daily) {
-      if (!isObject9(d) || typeof d.date !== "string" || !DAY_RE.test(d.date))
+      if (!isObject10(d) || typeof d.date !== "string" || !DAY_RE.test(d.date))
         throw new Error("Not a ccusage export: a daily row has no YYYY-MM-DD date");
       for (const b of Array.isArray(d.modelBreakdowns) ? d.modelBreakdowns : [])
         add(d.date, b);
     }
   } else if (Array.isArray(json.sessions)) {
     for (const s of json.sessions) {
-      if (!isObject9(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity)))
+      if (!isObject10(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity)))
         throw new Error("Not a ccusage export: a session has no lastActivity");
       const day = new Date(s.lastActivity).toISOString().slice(0, 10);
       for (const b of Array.isArray(s.modelBreakdowns) ? s.modelBreakdowns : [])
@@ -3470,7 +3875,7 @@ function parseCcusageExport(json) {
   }
   return [...merged.values()];
 }
-function count(v) {
+function count2(v) {
   if (v === void 0 || v === null)
     return 0;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 0)
@@ -3484,7 +3889,7 @@ async function runImport(file, deps = {}) {
   assertSecureBaseUrl(auth.baseUrl);
   let json;
   try {
-    json = JSON.parse(await readFile9(file, "utf-8"));
+    json = JSON.parse(await readFile11(file, "utf-8"));
   } catch (err) {
     throw new Error(`Cannot read ${file}: ${err.message}`);
   }
@@ -3507,7 +3912,7 @@ async function runImport(file, deps = {}) {
   const days = new Set(rows.map((r) => r.day));
   console.log(`Imported ${rows.length} day\xB7model row(s) over ${days.size} day(s) as Measured history (provider ccusage). A re-import replaces them.`);
 }
-function isObject9(v) {
+function isObject10(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -3771,12 +4176,19 @@ async function readCapabilities(auth, known) {
     const body = await res.json();
     const fields = Array.isArray(body.fields) ? body.fields.filter((f) => typeof f === "string") : [];
     const cli = parseCliVersions(body.cli);
-    return { fields: new Set(fields), ...cli ? { cli } : {} };
+    const surfaces = Array.isArray(body.surfaces) ? new Set(body.surfaces.filter((s) => typeof s === "string")) : void 0;
+    return { fields: new Set(fields), ...surfaces ? { surfaces } : {}, ...cli ? { cli } : {} };
   } catch {
     return fallback;
   }
 }
-function toWireEvent(e, caps, cfg, installId) {
+var BILLING_PROVIDERS = ["anthropic", "openai", "google", "openrouter", "amazon-bedrock", "google-vertex", "azure", "openai-codex", "github-copilot", "unknown"];
+function billingProvider(event, surface) {
+  if (surface === "gemini-cli")
+    return "unknown";
+  return BILLING_PROVIDERS.includes(event.provider) ? event.provider : "unknown";
+}
+function toWireEvent(e, caps, cfg, installId, surface) {
   const wire = toWireUsageEvent(e);
   if (caps.fields.has("usage-extras")) {
     if (e.speed)
@@ -3786,6 +4198,12 @@ function toWireEvent(e, caps, cfg, installId) {
   }
   if (caps.fields.has("repo"))
     wire.metadata = identityMetadata(e, cfg, installId);
+  if ((surface === "pi" || surface === "gemini-cli") && caps.fields.has("billing-route")) {
+    wire.billingProvider = billingProvider(e, surface);
+    if (e.serviceClass !== void 0) {
+      wire.serviceClass = ["standard", "priority", "flex", "batch", "unknown"].includes(e.serviceClass) ? e.serviceClass : "unknown";
+    }
+  }
   return wire;
 }
 function identityMetadata(e, cfg, installId) {
@@ -4132,6 +4550,10 @@ async function syncLocked(opts) {
   for (const scanner of SCANNERS) {
     if (!surfaceEnabled(config, scanner.surface))
       continue;
+    if (scanner.requiresSurfaceCapability && (!caps.surfaces?.has(scanner.surface) || !caps.fields.has("billing-route"))) {
+      progress(`${scanner.surface}: waiting for server support; local logs were not read`);
+      continue;
+    }
     const mark = full ? void 0 : sinceForSurface(state, scanner.surface, scanner.revision);
     if (mark)
       anyWatermark = true;
@@ -4145,7 +4567,7 @@ async function syncLocked(opts) {
       onFile: (done, total) => progressStatus(`${reading} \u2014 ${done.toLocaleString("en-US")}/${total.toLocaleString("en-US")} files`)
     });
     const candidates = scanned.filter(
-      (e) => !e.metadata.context && e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
+      (e) => e.externalId.length > 0 && e.occurredAt >= minOccurredAt && e.occurredAt <= maxOccurredAt
     );
     progressStatus(`${scanner.surface}: finding the repo of ${scanned.length.toLocaleString("en-US")} events\u2026`);
     await placer.place(scanned);
@@ -4169,7 +4591,7 @@ async function syncLocked(opts) {
       progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
       const body = {
         source: { surface: scanner.surface, kind: "local_logs" },
-        events: batch.map((e) => toWireEvent(e, caps, config, installId))
+        events: batch.map((e) => toWireEvent(e, caps, config, installId, scanner.surface))
       };
       await writeLastSync(body);
       const res = await fetch(`${auth.baseUrl}/api/cli/ingest`, {

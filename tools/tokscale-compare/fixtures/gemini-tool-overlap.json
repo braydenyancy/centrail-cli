@@ -1,0 +1,17 @@
+{
+  "client": "gemini",
+  "reason": "Nonzero tool prompt counter has unresolved overlap; do not present request as complete observed usage.",
+  "files": {
+    ".gemini/tmp/project/chats/session-a.json": "{\"sessionId\": \"synthetic-gemini-session\", \"startTime\": \"2026-10-01T12:00:00.000Z\", \"messages\": [{\"id\": \"synthetic-message\", \"type\": \"gemini\", \"model\": \"gemini-2.5-pro\", \"timestamp\": \"2026-10-01T12:00:00.000Z\", \"tokens\": {\"input\": 100, \"output\": 20, \"cached\": 30, \"thoughts\": 10, \"tool\": 10, \"total\": 130}}], \"projectHash\": \"synthetic-project\", \"lastUpdated\": \"2026-10-01T12:00:00.000Z\"}"
+  },
+  "expected": [],
+  "provenance": {
+    "kind": "synthetic",
+    "origin": "Hand-authored source-format example; no personal transcript.",
+    "sourceReferences": [
+      "https://github.com/junhoyeo/tokscale/tree/d4d1c751856e25913bce97bfbd7b254308863239/crates/tokscale-core/src/sessions"
+    ],
+    "privacy": "Invented identifiers and /synthetic/project."
+  },
+  "expectEmptyReason": "Nonzero tool prompt counter has unresolved overlap; do not present request as complete observed usage."
+}

@@ -1,0 +1,29 @@
+{
+  "client": "claude",
+  "reason": "Exact transcript copy; one request remains one usage event across two files.",
+  "provenance": {
+    "kind": "synthetic",
+    "origin": "hand-authored source-format scenario; no personal transcripts or claimed production capture",
+    "sourceReferences": [
+      "https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts",
+      "https://github.com/ccusage/ccusage/tree/main/rust"
+    ],
+    "privacy": "Invented session/request IDs, model usage and /synthetic/project path; artificial content sentinel."
+  },
+  "files": {
+    ".claude/projects/project/a.jsonl": "{\"type\":\"assistant\",\"requestId\":\"req_A\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"version\":\"2.1.0\",\"cwd\":\"/synthetic/project\",\"sessionId\":\"s1\",\"isSidechain\":false,\"message\":{\"id\":\"msg_req_A\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC PRIVATE CONTENT - must never become usage metadata\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":140,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":25,\"cache_creation\":{\"ephemeral_5m_input_tokens\":25,\"ephemeral_1h_input_tokens\":0}}}}\n",
+    ".claude/projects/project/b.jsonl": "{\"type\":\"assistant\",\"requestId\":\"req_A\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"version\":\"2.1.0\",\"cwd\":\"/synthetic/project\",\"sessionId\":\"s1\",\"isSidechain\":false,\"message\":{\"id\":\"msg_req_A\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC PRIVATE CONTENT - must never become usage metadata\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":140,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":25,\"cache_creation\":{\"ephemeral_5m_input_tokens\":25,\"ephemeral_1h_input_tokens\":0}}}}\n"
+  },
+  "expected": [
+    {
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "input": 10,
+      "output": 140,
+      "cacheRead": 100,
+      "cacheWrite": 25,
+      "session": "s1",
+      "timestamp": 1790856000000
+    }
+  ]
+}

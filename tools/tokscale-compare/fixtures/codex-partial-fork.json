@@ -1,0 +1,60 @@
+{
+  "client": "codex",
+  "reason": "Partial fork copies only the parent first request. Suppress that proven replay, retain child150 plus parent600 including post-fork300. Nested separate directories must not affect identity.",
+  "provenance": {
+    "kind": "generated-regression",
+    "sourcePath": "packages/parsers/test/codex.test.ts",
+    "sourceSha256": "28b9e8a08bf6e8c3cd167a0100c72e9af23f88cb988977a256011d10b7573c87",
+    "license": "Apache-2.0",
+    "transforms": [
+      "Recreated documented counters and source identity relations as compact JSONL with synthetic directories."
+    ],
+    "containsRealUserData": false
+  },
+  "files": {
+    ".codex/sessions/2026/06/01/parent/rollout-P.jsonl": "{\"timestamp\":\"2026-06-01T12:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"P\",\"cwd\":\"/synthetic/repo\",\"timestamp\":\"2026-06-01T12:00:00.000Z\"}}\n{\"timestamp\":\"2026-06-01T12:00:01.000Z\",\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"p1\",\"model\":\"gpt-5\",\"cwd\":\"/synthetic/repo\"}}\n{\"timestamp\":\"2026-06-01T12:01:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n{\"timestamp\":\"2026-06-01T12:02:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":300,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":200,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n{\"timestamp\":\"2026-06-01T12:10:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":600,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":300,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n",
+    ".codex/sessions/2026/06/01/child/rollout-C.jsonl": "{\"timestamp\":\"2026-06-01T12:05:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"C\",\"cwd\":\"/synthetic/repo\",\"timestamp\":\"2026-06-01T12:05:00.000Z\",\"forked_from_id\":\"P\"}}\n{\"timestamp\":\"2026-06-01T12:05:01.000Z\",\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"c1\",\"model\":\"gpt-5\",\"cwd\":\"/synthetic/repo\"}}\n{\"timestamp\":\"2026-06-01T12:05:01.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":100,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n{\"timestamp\":\"2026-06-01T12:05:02.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":250,\"output_tokens\":0,\"cached_input_tokens\":0},\"last_token_usage\":{\"input_tokens\":150,\"output_tokens\":0,\"cached_input_tokens\":0}}}}\n"
+  },
+  "expected": [
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 100,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "P",
+      "timestamp": 1780315260000
+    },
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 200,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "P",
+      "timestamp": 1780315320000
+    },
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 300,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "P",
+      "timestamp": 1780315800000
+    },
+    {
+      "model": "gpt-5",
+      "provider": "openai",
+      "input": 150,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "session": "C",
+      "timestamp": 1780315502000
+    }
+  ]
+}

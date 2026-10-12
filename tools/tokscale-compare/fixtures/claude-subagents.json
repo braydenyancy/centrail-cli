@@ -1,0 +1,39 @@
+{
+  "client": "claude",
+  "reason": "Parent and subagent have different provider request IDs. Both count once; subagent status alone is not duplication.",
+  "provenance": {
+    "kind": "synthetic",
+    "origin": "hand-authored source-format scenario; no personal transcripts or claimed production capture",
+    "sourceReferences": [
+      "https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts",
+      "https://github.com/ccusage/ccusage/tree/main/rust"
+    ],
+    "privacy": "Invented session/request IDs, model usage and /synthetic/project path; artificial content sentinel."
+  },
+  "files": {
+    ".claude/projects/project/s1.jsonl": "{\"type\":\"assistant\",\"requestId\":\"req_A\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"version\":\"2.1.0\",\"cwd\":\"/synthetic/project\",\"sessionId\":\"s1\",\"isSidechain\":false,\"message\":{\"id\":\"msg_req_A\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC PRIVATE CONTENT - must never become usage metadata\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":10,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":25,\"cache_creation\":{\"ephemeral_5m_input_tokens\":25,\"ephemeral_1h_input_tokens\":0}}}}\n",
+    ".claude/projects/project/s1/subagents/agent-one.jsonl": "{\"type\":\"assistant\",\"requestId\":\"req_B\",\"timestamp\":\"2026-10-01T12:00:00.000Z\",\"version\":\"2.1.0\",\"cwd\":\"/synthetic/project\",\"sessionId\":\"s1\",\"isSidechain\":true,\"message\":{\"id\":\"msg_req_B\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC PRIVATE CONTENT - must never become usage metadata\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":20,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":25,\"cache_creation\":{\"ephemeral_5m_input_tokens\":25,\"ephemeral_1h_input_tokens\":0}}}}\n"
+  },
+  "expected": [
+    {
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "input": 10,
+      "output": 10,
+      "cacheRead": 100,
+      "cacheWrite": 25,
+      "session": "s1",
+      "timestamp": 1790856000000
+    },
+    {
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "input": 10,
+      "output": 20,
+      "cacheRead": 100,
+      "cacheWrite": 25,
+      "session": "s1",
+      "timestamp": 1790856000000
+    }
+  ]
+}

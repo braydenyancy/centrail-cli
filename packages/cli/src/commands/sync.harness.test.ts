@@ -4,7 +4,7 @@
 // Real bundle code (runSync, runStopHook), real git, real files, and an
 // in-process stand-in server that models the real one: one row per
 // (externalId), per-field max on re-send, `inserted` from what landed.
-import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,8 @@ const home = await mkdtemp(join(tmpdir(), "centrail-harness-"));
 process.env.CENTRAIL_CONFIG_DIR = join(home, "cfg");
 process.env.CLAUDE_CONFIG_DIR = join(home, "claude");
 process.env.CODEX_HOME = join(home, "codex");
+process.env.PI_CODING_AGENT_DIR = join(home, "pi");
+process.env.GEMINI_CLI_HOME = join(home, "gemini-home");
 const { runSync } = await import("./sync.js");
 const { runStopHook } = await import("./hook.js");
 const { runExclude, runInclude } = await import("./scope.js");
@@ -83,6 +85,20 @@ describe("sync invariants across triggers", () => {
     await writeTranscript(repo, "s2", [line("s2", repo, "req_C", 3, mark - 2 * 60 * 60 * 1000)]);
     await runSync({ full: false });
     expect(out("req_C")).toBe(3);
+  });
+
+  it("newly discovered historical usage and later growth arrive outside the event-time overlap", async () => {
+    const historical = Date.now() - 40 * 24 * 60 * 60 * 1000;
+    await writeTranscript(repo, "history", [line("history", repo, "req_history", 5, historical)]);
+    await runSync({ full: false });
+    expect(out("req_history")).toBe(5);
+    await writeTranscript(repo, "history", [line("history", repo, "req_history", 25, historical)]);
+    await runSync({ full: false });
+    expect(out("req_history")).toBe(25);
+    const size = server.rows.size;
+    await runSync({ full: false });
+    expect(server.rows.size).toBe(size);
+    expect(out("req_history")).toBe(25);
   });
 
   it("a failed batch leaves the watermark alone; the next sync resends and lands it", async () => {
@@ -158,7 +174,7 @@ describe("sync invariants across triggers", () => {
     ]);
     await runSync({ full: false });
     expect(server.rows.get("req_L")?.metadata).toMatchObject({ repo: { key: "github.com/acme/repo" }, placement: "sticky" });
-    expect(out("req_K")).toBeUndefined(); // context for placement, not a send: older than the window
+    expect(out("req_K")).toBe(2); // older context is also newly discovered usage in a modified file
   });
 
   it("against a server without capabilities the body is the 0.5.1 allowlist: usage numbers, no metadata", async () => {
@@ -292,5 +308,81 @@ describe("what a sync prints, and where", () => {
     expect(out("req_Q")).toBe(5);
     expect(stdout[stdout.length - 1]).toMatch(/^Inserted \d+ · Skipped \d+/);
     for (const l of stdout) expect(l).toMatch(SUMMARY);
+  });
+});
+
+describe("new tool capability and consent boundary", () => {
+  beforeAll(async () => {
+    const piDir = join(home, "pi", "sessions", "fixture");
+    const geminiDir = join(home, "gemini-home", ".gemini", "tmp", "fixture", "chats");
+    await mkdir(piDir, { recursive: true });
+    await mkdir(geminiDir, { recursive: true });
+    const timestamp = new Date(T0).toISOString();
+    await writeFile(join(piDir, "session.jsonl"), [
+      { type: "session", id: "pi-source-session", cwd: repo, timestamp, title: "HIDDEN PI TITLE" },
+      { type: "message", id: "entry-one", timestamp, message: { role: "assistant", provider: "anthropic", model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "HIDDEN PI CONTENT" }], usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 0 } } },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+    await writeFile(join(geminiDir, "session-fixture.json"), JSON.stringify({
+      sessionId: "gemini-source-session", projectHash: "fixture", directories: [repo], summary: "HIDDEN GEMINI TITLE", messages: [
+        { type: "gemini", id: "message-one", timestamp, model: "gemini-2.5-pro", content: "HIDDEN GEMINI CONTENT",
+          tokens: { input: 100, output: 20, cached: 30, thoughts: 10, tool: 0, total: 130 } },
+      ],
+    }));
+  });
+
+  it.each(["old-server", "missing-route", "unanswered"])("does not upload or advance new-tool watermarks for %s", async (mode) => {
+    const original = await readConfig();
+    const oldFields = server.fields;
+    const oldSurfaces = server.surfaces;
+    const start = server.ingestBodies.length;
+    try {
+      server.surfaces = mode === "old-server" ? ["claude-code", "codex", "copilot-cli"] : ["pi", "gemini-cli"];
+      server.fields = mode === "missing-route" ? ["repo"] : ["repo", "billing-route"];
+      await writeConfig(parseConfig({ surfaces: { "claude-code": false, "codex": false, "copilot-cli": false },
+        ...(mode === "unanswered" ? {} : { scopeDecidedAt: "2026-06-01T00:00:00Z" }) }));
+      await runSync({ full: true });
+      expect(server.ingestBodies.slice(start)).toEqual([]);
+      const state = await readState();
+      expect(state.surfaces.pi).toBeUndefined();
+      expect(state.surfaces["gemini-cli"]).toBeUndefined();
+    } finally {
+      server.fields = oldFields;
+      server.surfaces = oldSurfaces;
+      await writeConfig(original);
+    }
+  });
+
+  it("uploads Pi and Gemini with route labels and namespaced session IDs after consent", async () => {
+    const original = await readConfig();
+    const oldFields = server.fields;
+    const oldSurfaces = server.surfaces;
+    const start = server.ingestBodies.length;
+    try {
+      server.surfaces = ["pi", "gemini-cli"];
+      server.fields = ["repo", "billing-route"];
+      await writeConfig(parseConfig({ surfaces: { "claude-code": false, "codex": false, "copilot-cli": false }, scopeDecidedAt: "2026-06-01T00:00:00Z" }));
+      await runSync({ full: true });
+      const bodies = server.ingestBodies.slice(start) as Array<{ source: { surface: string }; events: Array<Record<string, unknown>> }>;
+      expect(bodies.map((body) => body.source.surface)).toEqual(["pi", "gemini-cli"]);
+      expect(bodies[0].events[0]).toMatchObject({ billingProvider: "anthropic", inputTokens: 10, outputTokens: 20,
+        metadata: { sessionId: "pi:pi-source-session" } });
+      expect(bodies[1].events[0]).toMatchObject({ billingProvider: "unknown", inputTokens: 70, outputTokens: 30,
+        metadata: { sessionId: "gemini:gemini-source-session" } });
+      expect(JSON.stringify(bodies)).not.toContain("HIDDEN");
+      expect(JSON.stringify(bodies)).not.toContain(home);
+      expect(JSON.stringify(bodies)).not.toContain(repo);
+      const state = await readState();
+      expect(state.surfaces.pi).toBeDefined();
+      expect(state.surfaces["gemini-cli"]).toBeDefined();
+      const counts = bodies.map((body) => body.events.map((event) => event.externalId));
+      const nextStart = server.ingestBodies.length;
+      await runSync({ full: false });
+      expect((server.ingestBodies.slice(nextStart) as typeof bodies).map((body) => body.events.map((event) => event.externalId))).toEqual(counts);
+    } finally {
+      server.fields = oldFields;
+      server.surfaces = oldSurfaces;
+      await writeConfig(original);
+    }
   });
 });

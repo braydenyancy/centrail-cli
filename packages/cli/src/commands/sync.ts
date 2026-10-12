@@ -57,11 +57,10 @@ type IngestResponse = {
   inserted: number;
   skipped: number;
   inboxCount: number;
-  // One provider event, one account (decision A, 2026-10-07): events this
-  // machine already synced to another account stay there. The server skips
-  // them and counts them here, never naming the account, and within
-  // `skipped` (events − inserted), so the summary reports them once, apart.
-  // Older servers omit it.
+  // Compatibility with the earlier cross-account ownership server: it can
+  // return events held by another account inside `skipped`, so the summary
+  // reports them once, apart. Account-local servers return zero; older
+  // servers can omit the field.
   heldElsewhere?: number;
 };
 
@@ -166,6 +165,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
   for (const scanner of SCANNERS) {
     if (!surfaceEnabled(config, scanner.surface)) continue; // switched off; no watermark moves
+    if (scanner.requiresSurfaceCapability && (!caps.surfaces?.has(scanner.surface) || !caps.fields.has("billing-route"))) {
+      progress(`${scanner.surface}: waiting for server support; local logs were not read`);
+      continue;
+    }
     // Each surface keeps its own watermark so a scanner added in an upgrade
     // backfills its full history instead of inheriting another's cutoff.
     const mark = full ? undefined : sinceForSurface(state, scanner.surface, scanner.revision);
@@ -174,10 +177,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     const scanStartedAt = new Date();
     const reading = `${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}`;
     progressStatus(`${reading}…`);
-    // Whole files: the events of a file read that fall before `since` come
-    // back marked `context`, so a session resumed after the window still
-    // places its turns with its earlier ones (sticky), as `--full` does.
-    // They are placed, never sent.
+    // A recently changed file can contain newly discovered or corrected old
+    // usage. Read and place its whole history, then replay every in-scope
+    // event through idempotent ingest. Event time is not a delivery cursor;
+    // the scanner's context marker only describes the timestamp window.
     const scanned = await scanner.scan({
       since,
       wholeFiles: true,
@@ -186,7 +189,6 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     });
     const candidates = scanned.filter(
       (e) =>
-        !e.metadata.context &&
         e.externalId.length > 0 &&
         e.occurredAt >= minOccurredAt &&
         e.occurredAt <= maxOccurredAt,
@@ -217,7 +219,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
       const body = {
         source: { surface: scanner.surface, kind: "local_logs" },
-        events: batch.map((e) => toWireEvent(e, caps, config, installId)),
+        events: batch.map((e) => toWireEvent(e, caps, config, installId, scanner.surface)),
       };
       await writeLastSync(body); // `centrail inspect --last`: exactly what left
       const res = await fetch(`${auth.baseUrl}/api/cli/ingest`, {

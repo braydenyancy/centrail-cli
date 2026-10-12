@@ -26,6 +26,7 @@ jobs:
         run: git diff --exit-code -- plugins/
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:server-contract
 
   # Claude Code's own validator, over the marketplace and the plugin.
   plugin-validate:
@@ -40,6 +41,7 @@ jobs:
       - run: claude plugin validate plugins/centrail --strict
 
   server-contract:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,15 +51,11 @@ jobs:
       - run: npm ci
       - run: npm run build
       - id: scanner-surfaces
-        run: node scripts/export-scanner-surfaces.mjs
-      # Advisory on PRs: a new surface lands here BEFORE the server deploys
-      # support for it (see CONTRACT.md "Release ordering"), and PR builds
-      # must not depend on centrail.org being reachable. The tag-triggered
-      # publish workflow runs the same check and fails closed — that is the
-      # enforcement point.
-      - name: Prove deployed server accepts every CLI surface (advisory on PRs)
+        run: node scripts/export-scanner-surfaces.mjs required
+      # Gated scanners skip unsupported logs without advancing watermarks.
+      # Main requires existing surfaces; publication requires every scanner.
+      # PRs prove both policies offline in the build-test matrix above.
+      - name: Prove deployed server accepts unconditional CLI surfaces
         run: node scripts/check-server-contract.mjs
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         env:
           CENTRAIL_EXPECTED_SURFACES: ${{ steps.scanner-surfaces.outputs.surfaces }}
-          CENTRAIL_CONTRACT_ATTEMPTS: ${{ github.event_name == 'pull_request' && '3' || '18' }}

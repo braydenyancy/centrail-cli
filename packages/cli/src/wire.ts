@@ -45,7 +45,7 @@ export function toWireUsageEvent(event: ParsedUsageEvent): WireUsageEvent {
 // reads this directly: it gets consentedCapabilities.
 // `cli` is the server's word on this CLI's version (update.ts): not a wire
 // field, so the scope answer does not gate it.
-export type Capabilities = { fields: Set<string>; cli?: CliVersions };
+export type Capabilities = { fields: Set<string>; surfaces?: Set<string>; cli?: CliVersions };
 
 // What the wire policy may use: the server's list once the scope question
 // has been answered (decision § 3.7), nothing before it. An install that
@@ -71,12 +71,14 @@ export async function readCapabilities(auth: { baseUrl: string }, known?: Capabi
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return fallback;
-    const body = (await res.json()) as { fields?: unknown; cli?: unknown };
+    const body = (await res.json()) as { fields?: unknown; surfaces?: unknown; cli?: unknown };
     const fields = Array.isArray(body.fields)
       ? body.fields.filter((f): f is string => typeof f === "string")
       : [];
     const cli = parseCliVersions(body.cli);
-    return { fields: new Set(fields), ...(cli ? { cli } : {}) };
+    const surfaces = Array.isArray(body.surfaces)
+      ? new Set(body.surfaces.filter((s): s is string => typeof s === "string")) : undefined;
+    return { fields: new Set(fields), ...(surfaces ? { surfaces } : {}), ...(cli ? { cli } : {}) };
   } catch {
     return fallback;
   }
@@ -103,7 +105,23 @@ export type WireEventMetadata = {
 // carried for the server to price, only to a server that lists "usage-extras".
 export type WireUsageExtras = { speed?: string; webSearchRequests?: number };
 
-export type WireEvent = WireUsageEvent & WireUsageExtras & { metadata?: WireEventMetadata };
+export const BILLING_PROVIDERS = ["anthropic", "openai", "google", "openrouter", "amazon-bedrock", "google-vertex", "azure", "openai-codex", "github-copilot", "unknown"] as const;
+export type BillingProvider = typeof BILLING_PROVIDERS[number];
+export type ServiceClass = "standard" | "priority" | "flex" | "batch" | "unknown";
+export type WireEvent = WireUsageEvent & WireUsageExtras & {
+  metadata?: WireEventMetadata;
+  billingProvider?: BillingProvider;
+  serviceClass?: ServiceClass;
+};
+
+// Only a bounded provider label leaves the machine. A custom endpoint may
+// contain credentials or an account-specific name, so it becomes unknown.
+// Gemini transcripts identify the model maker, not the selected API/OAuth route.
+function billingProvider(event: ParsedUsageEvent, surface: string): BillingProvider {
+  if (surface === "gemini-cli") return "unknown";
+  return (BILLING_PROVIDERS as readonly string[]).includes(event.provider)
+    ? event.provider as BillingProvider : "unknown";
+}
 
 // The field policy, applied in one place so `centrail inspect --last` shows
 // exactly what this function produced. Every field is named: nothing on the
@@ -124,6 +142,7 @@ export function toWireEvent(
   caps: Capabilities,
   cfg: Config,
   installId: string,
+  surface?: string,
 ): WireEvent {
   const wire: WireEvent = toWireUsageEvent(e);
   // Usage extras only to a server that stores them ("usage-extras").
@@ -132,6 +151,14 @@ export function toWireEvent(
     if (e.webSearchRequests) wire.webSearchRequests = e.webSearchRequests;
   }
   if (caps.fields.has("repo")) wire.metadata = identityMetadata(e, cfg, installId);
+  if ((surface === "pi" || surface === "gemini-cli") && caps.fields.has("billing-route")) {
+    wire.billingProvider = billingProvider(e, surface);
+    // No service class is guessed from model names or speed multipliers.
+    if (e.serviceClass !== undefined) {
+      wire.serviceClass = (["standard", "priority", "flex", "batch", "unknown"] as readonly unknown[]).includes(e.serviceClass)
+        ? e.serviceClass : "unknown";
+    }
+  }
   return wire;
 }
 

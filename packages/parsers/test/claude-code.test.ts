@@ -208,7 +208,7 @@ describe("scanClaudeCodeLogs", () => {
     expect(events.map((e) => e.externalId).sort()).toEqual(["req_001", "req_subagent"]);
   });
 
-  it("counts off the files it reads: onFile(done, total) after each transcript, subagents included, files `since` skips not counted", async () => {
+  it("counts transcripts including newly imported files with preserved historical mtime", async () => {
     const base = await makeBase();
     await writeSession(base, "p1", "a.jsonl", [ASSISTANT_LINE]);
     await writeSession(base, "p2", "b.jsonl", [ASSISTANT_LINE]);
@@ -225,7 +225,26 @@ describe("scanClaudeCodeLogs", () => {
 
     calls.length = 0;
     await scanClaudeCodeLogs({ basePath: base, since: new Date("2026-06-02T00:00:00.000Z"), onFile });
-    expect(calls).toEqual([[1, 3], [2, 3], [3, 3]]);
+    expect(calls).toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
+  });
+
+  it("replays preserved-mtime history and corrections older than the incremental event window", async () => {
+    const base = await makeBase();
+    await writeSession(base, "p1", "a.jsonl", [ASSISTANT_LINE]);
+    const path = join(base, "p1", "a.jsonl");
+    const old = new Date("2026-06-01");
+    await utimes(path, old, old);
+    const since = new Date("2026-06-05");
+    const [original] = await scanClaudeCodeLogs({ basePath: base, since, wholeFiles: true });
+    expect(original.inputTokens).toBe(100);
+    expect(original.metadata.context).toBe(true);
+    const corrected = JSON.parse(ASSISTANT_LINE);
+    corrected.message.usage.input_tokens = 150;
+    await writeFile(path, JSON.stringify(corrected) + "\n");
+    const [updated] = await scanClaudeCodeLogs({ basePath: base, since, wholeFiles: true });
+    expect(updated.externalId).toBe(original.externalId);
+    expect(updated.inputTokens).toBe(150);
+    expect(await scanClaudeCodeLogs({ basePath: base, since })).toEqual([]);
   });
 
   it("counts workflow subagents nested below the known subagents root", async () => {

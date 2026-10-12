@@ -4,6 +4,11 @@ The Centrail CLI syncs your local AI coding-agent usage (Claude Code, GitHub
 Copilot CLI, and Codex) to your dashboard at [centrail.org](https://centrail.org) — so you
 can see what your AI costs in **dollars, commits, and carbon**.
 
+The local unreleased candidate also supports Pi and Gemini CLI collection during
+sync, gated on server capabilities and existing scope consent. See
+[implementation scope and verification](docs/tokscale-integration-2026-10.md).
+It does not install new Pi/Gemini hooks.
+
 ## Install & use
 
 No install needed:
@@ -134,9 +139,9 @@ and never counts anything twice.
 
 **One machine, one account at a time.** Pairing the machine with another
 account moves it there: what it already synced stays with the first account,
-and the new one gets the usage no account holds yet. Each agent request
-belongs to one account, so a sync after the move says how many events stay
-where they are.
+and the new one gets its own private copy of the local history this machine
+can still read. Repeated syncs deduplicate within each account. Older servers
+may retain the earlier ownership policy and report events held elsewhere.
 
 Repo identity is the same for every worktree, clone and machine, so one
 assignment in the dashboard covers all of them, and a session whose worktree
@@ -159,6 +164,18 @@ home directory, so it isn't tied to Unix-style paths.
 The parsers retain limited local context long enough to compute attribution,
 but that context is removed by an explicit network allowlist before upload.
 They never extract your code, prompts, or completions.
+
+## Tests and implementation comparisons
+
+`npm test` runs the local parser, wire and real-git fixtures. Pairing tests mock
+the desktop opener: they do not launch your browser.
+
+After the separate pinned-tool preparation, `npm run test:comparisons` runs
+Centrail, Tokscale, ccusage and Claude Code Usage Monitor against shared fixture
+trees. Missing tools and unreviewed drift fail explicitly. The suite never reads
+your personal logs or downloads tools during testing. See the
+[suite instructions](tools/tokscale-compare/README.md) and
+[coverage/provenance contract](tools/tokscale-compare/COVERAGE.md).
 
 ## Packages
 
