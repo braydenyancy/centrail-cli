@@ -8,6 +8,7 @@ npm run verify
 
 This builds the parsers, CLI and plugin, typechecks both packages, runs all parser
 and CLI fixture tests, tests contract policies against synthetic HTTP servers,
+checks coordinated release versions and offline packed consumers,
 and runs the comparison gate's self-tests. A failing stage stops the suite with
 a nonzero exit. It installs no dependencies, calls no production endpoints and
 uses no personal usage logs. It works with the CLI's Node 20+ requirement on
@@ -70,3 +71,39 @@ compares old duplicate Stop registration with current single registration. It
 does not run a model turn. Codex is supplied by the caller rather than downloaded
 by verification. This optional installed-runtime probe is distinct from the
 portable hook subprocess tests in the default suite.
+
+## Optional release preparation rehearsal
+
+`npm run verify` includes release-policy tests and offline installation of both packed
+consumers. The release-policy fixtures reject branch publication, malformed tags, version
+mismatch and modified artifacts. Hosted checks run on Node 20/24 across all three platforms.
+
+To rehearse the actual pinned Release Please SDK without creating a PR, tag or release:
+
+```text
+npm install --prefix .release-artifacts/release-sdk --ignore-scripts --no-audit --no-fund release-please@17.3.0
+npm run release:rehearse -- <absolute SDK package directory> braydenyancy/centrail-cli <absolute checkout directory> <absolute disposable output directory>
+```
+
+The SDK package directory is `.release-artifacts/release-sdk/node_modules/release-please`.
+The helper uses the existing `gh` login in memory for read-only GitHub history calls. It overlays
+candidate main-file reads with the local checkout and applies the SDK's real file updaters only
+to the disposable output directory. It writes the proposed PR/version/files as `receipt.json`.
+This is a preparation rehearsal, not proof that owner-side settings permit a real publication.
+
+Merged PRs without Conventional Commit squash titles may supply Release Please's supported
+`BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` body block. This records intended release notes
+without rewriting history; PR15 uses that correction so the collection changes appear in 0.8.0.
+
+The verification toolchain uses Vitest 4.1.11 and Vite 6.4.3 to retain Node 20.0 support.
+The root Vite override is intentional; bundler upgrades require rebuilding and reviewing the
+committed plugin bundle. See the [toolchain receipt](verification/release-toolchain-2026-10-12.md).
+
+## Publishing credential boundary
+
+The estate auth atlas §2 row 7/§14 and D40 describe GitHub OIDC into OpenBao for infrastructure
+provisioning. This publisher talks directly to npm's external OIDC verifier; it does not use
+OpenBao, Zitadel, an estate CI role or human pairing credentials. Existing estate flows are
+unchanged. The old workflow used the long-lived `NPM_TOKEN`; the replacement permits only
+GitHub's scoped workflow token plus npm's short-lived environment-bound credential. npm's
+owner-side trust settings remain unverified until configured and exercised.
