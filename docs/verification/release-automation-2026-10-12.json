@@ -1,6 +1,6 @@
 {
   "date": "2026-10-12",
-  "base": "345ea8c7821cb0c311ff310d2d61b5d39fcdc606",
+  "base": "4561bb3604e97ab48f40a81f14430012267a20cd",
   "publishedBaseline": {
     "centrail": "0.7.3",
     "@centrail/parsers": "0.7.3"
@@ -20,6 +20,7 @@
           "packages/cli/package.json",
           "packages/parsers/package.json",
           "plugins/centrail/.claude-plugin/plugin.json",
+          "plugins/centrail/.codex-plugin/plugin.json",
           ".claude-plugin/marketplace.json",
           "package-lock.json",
           "packages/cli/src/version.ts",
@@ -39,15 +40,15 @@
     "workflowLint": "actionlint1.7.7 passed",
     "packedConsumers": {
       "version": "0.8.0",
-      "sourceSha": "345ea8c7821cb0c311ff310d2d61b5d39fcdc606",
-      "node": "v24.21.0",
+      "sourceSha": "ffc60aa7de8cb814a51acda9cc6ac3fc598abac5",
+      "node": "v20.20.2",
       "packedConsumers": "passed",
       "packages": [
         {
           "name": "@centrail/parsers",
           "version": "0.8.0",
           "filename": "centrail-parsers-0.8.0.tgz",
-          "integrity": "sha512-7zC7eMxs61KzqgovB8b6RYg/yiT36PvM+VoP3yDQJy9gvgKFGMyTOnQB8QK5HDocm04aC3Muagee8Hmnz4AnjQ==",
+          "integrity": "sha512-pn9yT/nKJw1T8AX+atcfCvRDGBGgU/tLE0xgKnNIKZVUHfySWE1xrPzoo5dw9mRkb2Va6vj+n70lIwihL2Eqzw==",
           "files": [
             "LICENSE",
             "README.md",
@@ -78,7 +79,7 @@
           "name": "centrail",
           "version": "0.8.0",
           "filename": "centrail-0.8.0.tgz",
-          "integrity": "sha512-TYYHHxIGXILMBkE+n3pQE95X9byB5HblrY4j24Q2piTuk/3s8zxWCN7JvYRdsFKtcUjvIN9WJPNpQlXh6uPDnQ==",
+          "integrity": "sha512-D7l0fyZCOmO9sOAWNCAIG8vrmRBltjk1ca/V8EODJoS8DTve+vwA1fJnkyx/aWgfAmnqks4giCVczhImfVOnHA==",
           "files": [
             "LICENSE",
             "README.md",
@@ -89,13 +90,15 @@
       ],
       "helpers": {
         "release-publish.mjs": "sha512-bAZREFS6w6xO1cz58vyPLSh1/dSePQfaVMBJA24NUb+YgWjOVKohkzO5+QjtipjdMIGeukO01IttCdHEtG9heg==",
-        "release-policy.mjs": "sha512-YciL/EnIndbUt4A1ZeMFR3N9KFCQXjg4pN9+/jX5ndbjqz2HUwKRvWdNVdc4bmsUxqN/+xtZ2tVZUvDYYyVNEA==",
+        "release-policy.mjs": "sha512-zy3+L30pXqg/tr6kTL4kZecY24qOjepMHCIhQ/Eul9nXKzaRF9T9i1Ev6j2ohMIQsczTypETHCKdbmC12/yY7w==",
         "check-release-tag.mjs": "sha512-M9xgVvfXID1dTYOe+C/g5WVwBa2M1N9xJdUODvRQHfbtSudwni5CJ1XAVJSXgr5C5jbNKa1775XWPGNAVBFxVg==",
         "check-server-contract.mjs": "sha512-b/GenPlkzrHNZUosf9QWfhJy0PFXjMLoqpVW8j+XzS8+QukLzbX3vxqt7ZHvRsiHKTF8a/d5c3Tt7EbtpX3+uw=="
       }
     },
     "credentialBoundary": "Read-only prepare/test/pack/contract job precedes npm environment approval; publisher installs no dependencies and runs no build/tests",
-    "artifactTampering": "Real fixture rejects changed tarball and changed minimal publishing helper"
+    "artifactTampering": "Real fixture rejects changed tarball and changed minimal publishing helper",
+    "patchedToolchainReceipt": "release-toolchain-2026-10-12.json",
+    "node20FullVerification": "passed"
   },
   "scope": {
     "platformExecuted": "Linux Node24.21.0",
@@ -106,16 +109,16 @@
     "provenance": "not exercised; eventual metadata observation is not signature-chain verification"
   },
   "inputHashes": {
-    "release-please-config.json": "bd9f34dad84d6b2bbdd7f8fb8b8b4749aa51833f1c2897d5a4ac363c1e1761bc",
+    "release-please-config.json": "869b83209ac090d30dee9dffdc8d018e49c4dacd876cbfbbc39f886407686cb8",
     ".release-please-manifest.json": "5b323f710a8b9be848f170c2f69f2847831d3de1e0cb8619fb5238031697cfd7",
     ".github/workflows/release-please.yml": "0a1499814aa2c2f70db257ec41be9b1fdf8f79cc710576912614eb148d0226c7",
     ".github/workflows/publish.yml": "f220a86e02b51aff341d13cd67e60cd101621258f766cd9c0a1784011bfd61cb",
-    "scripts/release-policy.mjs": "3ad4a2f2ef1e42f6c111e943e6e42f852ce89aeb56c7b932de98e537ea36d275",
+    "scripts/release-policy.mjs": "834e057c93f528638ceede71a7bf23756fdac3e69eddca7d6bccead9cef81282",
     "scripts/release-pack.mjs": "32bad1a7523a2e022bf38128c119fbd5bb7c109fa1879df3a495109a4c83b40e",
     "scripts/release-publish.mjs": "1ee2c0247aa9a6e92b93cdb227d443eb56c96a4caf3a9cd849ff5b1098f2cc73",
     "scripts/check-release-tag.mjs": "e669083739a558636a7f00d8bccbffef2c205bb8b24c64c7bcec3273a25e868b",
     "scripts/rehearse-release.cjs": "887d3a93e419f16bd7fbeb64cd64409d75e9ca4d1a6ab82982e8cd76891eea18",
-    "scripts/release.test.mjs": "1d65d56a99a2a3d3fd1d2ab9f2f0c11978c628bf1449a80f6dd6b02d2b44ba83",
+    "scripts/release.test.mjs": "87291ad2918645ee6d173190a5ee1656f7bb9c0afc44e51780af530ff678def3",
     "scripts/check-release-artifacts.mjs": "9251a47f1fd7274f62289a8d29e35d9a2b1fd6c227d1f2132ca3fc73c8fa1c63"
   }
 }

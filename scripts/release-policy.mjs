@@ -39,7 +39,7 @@ export function alignedVersion(root, { published = false } = {}) {
   const json = path => JSON.parse(readFileSync(join(root, path), 'utf8'));
   const cli = json('packages/cli/package.json').version;
   parseVersion(cli);
-  const versions = [json('packages/parsers/package.json').version, json('plugins/centrail/.claude-plugin/plugin.json').version,
+  const versions = [json('packages/parsers/package.json').version, json('plugins/centrail/.claude-plugin/plugin.json').version, json('plugins/centrail/.codex-plugin/plugin.json').version,
     json('.claude-plugin/marketplace.json').metadata.version,
     json('package-lock.json').packages['packages/cli'].version,
     json('package-lock.json').packages['packages/parsers'].version,

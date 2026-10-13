@@ -31,7 +31,7 @@ test('package, plugin, marketplace, lock and runtime versions remain coordinated
   const root = fileURLToPath(new URL('..', import.meta.url));
   assert.ok(alignedVersion(root));
   const temp = mkdtempSync(join(tmpdir(), 'centrail-versions-'));
-  const files = ['packages/cli/package.json','packages/parsers/package.json','plugins/centrail/.claude-plugin/plugin.json','.claude-plugin/marketplace.json','package-lock.json','packages/cli/src/version.ts','version.txt','.release-please-manifest.json'];
+  const files = ['packages/cli/package.json','packages/parsers/package.json','plugins/centrail/.claude-plugin/plugin.json','plugins/centrail/.codex-plugin/plugin.json','.claude-plugin/marketplace.json','package-lock.json','packages/cli/src/version.ts','version.txt','.release-please-manifest.json'];
   try {
     for (const file of files) { mkdirSync(dirname(join(temp,file)), { recursive:true }); writeFileSync(join(temp,file), readFileSync(join(root,file))); }
     assert.ok(alignedVersion(temp));
@@ -50,7 +50,7 @@ test('package, plugin, marketplace, lock and runtime versions remain coordinated
 test('actual tag checkout must be in reviewed main history', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const temp = mkdtempSync(join(tmpdir(),'centrail-tag-'));
-  const files = ['packages/cli/package.json','packages/parsers/package.json','plugins/centrail/.claude-plugin/plugin.json','.claude-plugin/marketplace.json','package-lock.json','packages/cli/src/version.ts'];
+  const files = ['packages/cli/package.json','packages/parsers/package.json','plugins/centrail/.claude-plugin/plugin.json','plugins/centrail/.codex-plugin/plugin.json','.claude-plugin/marketplace.json','package-lock.json','packages/cli/src/version.ts'];
   const helpers = ['release-publish.mjs','release-policy.mjs','check-release-tag.mjs','check-server-contract.mjs'];
   files.push(...helpers.map(name=>join('scripts',name)));
   const git = (...args) => {

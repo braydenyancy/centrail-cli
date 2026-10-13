@@ -14,7 +14,7 @@ flowchart LR
   N --> B[Stable plugin release branch]
 ```
 
-Release Please tracks one version for both packages and the plugin. Its baseline is the
+Release Please tracks one version for both packages, the Claude/Codex plugin metadata and the marketplace. Its baseline is the
 actually published `0.7.3`, not the unpublished `0.7.5-account-local.0` development version.
 Conventional `feat`/`fix` commits propose a release; test/docs/chore-only commits do not.
 The candidate package fields are normalized to `0.8.0`; the SDK rehearsal proposes that same
@@ -69,7 +69,7 @@ Sources: [Release Please](https://github.com/googleapis/release-please-action),
 ## Repeatable preparation checks
 
 `npm run verify` now includes the release-policy tests and offline installation of both
-packed consumers. CI repeats those checks on Node20/24 across Linux/macOS/Windows. Release
+packed consumers. CI repeats those checks on Node 20/24 across Linux/macOS/Windows. Release
 policy tests reject branch events, malformed semver, version drift and immutable retry mismatches.
 
 To rehearse the actual pinned Release Please SDK without creating a PR, tag or release:
@@ -88,3 +88,7 @@ This is a preparation rehearsal, not proof that owner-side settings permit a rea
 Merged PRs without Conventional Commit squash titles may supply Release Please's supported
 `BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` body block. This records intended release notes
 without rewriting history; PR15 uses that correction so the collection changes appear in0.8.0.
+
+The verification toolchain uses Vitest 4.1.11 and Vite 6.4.3 to retain Node 20.0 support;
+newer Vite majors raise the minimum Node 20 minor. The root Vite override is intentional.
+Toolchain upgrades require rebuilding and reviewing the committed plugin bundle.

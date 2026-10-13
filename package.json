@@ -25,5 +25,8 @@
     "release:pack": "node scripts/release-pack.mjs",
     "release:publish": "node scripts/release-publish.mjs",
     "release:rehearse": "node scripts/rehearse-release.cjs"
+  },
+  "overrides": {
+    "vite": "6.4.3"
   }
 }

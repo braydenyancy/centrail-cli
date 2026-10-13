@@ -42,6 +42,7 @@ const stderrTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
 const setStderrTTY = (value: boolean) => Object.defineProperty(process.stderr, "isTTY", { value, configurable: true, writable: true });
 
 beforeEach(async () => {
+  fetchMock.mockClear();
   await rm(mocks.dir, { recursive: true, force: true });
   await mkdir(mocks.dir, { recursive: true });
   await writeFile(join(mocks.dir, "auth.json"), JSON.stringify(AUTH));

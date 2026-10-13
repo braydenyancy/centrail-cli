@@ -13,6 +13,7 @@
         "packages/cli/package.json",
         "packages/parsers/package.json",
         "plugins/centrail/.claude-plugin/plugin.json",
+        "plugins/centrail/.codex-plugin/plugin.json",
         {
           "type": "json",
           "path": ".claude-plugin/marketplace.json",
