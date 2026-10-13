@@ -3,6 +3,21 @@
 All notable changes are documented here. This project follows semantic
 versioning.
 
+## [0.8.0](https://github.com/braydenyancy/centrail-cli/compare/v0.7.3...v0.8.0) (2026-10-13)
+
+
+### Features
+
+* **cli:** doctor-hooks --json, the same redacted report for tools to read ([#14](https://github.com/braydenyancy/centrail-cli/issues/14)) ([8026d04](https://github.com/braydenyancy/centrail-cli/commit/8026d043cb50d28407ab5b7e34ff04e32665164b))
+* **cli:** improve collection accuracy and add Pi/Gemini scanners ([345ea8c](https://github.com/braydenyancy/centrail-cli/commit/345ea8c7821cb0c311ff310d2d61b5d39fcdc606))
+* **release:** automate coordinated CLI publication ([#17](https://github.com/braydenyancy/centrail-cli/issues/17)) ([7b5876a](https://github.com/braydenyancy/centrail-cli/commit/7b5876acfa0bda8026f332a9ced3cef2501f74b8))
+
+
+### Bug Fixes
+
+* **hooks:** pin the hook through mise's version alias, so an upgrade or prune does not strand it ([#13](https://github.com/braydenyancy/centrail-cli/issues/13)) ([d8d9bd9](https://github.com/braydenyancy/centrail-cli/commit/d8d9bd9fac3aae9bde3bebe482e8d9da1b8827f5))
+* **hooks:** separate Claude plugin and Codex hook ownership ([#12](https://github.com/braydenyancy/centrail-cli/issues/12)) ([a189af6](https://github.com/braydenyancy/centrail-cli/commit/a189af6110133419deb4beb6320d3f262b26f8ed))
+
 ## [Unreleased]
 
 ### 0.7.5-account-local.0 — local reconciliation candidate, not released
