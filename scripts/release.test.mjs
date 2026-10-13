@@ -89,3 +89,10 @@ test('actual tag checkout must be in reviewed main history', () => {
     assert.throws(()=>checkReleaseTag(temp,{...env,GITHUB_SHA:git('rev-parse','HEAD')}),/reviewed on main/);
   } finally {rmSync(temp,{recursive:true,force:true});}
 });
+test('every hidden-directory release upload opts into hidden files', () => {
+  // upload-artifact v4.4+ silently skips hidden paths; v0.8.0's publish run found no tarballs.
+  const workflow = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '.github', 'workflows', 'publish.yml'), 'utf8');
+  const uploads = workflow.split(/\n(?=\s+- (?:name: [^\n]+\n\s+)?uses: )/).filter(step => /uses: actions\/upload-artifact@/.test(step));
+  assert.equal(uploads.length, 2);
+  for (const step of uploads) if (/\.release-artifacts/.test(step)) assert.match(step, /include-hidden-files: true/);
+});
