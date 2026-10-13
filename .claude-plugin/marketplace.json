@@ -1,8 +1,15 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "centrail",
-  "metadata": { "description": "Centrail — local AI coding-agent usage, attributed to repos and commits.", "version": "0.7.5-account-local.0", "pluginRoot": "plugins" },
-  "owner": { "name": "Centrail", "url": "https://centrail.org" },
+  "metadata": {
+    "description": "Centrail \u2014 local AI coding-agent usage, attributed to repos and commits.",
+    "version": "0.8.0",
+    "pluginRoot": "plugins"
+  },
+  "owner": {
+    "name": "Centrail",
+    "url": "https://centrail.org"
+  },
   "plugins": [
     {
       "name": "centrail",

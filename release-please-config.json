@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "bb75b62598d8bc43f5080c2afb1a85a90f3438d6",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "bump-minor-pre-major": true,
+  "pull-request-header": "Review the version, changelog and packed release checks before merging.",
+  "pull-request-footer": "Publishing requires the tagged commit to pass verification and the deployed server contract.",
+  "packages": {
+    ".": {
+      "package-name": "centrail",
+      "extra-files": [
+        "packages/cli/package.json",
+        "packages/parsers/package.json",
+        "plugins/centrail/.claude-plugin/plugin.json",
+        "plugins/centrail/.codex-plugin/plugin.json",
+        {
+          "type": "json",
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.metadata.version"
+        },
+        {
+          "type": "json",
+          "path": "package-lock.json",
+          "jsonpath": "$['packages']['packages/cli'].version"
+        },
+        {
+          "type": "json",
+          "path": "package-lock.json",
+          "jsonpath": "$['packages']['packages/parsers'].version"
+        },
+        "packages/cli/src/version.ts"
+      ],
+      "exclude-paths": [
+        "docs",
+        "scripts",
+        ".github",
+        "tools",
+        "packages/parsers/test"
+      ]
+    }
+  }
+}

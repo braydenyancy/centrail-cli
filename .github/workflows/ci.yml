@@ -1,5 +1,6 @@
 name: ci
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -27,6 +28,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:server-contract
+      - run: npm run test:release
+      - run: npm run release:pack
 
   # Claude Code's own validator, over the marketplace and the plugin.
   plugin-validate:

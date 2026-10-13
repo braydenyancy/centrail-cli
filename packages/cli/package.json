@@ -1,6 +1,6 @@
 {
   "name": "centrail",
-  "version": "0.7.5-account-local.0",
+  "version": "0.8.0",
   "description": "Sync your local AI coding-agent usage (Claude Code, GitHub Copilot CLI, Codex) to centrail.org.",
   "license": "Apache-2.0",
   "type": "module",
@@ -23,8 +23,13 @@
   "devDependencies": {
     "@centrail/parsers": "*",
     "@types/node": "^22.0.0",
-    "esbuild": "^0.19.12",
+    "esbuild": "^0.25.12",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/braydenyancy/centrail-cli.git",
+    "directory": "packages/cli"
   }
 }

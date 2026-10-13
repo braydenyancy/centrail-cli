@@ -1,0 +1,76 @@
+name: release-please
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'braydenyancy/centrail-cli' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Resolve the release PR branch
+        if: steps.release.outputs.prs_created == 'true'
+        id: branch
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        with:
+          script: |
+            const prs = JSON.parse(process.env.RELEASE_PRS);
+            if (prs.length !== 1) throw new Error('Expected one coordinated release PR');
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prs[0].number });
+            if (pr.base.ref !== 'main' || pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}` || !pr.head.ref.startsWith('release-please--branches--main')) throw new Error('Unexpected release PR branch');
+            core.setOutput('ref', pr.head.ref);
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.prs_created == 'true'
+        with:
+          ref: ${{ steps.branch.outputs.ref }}
+      - name: Rebuild the reviewed plugin bundle
+        if: steps.release.outputs.prs_created == 'true'
+        run: |
+          npm ci
+          npm run build
+          npm run test:release
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add plugins/centrail/scripts/centrail.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore(release): rebuild the versioned plugin bundle'
+            git push origin HEAD
+          fi
+      - name: Start release PR checks explicitly
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          RELEASE_REF: ${{ steps.branch.outputs.ref }}
+        with:
+          script: |
+            for (const workflow_id of ['ci.yml', 'comparisons.yml']) {
+              await github.rest.actions.createWorkflowDispatch({ ...context.repo, workflow_id, ref: process.env.RELEASE_REF });
+            }
+      - name: Start publication at the immutable tag
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+        with:
+          script: |
+            if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(process.env.RELEASE_TAG)) throw new Error('Unexpected release tag');
+            await github.rest.actions.createWorkflowDispatch({ ...context.repo, workflow_id: 'publish.yml', ref: process.env.RELEASE_TAG });

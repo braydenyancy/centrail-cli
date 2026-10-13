@@ -1,38 +1,89 @@
 name: publish
 on:
   push:
-    tags: ["v*"]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: npm-publication
+  cancel-in-progress: false
 jobs:
-  npm-publish:
+  prepare:
+    if: github.repository == 'braydenyancy/centrail-cli'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # the release branch below; nothing else is written
+    outputs:
+      surfaces: ${{ steps.scanner-surfaces.outputs.surfaces }}
+      fields: ${{ steps.scanner-surfaces.outputs.fields }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # the push below must see release's tip to fast-forward it
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: "https://registry.npmjs.org"
+          node-version: '24'
+      - name: Require a reviewed version tag before requesting publication approval
+        run: node scripts/check-release-tag.mjs
       - run: npm ci
       - run: npm run build
+      - name: Verify the tag contains its rebuilt plugin bundle
+        run: git diff --exit-code -- plugins/
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:server-contract
+      - run: npm run test:release
       - id: scanner-surfaces
-        run: node scripts/export-scanner-surfaces.mjs
+        run: node scripts/export-scanner-surfaces.mjs all
       - name: Prove deployed server accepts every CLI surface
         run: node scripts/check-server-contract.mjs
         env:
           CENTRAIL_EXPECTED_SURFACES: ${{ steps.scanner-surfaces.outputs.surfaces }}
           CENTRAIL_EXPECTED_FIELDS: ${{ steps.scanner-surfaces.outputs.fields }}
-      - run: npm publish --workspaces --access public
+      - run: npm run release:pack
+      - name: Retain the exact tested packages and minimal publisher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prepared-release
+          if-no-files-found: error
+          path: |
+            .release-artifacts/*.tgz
+            .release-artifacts/manifest.json
+            .release-artifacts/publisher/
+  npm-publish:
+    needs: prepare
+    if: github.repository == 'braydenyancy/centrail-cli'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Require trusted publishing support
+        run: node -e "const cp=require('node:child_process');const [a,b,c]=cp.execFileSync('npm',['--version'],{encoding:'utf8'}).trim().split('.').map(Number);if(a<11||(a===11&&(b<5||(b===5&&c<1))))throw Error('npm11.5.1+ required')"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: prepared-release
+          path: .release-artifacts/
+      - name: Verify artifact source and minimal helper bytes
+        run: node scripts/check-release-artifacts.mjs
+      - name: Recheck the deployed contract after publication approval
+        run: node .release-artifacts/publisher/scripts/check-server-contract.mjs
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # The Claude Code plugin's marketplace is pinned to `release` (README §
-      # The Claude Code plugin): tags never move, so this branch does, and
-      # only once npm holds the same version. Claude Code's auto-update sees
-      # the bumped plugin.json version. Fast-forward only, created on first
-      # use: a tag cut behind it fails here instead of rewinding everyone.
-      - name: Fast-forward the release branch to this tag
-        run: git push origin "$GITHUB_SHA:refs/heads/release"
+          CENTRAIL_EXPECTED_SURFACES: ${{ needs.prepare.outputs.surfaces }}
+          CENTRAIL_EXPECTED_FIELDS: ${{ needs.prepare.outputs.fields }}
+      - name: Publish and verify exact tarballs through npm OIDC
+        run: npm --prefix .release-artifacts/publisher run publish:verified
+        env:
+          CENTRAIL_RELEASE_CHECKOUT: ${{ github.workspace }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: release-artifacts-${{ github.ref_name }}
+          path: .release-artifacts/

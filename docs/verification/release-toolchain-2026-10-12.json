@@ -1,0 +1,127 @@
+{
+  "date": "2026-10-12",
+  "baseMain": "4561bb3604e97ab48f40a81f14430012267a20cd",
+  "candidateBeforeRepair": "ffc60aa7de8cb814a51acda9cc6ac3fc598abac5",
+  "hostedFailure": {
+    "run": 38326039173,
+    "linux24Job": 115064812248,
+    "windows20Job": 115064812277,
+    "reason": "Codex plugin metadata version remained 0.7.5-account-local.0; existing plugin assertion expected 0.8.0"
+  },
+  "versions": {
+    "vitest": "4.1.11",
+    "@vitest/mocker": "4.1.11",
+    "vite": "6.4.3",
+    "tinypool": "removed",
+    "esbuild": "0.25.12",
+    "postcss": "8.5.30",
+    "nanoid": "3.3.20",
+    "source-map-js": "1.2.2"
+  },
+  "auditBefore": {
+    "info": 0,
+    "low": 0,
+    "moderate": 3,
+    "high": 4,
+    "critical": 2,
+    "total": 9
+  },
+  "auditAfter": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "runtimeAuditAfter": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "severityNote": "npm audit groups Tinypool as Critical; maintainer advisories describe High. Affected locked packages were patched or removed.",
+  "verification": [
+    {
+      "node": "24.21.0",
+      "platform": "Linux",
+      "command": "npm run verify",
+      "cliTests": 557,
+      "parserTests": 258,
+      "optionalParserSkipped": 1,
+      "offlineContracts": 11,
+      "releasePolicy": 15,
+      "comparisonGates": 15,
+      "typecheck": "passed",
+      "build": "passed",
+      "packedConsumers": "passed"
+    },
+    {
+      "node": "20.20.2",
+      "platform": "Linux",
+      "command": "npm run verify",
+      "cliTests": 557,
+      "parserTests": 258,
+      "optionalParserSkipped": 1,
+      "offlineContracts": 11,
+      "releasePolicy": 15,
+      "comparisonGates": 15,
+      "typecheck": "passed",
+      "build": "passed",
+      "packedConsumers": "passed"
+    }
+  ],
+  "bundle": {
+    "method": "TypeScript parse/reprint with comments removed; supplementary evidence, not a general semantic proof",
+    "typescript": "5.9.3",
+    "oldSha": "56510fa63d7873f726387baf600e02d6b19ea1b37af3cbab6c74a1b87dc6cdb2",
+    "newSha": "763c8022a119caff01978050a16a4010685569b21fd6ee27cf05b5cf1b80bb27",
+    "oldNormalizedSha": "b99ad95647663194b519eb507e6545472796f79ff2fc99496ea7bd3562d63b2c",
+    "newNormalizedSha": "b99ad95647663194b519eb507e6545472796f79ff2fc99496ea7bd3562d63b2c",
+    "normalizedEqual": true
+  },
+  "sdkRehearsal": {
+    "sdk": "17.3.0",
+    "repo": "braydenyancy/centrail-cli",
+    "prs": [
+      {
+        "version": "0.8.0",
+        "title": "chore(main): release 0.8.0",
+        "body": "Review the version, changelog and packed release checks before merging.\n---\n\n\n## [0.8.0](https://github.com/braydenyancy/centrail-cli/compare/v0.7.3...v0.8.0) (2026-10-13)\n\n\n### Features\n\n* **cli:** doctor-hooks --json, the same redacted report for tools to read ([#14](https://github.com/braydenyancy/centrail-cli/issues/14)) ([8026d04](https://github.com/braydenyancy/centrail-cli/commit/8026d043cb50d28407ab5b7e34ff04e32665164b))\n* **cli:** improve collection accuracy and add Pi/Gemini scanners ([345ea8c](https://github.com/braydenyancy/centrail-cli/commit/345ea8c7821cb0c311ff310d2d61b5d39fcdc606))\n\n\n### Bug Fixes\n\n* **hooks:** pin the hook through mise's version alias, so an upgrade or prune does not strand it ([#13](https://github.com/braydenyancy/centrail-cli/issues/13)) ([d8d9bd9](https://github.com/braydenyancy/centrail-cli/commit/d8d9bd9fac3aae9bde3bebe482e8d9da1b8827f5))\n* **hooks:** separate Claude plugin and Codex hook ownership ([#12](https://github.com/braydenyancy/centrail-cli/issues/12)) ([a189af6](https://github.com/braydenyancy/centrail-cli/commit/a189af6110133419deb4beb6320d3f262b26f8ed))\n\n---\nPublishing requires the tagged commit to pass verification and the deployed server contract.",
+        "branch": "release-please--branches--main--components--centrail",
+        "files": [
+          "CHANGELOG.md",
+          "version.txt",
+          "packages/cli/package.json",
+          "packages/parsers/package.json",
+          "plugins/centrail/.claude-plugin/plugin.json",
+          "plugins/centrail/.codex-plugin/plugin.json",
+          ".claude-plugin/marketplace.json",
+          "package-lock.json",
+          "packages/cli/src/version.ts",
+          ".release-please-manifest.json"
+        ]
+      }
+    ]
+  },
+  "limits": [
+    "No package publication or tag creation performed.",
+    "Native macOS/Windows checks must pass on the repaired head.",
+    "Actual parser comparison execution remains hosted; corpus and baseline unchanged.",
+    "Audit is dated advisory evidence, not a guarantee against future vulnerabilities."
+  ],
+  "inputHashes": {
+    "package-lock.json": "8ddb9de43564f76c4fed31ae6c8807076384e12695f261f1c32076b9c8e5e2f4",
+    "package.json": "a8c402efc9f34dfb05913798ac589e5711d969c91ec5c80fa7d6238b2afcb48b",
+    "packages/cli/package.json": "65e0a89b6fba247742c868196160c20b3e72ee7360f2b3b18f0ac9856600207b",
+    "packages/parsers/package.json": "d5dbaeaf0e1bbf7663d0627b5bbe2701b6a016c8c736ad3377ed6aff5c2658bf",
+    "plugins/centrail/.codex-plugin/plugin.json": "605e3439daed399b6bbfec1be2282a639724a6f8697a36f37dc858ee8b41f343",
+    "release-please-config.json": "869b83209ac090d30dee9dffdc8d018e49c4dacd876cbfbbc39f886407686cb8",
+    "scripts/release-policy.mjs": "834e057c93f528638ceede71a7bf23756fdac3e69eddca7d6bccead9cef81282",
+    "scripts/release.test.mjs": "87291ad2918645ee6d173190a5ee1656f7bb9c0afc44e51780af530ff678def3",
+    "packages/cli/src/commands/sync.server.test.ts": "12c28947534340ba3f168e38b346e33405698ffbf3d186f58cfe5ea89cd91d8a",
+    "plugins/centrail/scripts/centrail.mjs": "763c8022a119caff01978050a16a4010685569b21fd6ee27cf05b5cf1b80bb27"
+  }
+}

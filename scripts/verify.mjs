@@ -30,7 +30,7 @@ function run(label, args) {
   }
 }
 
-for (const script of ["build", "typecheck", "test", "test:server-contract", "test:comparison-gate"]) {
+for (const script of ["build", "typecheck", "test", "test:server-contract", "test:release", "release:pack", "test:comparison-gate"]) {
   run(script, [npm, "run", script]);
 }
 if (flags.has("--comparisons-setup")) {
