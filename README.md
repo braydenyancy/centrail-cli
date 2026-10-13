@@ -179,6 +179,10 @@ your personal logs or downloads tools during testing. See the
 
 ## Packages
 
+Package publication is separate from usage sync. Reviewed release PRs coordinate versions and
+the plugin bundle; tag CI publishes and verifies the exact tarballs. See [releases](docs/releases.md)
+for the workflow and the one-time owner settings.
+
 - **centrail** — the CLI (this package's `bin`).
 - **@centrail/parsers** — the local log parsers and attribution logic. See
   [CONTRACT.md](./CONTRACT.md).
