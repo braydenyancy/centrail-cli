@@ -35,12 +35,16 @@ repricing. Users upgrade their installation, then normal sync replays eligible l
 
 ## One-time owner settings
 
-- Enable GitHub Actions to create pull requests.
+- Enable GitHub Actions to create pull requests. GitHub combines creation and approval in
+  one checkbox; this workflow creates PRs and leaves approval to humans. Require green main checks.
+- Protect published `v*` tags against updates/deletion, keeping intended tag creation permitted.
 - Protect environment `npm` with a reviewer and prevent self-review. Set deployment policy
   **type tag**, pattern `v*`; a branch rule with that text does not admit version tags.
 - Configure trusted publishing for **both** `centrail` and `@centrail/parsers`: owner
   `braydenyancy`, repository `centrail-cli`, workflow `publish.yml`, environment `npm`.
   Allow direct `npm publish` and `npm dist-tag`. No long-lived npm token fallback is used.
+- Create fresh npm trust shortly before publication; first use currently must be within two days.
+  Verify OIDC works before retiring old automation tokens.
 - Keep the repository public and package repository metadata aligned for provenance.
 
 Owner settings and a real publication require external verification; local checks do not prove them.
