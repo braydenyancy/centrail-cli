@@ -8,7 +8,7 @@ flowchart LR
   M[Product main] --> R[Reviewed release PR: versions, changelog, bundle]
   R --> T[Immutable v* tag]
   T --> C[Read-only tests, contract and packed consumers]
-  C --> N[npm environment approval and OIDC]
+  C --> N[npm environment: v* tags only, OIDC]
   N --> P[Verify exact published tarballs]
   P --> B[Stable plugin release branch]
 ```
@@ -20,7 +20,8 @@ flowchart LR
 3. Merging that release PR creates an immutable `v*` tag. The workflow explicitly dispatches
    publication at the tag ref because GitHub suppresses token-created tag push events.
 4. Read-only CI tests the tagged code and deployed server contract, then retains tested tarballs.
-   After `npm` approval, OIDC publication installs no dependencies and runs no build/tests.
+   Publication then runs automatically in the `npm` environment through OIDC; it installs no
+   dependencies and runs no build or tests. The reviewed release PR is the human gate.
 5. Publish parsers before CLI, verify both registry tarballs against retained bytes, then advance
    the stable plugin's `release` branch. That branch is an update pointer, never a publish trigger.
 
@@ -38,8 +39,10 @@ repricing. Users upgrade their installation, then normal sync replays eligible l
 - Enable GitHub Actions to create pull requests. GitHub combines creation and approval in
   one checkbox; this workflow creates PRs and leaves approval to humans. Require green main checks.
 - Protect published `v*` tags against updates/deletion, keeping intended tag creation permitted.
-- Protect environment `npm` with a reviewer and prevent self-review. Set deployment policy
-  **type tag**, pattern `v*`; a branch rule with that text does not admit version tags.
+- Environment `npm`: deployment policy **type tag**, pattern `v*` (a branch rule with that
+  text does not admit version tags). No required reviewers: merging the reviewed release PR
+  publishes end to end (decided 2026-10-14; a second click by the same person added no review
+  and was easy to miss). Only `v*` tags created from reviewed main can reach npm trust.
 - Configure trusted publishing for **both** `centrail` and `@centrail/parsers`: owner
   `braydenyancy`, repository `centrail-cli`, workflow `publish.yml`, environment `npm`.
   Allow direct `npm publish` and `npm dist-tag`. No long-lived npm token fallback is used.
