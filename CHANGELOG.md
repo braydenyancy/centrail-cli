@@ -3,6 +3,13 @@
 All notable changes are documented here. This project follows semantic
 versioning.
 
+## [0.8.1](https://github.com/braydenyancy/centrail-cli/compare/v0.8.0...v0.8.1) (2026-10-14)
+
+
+### Documentation
+
+* **release:** note that v0.8.0 was never published ([#21](https://github.com/braydenyancy/centrail-cli/issues/21)) ([f303a99](https://github.com/braydenyancy/centrail-cli/commit/f303a99e82e132ce6323c25e352f6fff4e7bd681))
+
 ## [0.8.0](https://github.com/braydenyancy/centrail-cli/compare/v0.7.3...v0.8.0) (2026-10-13)
 
 
