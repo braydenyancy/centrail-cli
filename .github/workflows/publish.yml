@@ -45,6 +45,8 @@ jobs:
         with:
           name: prepared-release
           if-no-files-found: error
+          # .release-artifacts is a hidden directory; upload-artifact skips those by default.
+          include-hidden-files: true
           path: |
             .release-artifacts/*.tgz
             .release-artifacts/manifest.json
@@ -86,4 +88,5 @@ jobs:
         if: always()
         with:
           name: release-artifacts-${{ github.ref_name }}
+          include-hidden-files: true
           path: .release-artifacts/
