@@ -181,7 +181,8 @@ your personal logs or downloads tools during testing. See the
 
 Package publication is separate from usage sync. Reviewed release PRs coordinate versions and
 the plugin bundle; tag CI publishes and verifies the exact tarballs. See [releases](docs/releases.md)
-for the workflow and the one-time owner settings.
+for the workflow and the one-time owner settings. Version 0.8.0 was tagged but never published;
+its changes ship in 0.8.1.
 
 - **centrail** — the CLI (this package's `bin`).
 - **@centrail/parsers** — the local log parsers and attribution logic. See
