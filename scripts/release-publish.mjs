@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareVersions, existingVersion, integrity } from './release-policy.mjs';
+import { compareVersions, existingVersion, integrity, waitForRegistry } from './release-policy.mjs';
 import { checkReleaseTag } from './check-release-tag.mjs';
 
 const root = resolve(process.env.CENTRAIL_RELEASE_CHECKOUT ?? fileURLToPath(new URL('..', import.meta.url)));
@@ -22,7 +22,8 @@ function npmRun(args) {
   if (p.error || p.status !== 0) throw new Error('npm publication command failed');
 }
 async function metadata(name) {
-  const r = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(15000), redirect: 'error' });
+  // A unique query and no-cache ask the registry's CDN for a fresh packument on every poll.
+  const r = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}?fresh=${Date.now()}`, { signal: AbortSignal.timeout(15000), redirect: 'error', headers: { 'cache-control': 'no-cache' } });
   if (!r.ok) throw new Error(`npm metadata unavailable: ${r.status}`);
   return r.json();
 }
@@ -41,19 +42,13 @@ for (const artifact of manifest.packages) {
   if (current && compareVersions(current, version) > 0) throw new Error('Refusing to move npm channel backward');
   const exists = existingVersion(before.versions?.[version], artifact.integrity);
   if (!exists) npmRun(['publish', join(out, artifact.filename), '--ignore-scripts', '--access', 'public', '--provenance', '--tag', channel]);
-  let after;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    after = await metadata(artifact.name);
-    if (after.versions?.[version]) break;
-    await new Promise(resolve => setTimeout(resolve, 5000));
-  }
-  await checkBytes(after?.versions?.[version], artifact);
+  let after = await waitForRegistry(() => metadata(artifact.name), m => existingVersion(m.versions?.[version], artifact.integrity), { what: `${artifact.name}@${version}` });
+  await checkBytes(after.versions[version], artifact);
   if (after['dist-tags']?.[channel] !== version) {
     const previous = after['dist-tags']?.[channel];
     if (previous && compareVersions(previous, version) > 0) throw new Error('Newer channel appeared; refusing downgrade');
     npmRun(['dist-tag', 'add', `${artifact.name}@${version}`, channel]);
-    after = await metadata(artifact.name);
-    if (after['dist-tags']?.[channel] !== version) throw new Error('Registry channel verification failed');
+    after = await waitForRegistry(() => metadata(artifact.name), m => m['dist-tags']?.[channel] === version, { what: `${artifact.name} ${channel} -> ${version}` });
   }
   receipt.packages.push({ name: artifact.name, integrity: artifact.integrity, existing: exists, bytesVerified: true, channelVerified: true });
   writeFileSync(join(out, 'publication.json'), JSON.stringify(receipt, null, 2) + '\n');

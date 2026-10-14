@@ -96,3 +96,14 @@ test('every hidden-directory release upload opts into hidden files', () => {
   assert.equal(uploads.length, 2);
   for (const step of uploads) if (/\.release-artifacts/.test(step)) assert.match(step, /include-hidden-files: true/);
 });
+test('registry checks wait out npm propagation and fail at a deadline', async () => {
+  const { waitForRegistry } = await import('./release-policy.mjs');
+  let clock = 0; const sleep = async ms => { clock += ms; }; const now = () => clock;
+  const reads = [{}, {}, { versions: { '0.8.1': { dist: {} } } }];
+  // v0.8.1: npm accepted @centrail/parsers but the first reads still lacked it.
+  const found = await waitForRegistry(async () => reads.shift() ?? {}, m => !!m.versions?.['0.8.1'], { what: 'x', sleep, now, intervalMs: 10_000 });
+  assert.ok(found.versions['0.8.1']); assert.equal(clock, 20_000);
+  clock = 0;
+  await assert.rejects(waitForRegistry(async () => ({}), () => false, { what: '@centrail/parsers@0.8.1', sleep, now, timeoutMs: 60_000, intervalMs: 10_000 }), /@centrail\/parsers@0\.8\.1 did not appear in the registry within 60s/);
+  assert.equal(clock, 60_000);
+});
