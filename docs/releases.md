@@ -23,6 +23,8 @@ flowchart LR
    After `npm` approval, OIDC publication installs no dependencies and runs no build/tests.
 5. Publish parsers before CLI, verify both registry tarballs against retained bytes, then advance
    the stable plugin's `release` branch. That branch is an update pointer, never a publish trigger.
+   `release-pointer-guard` checks hourly (from `main`) and on every push that `release` is a `v*`
+   tag commit on `main`, and opens an issue mentioning the maintainers if it is not.
 
 Stable versions use npm `latest`; prereleases use `next` and leave the stable plugin unchanged.
 A prerelease needs a reviewed version PR first. Tags must match coordinated versions on main.

@@ -1,0 +1,52 @@
+# Installed plugins auto-update from `release` and run its Stop hook on every turn.
+# Only the publish workflow may advance it, to a v* tag commit already on reviewed
+# main. Personal-account rulesets cannot exempt GitHub Actions, so until the repo
+# moves to an organization this detects any other push and raises an issue. The hourly
+# run comes from protected main, so a push to release cannot remove the check.
+name: release-pointer-guard
+on:
+  push:
+    branches: [release]
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  verify:
+    if: github.repository == 'braydenyancy/centrail-cli'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+      - name: Release must be a v* tag commit on reviewed main
+        id: check
+        run: |
+          git fetch --tags --quiet origin release
+          HEAD_SHA="$(git rev-parse FETCH_HEAD)"
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          tags="$(git tag --points-at "$HEAD_SHA" --list 'v*')"
+          if [ -z "$tags" ]; then echo "reason=no v* tag points at $HEAD_SHA" >> "$GITHUB_OUTPUT"; exit 1; fi
+          if ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then echo "reason=$HEAD_SHA is not on main" >> "$GITHUB_OUTPUT"; exit 1; fi
+          echo "release -> $tags ($HEAD_SHA)"
+      - name: Raise an issue
+        if: failure()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          REASON: ${{ steps.check.outputs.reason }}
+          SHA: ${{ steps.check.outputs.sha }}
+        with:
+          script: |
+            const sha = process.env.SHA || 'unknown';
+            const title = `release branch moved outside the publish workflow (${sha.slice(0, 7)})`;
+            const open = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open' });
+            if (open.some((issue) => issue.title === title)) return;
+            await github.rest.issues.create({
+              ...context.repo,
+              title,
+              body: `@braydenyancy @alynes \`release\` points at ${sha}: ${process.env.REASON || 'verification failed'}. Detected by a ${context.eventName} run.\n\nInstalled plugins update from this branch. Reset it to the latest v* tag commit and investigate: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
