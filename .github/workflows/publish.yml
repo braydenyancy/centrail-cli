@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Require a reviewed version tag before requesting publication approval
+      - name: Require a reviewed version tag before publication
         run: node scripts/check-release-tag.mjs
       - run: npm ci
       - run: npm run build
