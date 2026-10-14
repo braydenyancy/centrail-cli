@@ -48,3 +48,16 @@ export function alignedVersion(root, { published = false } = {}) {
   if (versions.some(v => v !== cli)) throw new Error('Release versions do not agree');
   return cli;
 }
+
+// npm's registry is eventually consistent: a publish returns before the packument
+// (served through a CDN) shows the version or its dist-tag. Poll until `ready`
+// holds, up to a deadline, instead of trusting one read.
+export async function waitForRegistry(read, ready, { what, timeoutMs = 600_000, intervalMs = 10_000, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now } = {}) {
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const value = await read();
+    if (ready(value)) return value;
+    if (now() >= deadline) throw new Error(`${what} did not appear in the registry within ${Math.round(timeoutMs / 1000)}s`);
+    await sleep(intervalMs);
+  }
+}
