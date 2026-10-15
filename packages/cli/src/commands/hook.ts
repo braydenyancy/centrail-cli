@@ -3,7 +3,8 @@ import { realpathSync } from "node:fs";
 import { mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { codexCallEvidence, lineEvidence, type Evidence, type RepoIdentity } from "@centrail/parsers";
-import { acquireSyncLock, readAuth, readState, writeState } from "../config.js";
+import { readAuth, readState, writeState } from "../config.js";
+import { acquireSyncLock } from "../sync-lock.js";
 import { deepestRoot, isWithin, nearestDirectory, nestedCheckout, readMainCheckout, resolveRepoRoot } from "../git.js";
 import { readHeadState, repoIdentity } from "../identity.js";
 import { appendSidecar, compactSidecar, readSidecar, SIDECAR_PATH, type SidecarLine } from "../sidecar.js";
@@ -323,7 +324,7 @@ async function maybeAutoSync(now: Date, deps: HookDeps, claimPath: string): Prom
 }
 
 async function compactLocked(now: Date, deps: HookDeps): Promise<void> {
-  const release = await acquireSyncLock(deps.lockPath ?? join(dirname(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  const release = await acquireSyncLock(deps.lockPath ?? join(dirname(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"), { purpose: "compact" });
   if (!release) return; // a sync holds it, and compacts
   try {
     await compactSidecar(deps.sidecarPath, now.getTime());
@@ -364,7 +365,7 @@ function spawnDetachedSync(): void {
     detached: true,
     windowsHide: true, // a detached child on Windows has no console; each git it runs would open one
     stdio: "ignore",
-    env: process.env,
+    env: { ...process.env, CENTRAIL_SYNC_ORIGIN: "hook" }, // named in the lock, so a second sync says whose it is
   });
   child.unref();
 }

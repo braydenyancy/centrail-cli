@@ -7,7 +7,6 @@ import {
   type ParsedUsageEvent,
 } from "@centrail/parsers";
 import {
-  acquireSyncLock,
   disconnectedMessage,
   ensureInstallId,
   parkAuth,
@@ -24,6 +23,7 @@ import {
   type DisconnectReason,
 } from "../config.js";
 import { checkDevice, refusalReason } from "../device.js";
+import { claimSyncLock, heldMessage, reclaimedMessage } from "../sync-lock.js";
 import { progress, progressDone, progressStatus } from "../progress.js";
 import { sinceForSurface, stampWatermark, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
@@ -65,15 +65,16 @@ type IngestResponse = {
 };
 
 export async function runSync(opts: { full: boolean }): Promise<void> {
-  const release = await acquireSyncLock();
-  if (!release) {
-    console.log("Another sync is already running on this machine — skipped.");
+  const lock = await claimSyncLock();
+  if (!("release" in lock)) {
+    console.log(heldMessage(lock.held));
     return;
   }
+  if (lock.reclaimed) console.log(reclaimedMessage(lock.reclaimed));
   try {
     await syncLocked(opts);
   } finally {
-    await release();
+    await lock.release();
   }
 }
 

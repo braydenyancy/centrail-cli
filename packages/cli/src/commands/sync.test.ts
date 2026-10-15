@@ -28,7 +28,6 @@ vi.mock("@centrail/parsers", async (importOriginal) => ({
 
 vi.mock("../config.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config.js")>()),
-  acquireSyncLock: vi.fn(async () => mocks.release),
   readAuth: vi.fn(async () => ({
     baseUrl: "https://centrail.org",
     token: "secret-token",
@@ -54,6 +53,11 @@ vi.mock("../config.js", async (importOriginal) => ({
   writeState: mocks.writeState,
   writeConfig: vi.fn(async () => {}),
   writeLastSync: vi.fn(async () => {}),
+}));
+
+vi.mock("../sync-lock.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sync-lock.js")>()),
+  claimSyncLock: vi.fn(async () => ({ release: mocks.release })),
 }));
 
 vi.mock("../ship-status.js", () => ({
