@@ -32,7 +32,14 @@ function anchors(file) {
     const atx = lines[i].match(/^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$/);
     const heading = atx?.[1] ?? (i + 1 < lines.length && /^ {0,3}(?:=+|-+)\s*$/.test(lines[i + 1]) ? lines[i] : null);
     if (heading) {
-      const slug = heading.toLowerCase().replace(/<[^>]+>/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      // Remove nested tag fragments to a fixed point before forming a plain-text ID.
+      let label = heading.toLowerCase();
+      let previous;
+      do {
+        previous = label;
+        label = label.replace(/<[^>]+>/g, '');
+      } while (label !== previous);
+      const slug = label.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
         .replace(/[^\p{L}\p{M}\p{N}_\-\s]/gu, '').replace(/\s/g, '-');
       let n = counts.get(slug) ?? 0;
       let candidate = n ? `${slug}-${n}` : slug;
