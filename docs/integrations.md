@@ -8,7 +8,7 @@ Source: `packages/cli/src/commands/integrations.ts`, `agent-hooks.ts`, `doctor.t
 
 | Command | Does |
 | --- | --- |
-| `centrail setup [--agent claude-code\|codex\|gemini-cli\|copilot-cli\|pi] [-y] [--dry-run]` | Detects installed agents, prints one plan line each (install/update/repair/ok/skip), asks once, applies. Idempotent: a second run writes nothing. Asks the scope question first if it was never answered. |
+| `centrail setup [--agent claude-code\|codex\|gemini-cli\|copilot-cli\|pi\|cursor\|opencode] [-y] [--dry-run]` | Detects installed agents, prints one plan line each (install/update/repair/ok/skip), asks once, applies. Idempotent: a second run writes nothing. Asks the scope question first if it was never answered. Cursor and OpenCode are installed only when named ([below](#cursor-and-opencode-repo-identity-only)). |
 | `centrail doctor [--json] [--fix]` | Read-only check of each agent's integration, the launcher and centrail's versions. Exit 1 when something needs action; `--fix` runs `setup -y` for those agents. |
 | `centrail uninstall [--agent <name>] [-y]` | Exact inverse of setup, limited to what centrail owns. Asks first (default no). |
 | `centrail upgrade [-y]` | Runs the updater of the copy that is running, with consent; then refreshes the launcher. |
@@ -78,10 +78,68 @@ never touched. Docs: [extensions](https://github.com/earendil-works/pi/blob/main
 Checked against Pi 1.1.0 with a local OpenAI-compatible stub: the extension fired once per run,
 and the sidecar's `pi:<id>` matched the Pi scanner's session id for that run.
 
+### Cursor and OpenCode: repo identity only
+
+No log scanner in `packages/parsers` reads Cursor's or OpenCode's usage, so their hook can record
+only the per-turn repo identity (session, folder, repo, branch, head) and start a sync; sync has no
+usage events to join those lines to, and the dashboard shows nothing for them yet. Installing a hook
+that collects nothing visible by default would be a surprise, and leaving them out of the plan would
+hide that they were found. So `setup` shows them, detected, as `skip  usage collection not supported
+yet (no usage source)`, installs nothing for them, and `--agent cursor` / `--agent opencode` installs
+the identity entry on purpose (the sidecar is ready when a scanner lands). Once installed, a plain
+`setup` keeps it current like any other; `uninstall` removes it. `doctor` reports a detected agent
+with no entry as `not-supported` (not a failure; `--fix` adds nothing) and an installed one as `ok`
+with `"usage": false` (printed: "repo identity only; usage not collected yet").
+
+**Cursor** reads user hooks from `~/.cursor/hooks.json` (no variable moves it), shared with the
+user's own; centrail adds one entry to `stop`, which fires when the agent loop ends, i.e. once per
+turn:
+
+```json
+{ "version": 1, "hooks": { "stop": [ { "type": "command",
+  "command": "\"<config dir>/bin/centrail-hook\" hook stop --centrail-hook --surface cursor",
+  "timeout": 10 } ] } }
+```
+
+On Windows Cursor runs hook commands through PowerShell, so the command starts with `&`. `stop`'s
+payload has no `cwd`: the session is `conversation_id` (stable across turns) and the folder the first
+of `workspace_roots`. `transcript_path` is Cursor's own format and is not read. Cursor parses stdout
+as JSON; `{}` asks for no follow-up message. `afterAgentResponse` fires per assistant message, and
+`sessionEnd` is tied to the IDE session (window close), so neither marks a turn. Cursor also runs
+Claude Code's user hooks (third-party hooks, on by default); a standalone Claude Code centrail hook
+there sees Cursor's payload, finds no `session_id` or `cwd`, and records nothing. Docs:
+[hooks](https://cursor.com/docs/agent/hooks) (agent-readable: https://cursor.com/docs/hooks.md),
+[third-party hooks](https://cursor.com/docs/reference/third-party-hooks.md); Windows shell:
+[forum](https://forum.cursor.com/t/hooks-in-windows/150377).
+
+**OpenCode** (v1, the `opencode-ai` package) loads every `plugin/*.{js,ts}` and `plugins/*.{js,ts}`
+in its global config dir, `$XDG_CONFIG_HOME/opencode` else `~/.config/opencode` (on Windows too;
+`OPENCODE_CONFIG_DIR` adds a directory rather than replacing it). centrail writes one plain-JS
+module, `plugins/centrail.js`, whose only export is a plugin function (OpenCode calls every export,
+and skips a file with a non-function one). On `session.status` with an idle status (a prompt's run
+ended), or the deprecated `session.idle` published with it, it looks the session up through the SDK
+client, skips child sessions (`parentID`: a subagent going idle is not a turn), and starts the
+launcher with `{ session_id, cwd: session.directory }` on stdin (the plugin's own `directory` when
+the lookup fails), detached except on Windows, where OpenCode starts no detached child itself. Owned
+by its first-line `centrail-opencode-plugin` header, like Pi's extension. OpenCode v2 (`@opencode/cli`)
+loads only `Plugin.define` modules and no longer publishes `session.idle`; it is not covered. Docs:
+[plugins](https://opencode.ai/docs/plugins/); source checked at `anomalyco/opencode` v1.19.0
+(`packages/opencode/src/config/plugin.ts`, `src/plugin/index.ts`, `src/session/status.ts`) and v2.0.29.
+Checked against opencode-ai 1.19.0 with a local OpenAI-compatible stub: per prompt `session.status`
+idle then `session.idle` 1 ms later, one launcher run (`--continue` adds one to the same `ses_…`
+session), `cwd` the folder `opencode run` started in, and the detached launcher outlived the process.
+Not exercised live: a subagent's child session.
+
+Usage sources for later, not built: Cursor keeps none documented locally; OpenCode v1 keeps sessions
+and messages (with `tokens` and `cost`) in SQLite at `$XDG_DATA_HOME/opencode/opencode.db`, session
+ids `ses_…`, which the identity lines already use as given.
+
 Detection: an agent counts as installed when its command is on PATH (`claude`, `codex`, `gemini`,
-`copilot`, `pi`) or its config dir exists (`CLAUDE_CONFIG_DIR` else `~/.claude`; `CODEX_HOME` else
-`~/.codex`; `GEMINI_CLI_HOME/.gemini` else `~/.gemini`; `COPILOT_HOME` else `~/.copilot`;
-`PI_CODING_AGENT_DIR` else `~/.pi/agent`).
+`copilot`, `pi`, `cursor`, `opencode`) or its config dir exists (`CLAUDE_CONFIG_DIR` else `~/.claude`;
+`CODEX_HOME` else `~/.codex`; `GEMINI_CLI_HOME/.gemini` else `~/.gemini`; `COPILOT_HOME` else
+`~/.copilot`; `PI_CODING_AGENT_DIR` else `~/.pi/agent`; `~/.cursor`; `$XDG_CONFIG_HOME/opencode` else
+`~/.config/opencode`). Tests never reach these homes: `src/testing/agent-homes.ts` points the
+variables, and for Cursor and OpenCode the defaults themselves (`src/home-overrides.ts`), at scratch.
 
 ## What `hook stop` receives
 
@@ -95,10 +153,13 @@ from Codex by its payload) and selects the stdout reply it parses.
 | `gemini-cli` | `session_id`, `cwd` | `gemini:<id>` | `{}` |
 | `copilot-cli` | `sessionId`, `cwd` (or the `Stop` form's `session_id`) | as given | `{}` |
 | `pi` | `session_id`, `cwd` | `pi:<id>` | nothing |
+| `cursor` | `conversation_id` (or `session_id`), `cwd` else `workspace_roots[0]` | as given | `{}` |
+| `opencode` | `session_id`, `cwd` | as given | nothing |
 
 The session id is written the way that agent's log scanner names its sessions, so sync joins the
 line to the usage events. Log scanners stay the source of usage; the hook adds the repo identity
-while the folder exists, and a timely sync. Only Claude Code's and Codex's transcripts are read for
+while the folder exists, and a timely sync. Cursor and OpenCode have no scanner yet: their lines
+wait in the sidecar, joined to nothing. Only Claude Code's and Codex's transcripts are read for
 the paths a turn touched; the others are placed by their folder.
 
 ## The stable launcher
@@ -140,12 +201,13 @@ Claude Code's `installed_plugins.json` shows the plugin at or past the version i
 - `cli` — `version`, `copy` (install channel), `latest` known from the last sync, `updateAvailable`.
 - `launcher` — `needed`, `present`, `executable`, `resolvesCli` (a stable install, `centrail` or
   `npx` it can run).
-- `agents.<claude-code|codex|gemini-cli|copilot-cli|pi>` — `detected`, `integration` (`plugin`/`hook`/`none`), `plugin`
+- `agents.<claude-code|codex|gemini-cli|copilot-cli|pi|cursor|opencode>` — `detected`, `integration` (`plugin`/`hook`/`none`), `plugin`
   (Claude Code: `enabled`, `autoUpdate`, installed `version`), `hooks` (centrail Stop entries),
-  `usesLauncher`, `commandResolves`, `status` (`ok`, `not-detected`, `unreadable`, `missing`,
+  `usesLauncher`, `commandResolves`, `usage` (false: repo identity only), `status` (`ok`, `not-detected`,
+  `not-supported` (Cursor/OpenCode found, nothing installed: not a failure), `unreadable`, `missing`,
   `duplicate`, `outdated-pin`, `outdated` (an entry this release would write differently),
-  `unresolved` (its launcher is missing), `repair`), `fix` (what setup would do). Pi's `hooks`
-  counts its extension.
+  `unresolved` (its launcher is missing), `repair`), `fix` (what setup would do). Pi's and
+  OpenCode's `hooks` count their module.
 - `notices` — saved version records still true: `copy`, `kind` (`update-available`/`below-minimum`), `line`.
 
 It prints no paths, commands or config values. Codex trust state and project/managed hook layers

@@ -41,7 +41,7 @@ most every 10 minutes.
 `centrail setup` detects Claude Code, Codex, Gemini CLI, Copilot CLI and Pi,
 prints one line per agent (install, update, repair, ok or skip), asks once, and
 applies; a second run changes nothing. `--agent <name>` (claude-code, codex,
-gemini-cli, copilot-cli, pi) limits it, `--dry-run` only prints
+gemini-cli, copilot-cli, pi, cursor, opencode) limits it, `--dry-run` only prints
 the plan, `-y` skips the question. Design, launcher and migration details:
 [agent integrations](docs/integrations.md).
 
@@ -63,6 +63,11 @@ the plan, `-y` skips the question. Design, launcher and migration details:
   `~/.pi/agent/extensions/centrail.js`. All three run the same launcher with
   fixed arguments, and each agent's home variable (`GEMINI_CLI_HOME`,
   `COPILOT_HOME`, `PI_CODING_AGENT_DIR`) is honored.
+- **Cursor** and **OpenCode** are detected and shown, but centrail cannot read
+  their usage yet, so setup installs nothing for them by default.
+  `--agent cursor` adds a `stop` hook to `~/.cursor/hooks.json` and
+  `--agent opencode` a plugin, `~/.config/opencode/plugins/centrail.js`; both
+  record repo identity only until a usage source for them ships.
 
 The launcher runs the centrail that set it up when that install is stable (mise
 or a global npm install), else `centrail` on PATH, else `npx centrail`; it never
