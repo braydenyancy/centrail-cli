@@ -2,7 +2,7 @@
 // "Nothing syncs before that answer"). An install that synced under 0.5.1
 // has never seen the scope question; until it answers, every sync sends
 // exactly what 0.5.1 sent, whatever the server lists. The answer — from a
-// sync in a terminal, `setup`, `connect` or `install-hooks` — re-sends the
+// sync in a terminal, `scope`, `connect` or `setup` — re-sends the
 // history once with identity, which the server fills into the rows it holds.
 // Real runSync / runStopHook / runSetup / runConnect, real git, real files,
 // the stand-in server, and a scripted terminal.

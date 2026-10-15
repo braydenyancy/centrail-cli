@@ -1,5 +1,8 @@
 # Hook integration investigation — local 0.7.4 candidate
 
+Historical receipt. Current commands and the stable launcher that replaced the pinned
+Codex command: [agent integrations](integrations.md).
+
 ## Finding and limits
 
 The launcher/installation design had a reproducible ownership defect: Centrail's

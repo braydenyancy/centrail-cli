@@ -1,21 +1,13 @@
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// install-hooks asks the scope question when it was never answered, over the
-// REAL config dir; this file must never touch that. Scratch config, scope
-// answered, then the module.
+// The settings merge every installer form goes through. Setup's end-to-end
+// behaviour over scratch agent homes is in integrations.test.ts.
 process.env.CENTRAIL_CONFIG_DIR = await mkdtemp(join(tmpdir(), "centrail-hooks-cfg-"));
-const { parseConfig, writeConfig } = await import("../config.js");
-await writeConfig(parseConfig({ scopeDecidedAt: "2026-06-01T00:00:00Z" }));
-const { hookCommand, codexHookCommand, installStopHook, runInstallHooks, stableInstallPath, uninstallStopHook } = await import("./hooks-install.js");
-// The installer must pin the CLI entry, not Vitest's worker entry. Model
-// process.argv as an actual CLI invocation rather than weakening ownership.
-const workerEntry = process.argv[1];
-beforeEach(() => { process.argv[1] = join(__dirname, "..", "..", "dist", "index.js"); });
-afterEach(() => { process.argv[1] = workerEntry; });
+const { hookCommand, installStopHook, isCentrailCommand, launcherCommand, stableInstallPath, uninstallStopHook } = await import("./hooks-install.js");
 
 describe("Stop hook settings merge", () => {
   const cmd = hookCommand("/usr/bin/node", "/opt/centrail/dist/index.js");
@@ -54,19 +46,6 @@ describe("Stop hook settings merge", () => {
     expect(uninstallStopHook(installStopHook({}, renamedRuntime))).toEqual({});
   });
 
-  it("refuses installing explicit hooks from a plugin cache before changing any settings", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
-    const claude = join(dir, "settings.json");
-    const codex = join(dir, "hooks.json");
-    const pluginBundle = join(dir, "cache", "centrail", "scripts", "centrail.mjs");
-    await writeFile(claude, '{"model":"keep"}');
-    process.argv[1] = pluginBundle;
-    expect(() => codexHookCommand(process.execPath, pluginBundle)).toThrow(/standalone/);
-    await expect(runInstallHooks({ remove: false }, claude, codex)).rejects.toThrow(/standalone/);
-    expect(await readFile(claude, "utf-8")).toBe('{"model":"keep"}');
-    await expect(readFile(codex)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
   it("deduplicates old CLI, old direct-node plugin and stale absolute plugin launchers on update", () => {
     const other = { type: "command", command: "other-stop" };
     const stale = { hooks: { Stop: [{ hooks: [other,
@@ -77,16 +56,6 @@ describe("Stop hook settings merge", () => {
     const updated = installStopHook(stale, cmd);
     expect(updated.hooks!.Stop).toEqual([{ hooks: [other] }, { hooks: [{ type: "command", command: cmd, timeout: 10 }] }]);
     expect(installStopHook(updated, cmd)).toEqual(updated);
-  });
-
-  it("cleans old standalone Claude entries when the plugin is enabled", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
-    const claude = join(dir, "settings.json");
-    const codex = join(dir, "codex.json");
-    await writeFile(claude, JSON.stringify(installStopHook({ enabledPlugins: { "centrail@centrail": true } }, cmd)));
-    await runInstallHooks({ remove: false }, claude, codex);
-    expect(JSON.parse(await readFile(claude, "utf-8")).hooks).toBeUndefined();
-    expect(JSON.parse(await readFile(codex, "utf-8")).hooks.Stop).toHaveLength(1);
   });
 
   it("adds one entry, keeps every other hook, and is idempotent", () => {
@@ -127,6 +96,21 @@ describe("Stop hook settings merge", () => {
     expect(uninstallStopHook({ a: 1 })).toEqual({ a: 1 });
   });
 
+  it("launcherCommand: one quoted launcher path and fixed arguments, owned, and replaces any older form", () => {
+    const codex = launcherCommand("/home/u/.config/centrail/bin/centrail-hook", "codex", "linux");
+    expect(codex).toBe('"/home/u/.config/centrail/bin/centrail-hook" hook stop --centrail-hook --surface codex');
+    expect(launcherCommand("/x/centrail-hook", "claude-code", "linux")).toBe('"/x/centrail-hook" hook stop --centrail-hook');
+    const win = launcherCommand("C:\\Users\\j\\.config\\centrail\\bin\\centrail-hook.cmd", "codex", "win32");
+    expect(win).toBe('"C:\\Users\\j\\.config\\centrail\\bin\\centrail-hook.cmd" hook stop --centrail-hook --surface codex');
+    for (const c of [codex, win]) expect(isCentrailCommand(c)).toBe(true);
+    // Without the ownership marker, a script that happens to share the name is not ours.
+    expect(isCentrailCommand('"/x/centrail-hook" hook stop')).toBe(false);
+    expect(isCentrailCommand('centrail-hook hook stop --centrail-hook')).toBe(false); // relative: not an emitted form
+    const migrated = installStopHook(installStopHook({}, `${cmd} --surface codex`), codex);
+    expect(migrated.hooks!.Stop).toEqual([{ hooks: [{ type: "command", command: codex, timeout: 10 }] }]);
+    expect(uninstallStopHook(migrated)).toEqual({});
+  });
+
   it("hookCommand quotes both paths and includes a stable ownership marker", () => {
     expect(cmd).toBe('"/usr/bin/node" "/opt/centrail/dist/index.js" hook stop --centrail-hook');
     expect(hookCommand("C:\\Program Files\\nodejs\\node.exe", "C:\\Users\\j\\centrail\\index.js", "win32")).toBe(
@@ -134,52 +118,6 @@ describe("Stop hook settings merge", () => {
     );
   });
 
-  it("install-hooks writes harness-specific Stop commands and removes both", async () => {
-    // Codex loads hooks.json from each config layer's folder (its user layer
-    // is CODEX_HOME) with the same {hooks: {Stop: [...]}} shape.
-    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
-    const claude = join(dir, "claude", "settings.json");
-    const codex = join(dir, "codex", "hooks.json");
-    await runInstallHooks({ remove: false }, claude, codex);
-    const c = JSON.parse(await readFile(claude, "utf-8"));
-    const x = JSON.parse(await readFile(codex, "utf-8"));
-    expect(c.hooks.Stop[0].hooks[0].command).toBe(hookCommand());
-    expect(x.hooks.Stop[0].hooks[0].command).toBe(codexHookCommand());
-    // A second install changes nothing; another tool's hook in the Codex file survives.
-    await writeFile(codex, JSON.stringify({ ...x, hooks: { ...x.hooks, PreToolUse: [{ hooks: [{ type: "command", command: "other" }] }] } }));
-    await runInstallHooks({ remove: false }, claude, codex);
-    const again = JSON.parse(await readFile(codex, "utf-8"));
-    expect(again.hooks.Stop).toEqual(x.hooks.Stop);
-    expect(again.hooks.PreToolUse[0].hooks[0].command).toBe("other");
-    await runInstallHooks({ remove: true }, claude, codex);
-    expect(JSON.parse(await readFile(claude, "utf-8")).hooks).toBeUndefined();
-    expect(JSON.parse(await readFile(codex, "utf-8")).hooks.Stop).toBeUndefined();
-  });
-
-  it("with the Claude Code plugin enabled, adds no second Claude hook, and still serves Codex", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
-    const claude = join(dir, "settings.json");
-    const codex = join(dir, "codex-hooks.json");
-    const raw = `${JSON.stringify({ enabledPlugins: { "centrail@centrail": true } }, null, 2)}\n`;
-    await writeFile(claude, raw);
-    await runInstallHooks({ remove: false }, claude, codex);
-    expect(await readFile(claude, "utf-8")).toBe(raw);
-    expect(JSON.parse(await readFile(codex, "utf-8")).hooks.Stop).toHaveLength(1);
-  });
-
-  it("rewrites in the file's own indentation, keeps the file as first found once, and refuses one it cannot parse", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "centrail-hooks-"));
-    const claude = join(dir, "settings.json");
-    const tabbed = `${JSON.stringify({ model: "opus" }, null, "\t")}\n`;
-    await writeFile(claude, tabbed);
-    await runInstallHooks({ remove: false }, claude, join(dir, "codex.json"));
-    await runInstallHooks({ remove: true }, claude, join(dir, "codex.json"));
-    expect(await readFile(claude, "utf-8")).toBe(tabbed);
-    expect(await readFile(`${claude}.centrail-backup`, "utf-8")).toBe(tabbed);
-    await writeFile(claude, "{ not json");
-    await expect(runInstallHooks({ remove: false }, claude, join(dir, "codex.json"))).rejects.toThrow(/Cannot parse/);
-    expect(await readFile(claude, "utf-8")).toBe("{ not json");
-  });
 });
 
 describe("stableInstallPath: a version manager's alias, so an upgrade or prune does not strand the hook", () => {

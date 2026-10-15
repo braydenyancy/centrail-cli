@@ -38,7 +38,7 @@ export function detectChannel(script: string = process.argv[1] ?? "", env: Recor
 export function howToUpdate(channel: UpdateChannel): string {
   switch (channel) {
     case "plugin":
-      return "it updates through Claude Code (/plugin)";
+      return "update it in Claude Code with `/plugin marketplace update centrail`";
     case "npx":
       return "run `npx centrail@latest`";
     case "mise":
@@ -47,6 +47,18 @@ export function howToUpdate(channel: UpdateChannel): string {
       return "run `npm i -g centrail@latest`";
     default:
       return "update it the way you installed it (`npm i -g centrail@latest` for a global install)";
+  }
+}
+
+// Which copy a record is about: a machine can run the Claude Code plugin's
+// bundle, a Codex hook through mise or npm, and a hand-run npx at once.
+export function copyLabel(channel: UpdateChannel): string {
+  switch (channel) {
+    case "plugin": return "Claude Code plugin";
+    case "npx": return "npx";
+    case "mise": return "mise install";
+    case "npm-global": return "global npm install";
+    default: return "another install";
   }
 }
 
@@ -101,6 +113,29 @@ export function hookParked(state: Pick<SyncState, "outdated">, version: string =
 export function stillTrue<T extends VersionRecord>(rec: T | undefined, at: VersionRecord, floor: string | undefined): T | undefined {
   if (!rec || !sameInstall(rec, at)) return rec;
   return (floor ? isOlder(at.version, floor) : rec.version === at.version) ? rec : undefined;
+}
+
+// A record about the Claude Code plugin's copy is stale once Claude Code has
+// installed a version past it (installed_plugins.json): the notice that said
+// "you have 0.7.3" outlives the update until the plugin's hook next syncs.
+export function pluginCaughtUp(rec: VersionRecord | undefined, pluginVersion: string | null, floor: string | undefined): boolean {
+  if (!rec || rec.channel !== "plugin" || !pluginVersion) return false;
+  return floor ? !isOlder(pluginVersion, floor) : pluginVersion !== rec.version;
+}
+
+// The saved records still worth saying, for `status` and `doctor`: never
+// one this running copy has outgrown, nor one the plugin has updated past.
+export function liveVersionRecords(
+  state: Pick<SyncState, "outdated" | "updateNotice">,
+  at: VersionRecord,
+  pluginVersion: string | null,
+): { outdated?: Outdated; notice?: UpdateNotice } {
+  let outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
+  let notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
+  if (pluginCaughtUp(outdated, pluginVersion, outdated?.minimum)) outdated = undefined;
+  if (pluginCaughtUp(notice, pluginVersion, notice?.latest)) notice = undefined;
+  if (notice && outdated && sameInstall(notice, outdated)) notice = undefined;
+  return { ...(outdated ? { outdated } : {}), ...(notice ? { notice } : {}) };
 }
 
 // The server refused this version. Thrown past the best-effort catches of

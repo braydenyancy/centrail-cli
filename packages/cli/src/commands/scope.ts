@@ -4,10 +4,10 @@ import { ensureInstallId, readConfig, readLastSync, updateConfig, writeConfig, t
 import { IdentityResolver } from "../resolver.js";
 import { parseSelection, renderRepoRows, summarizeRepos, surfaceEnabled, type RepoRow } from "../scope.js";
 
-// `centrail setup` — the consent moment (decision doc § 3.7). Lists every
+// `centrail scope` — the consent moment (decision doc § 3.7). Lists every
 // repo and folder this machine's agents have touched, with the identity
-// each will ship under, and asks once. Also run by `connect` and
-// `install-hooks` when the question has not been answered yet.
+// each will ship under, and asks once. Also run by `connect`, and by
+// `centrail setup` when the question has not been answered yet.
 //
 // Interactive when stdin is a terminal (or when run as `setup` explicitly);
 // headless `connect` prints the list, defaults to all, and says how to change
@@ -17,7 +17,7 @@ import { parseSelection, renderRepoRows, summarizeRepos, surfaceEnabled, type Re
 
 // Said wherever people look while the question is unanswered: `repos`,
 // `inspect --last`, a sync that cannot ask.
-export const SCOPE_UNANSWERED = "Scope not answered: repo names held back; run `centrail setup`.";
+export const SCOPE_UNANSWERED = "Scope not answered: repo names held back; run `centrail scope`.";
 
 // A sync asks only when someone is there to answer and to read the list: a
 // hook starts it with no terminal at all, and a pipe is not a person.
@@ -54,7 +54,7 @@ export async function runSetup(opts: { interactive: boolean }): Promise<void> {
       recordAnswer(cfg);
       await writeConfig(cfg);
     }
-    console.log("  Change any time: `centrail setup`, `centrail exclude <repo>`, `centrail repos`.");
+    console.log("  Change any time: `centrail scope`, `centrail exclude <repo>`, `centrail repos`.");
     return;
   }
 

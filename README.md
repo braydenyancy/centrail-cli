@@ -14,84 +14,82 @@ It does not install new Pi/Gemini hooks.
 No install needed:
 
 ```bash
-npx centrail connect          # pair this machine (opens your browser); shows what it found, asks what to sync,
-                              # and offers the Claude Code plugin, which then syncs by itself every turn
+npx centrail connect          # pair this machine (opens your browser); shows what it found, asks what
+                              # to sync, then runs `centrail setup` for the agents installed here
+npx centrail setup            # sync after every agent turn: Claude Code's plugin, a hook or extension in the others
+npx centrail doctor           # is every agent wired up, and is centrail current? (read-only; --fix repairs)
 npx centrail status           # which account this machine syncs to, whether its pairing still works, and updates
 npx centrail sync             # push new usage (and git commit attribution)
-npx centrail setup-plugin     # the Claude Code plugin question again
-npx centrail install-hooks    # sync every turn without the plugin: Codex, or Claude Code
+npx centrail upgrade          # update this copy the way it was installed
+npx centrail uninstall        # remove centrail's plugin, hooks and launcher
 npx centrail import ccusage.json  # a `ccusage claude daily --json` file as Measured history
 npx centrail repos            # every repo and folder seen here, with sync status
 npx centrail exclude <repo>   # nothing about this repo leaves (host/owner/repo or folder name)
 npx centrail include <repo>   # undo; in allow mode, add it
-npx centrail surfaces codex off   # switch a source off (claude-code, codex, copilot-cli)
-npx centrail setup            # ask the scope question again
+npx centrail surfaces codex off   # switch a source off (claude-code, codex, copilot-cli, gemini-cli, pi)
+npx centrail scope            # ask the scope question again
 npx centrail inspect --last   # the last payload, exactly as it left this machine
 ```
 
-Node.js 20+ required. Either way of syncing every turn runs one `Stop` hook
-that records session id, folder, repo identity, branch, head and the repos the
-turn's files touched, locally, at the end of every turn, and starts a
-background sync at most every 10 minutes.
+Node.js 20+ required. Each integration runs one per-turn hook that records
+session id, folder, repo identity, branch, head and the repos the turn's files
+touched, locally, at the end of every turn, and starts a background sync at
+most every 10 minutes.
 
-### The Claude Code plugin
+### Agent setup
 
-The primary way for Claude Code: one `Stop` hook over a bundled copy of this
-CLI (`plugins/centrail`). `connect` offers to set it up; by hand:
+`centrail setup` detects Claude Code, Codex, Gemini CLI, Copilot CLI and Pi,
+prints one line per agent (install, update, repair, ok or skip), asks once, and
+applies; a second run changes nothing. `--agent <name>` (claude-code, codex,
+gemini-cli, copilot-cli, pi, cursor, opencode) limits it, `--dry-run` only prints
+the plan, `-y` skips the question. Design, launcher and migration details:
+[agent integrations](docs/integrations.md).
 
-```bash
-claude plugin marketplace add braydenyancy/centrail-cli#release
-claude plugin install centrail@centrail
-```
+- **Claude Code** gets its plugin, from the `release` branch of this repo's
+  marketplace, with Claude Code's auto-update turned on (`"autoUpdate": true` on
+  `extraKnownMarketplaces.centrail` in `~/.claude/settings.json`; opt out under
+  `/plugin` → Marketplaces → centrail). Claude Code loads each published version
+  on its next launch. Without a `claude` command, setup writes a Stop hook
+  through the launcher instead. By hand:
+  `claude plugin marketplace add braydenyancy/centrail-cli#release` then
+  `claude plugin install centrail@centrail`.
+- **Codex** gets one Stop hook in `$CODEX_HOME/hooks.json` that runs the stable
+  launcher `~/.config/centrail/bin/centrail-hook` (`.cmd` on Windows). Review and
+  trust it once in Codex's `/hooks`: its command never changes between releases,
+  so updates need no new trust.
+- **Gemini CLI** gets one `AfterAgent` hook named `centrail` in
+  `~/.gemini/settings.json`, **Copilot CLI** one `agentStop` hook in its own file
+  `~/.copilot/hooks/centrail.json`, and **Pi** one extension,
+  `~/.pi/agent/extensions/centrail.js`. All three run the same launcher with
+  fixed arguments, and each agent's home variable (`GEMINI_CLI_HOME`,
+  `COPILOT_HOME`, `PI_CODING_AGENT_DIR`) is honored.
+- **Cursor** and **OpenCode** are detected and shown, but centrail cannot read
+  their usage yet, so setup installs nothing for them by default.
+  `--agent cursor` adds a `stop` hook to `~/.cursor/hooks.json` and
+  `--agent opencode` a plugin, `~/.config/opencode/plugins/centrail.js`; both
+  record repo identity only until a usage source for them ships.
 
-**Updates.** Claude Code keeps the plugin current, but it auto-updates a
-third-party marketplace only when told to: `connect` (or `setup-plugin`) sets
-`"autoUpdate": true` on the `centrail` entry of `extraKnownMarketplaces` in
-your `~/.claude/settings.json`, or turn it on yourself under `/plugin` →
-Marketplaces → centrail → Enable auto-update. The marketplace is pinned to
-the `release` branch, which moves to each published version once npm has it;
-Claude Code picks the new version up in the background and loads it on its
-next launch ("Plugin updated: centrail"). To opt out, disable auto-update in
-the same place and update with `/plugin` when you choose. A Stop hook
-`install-hooks` wrote earlier in the same user settings is removed when the
-plugin is set up. Other configuration layers remain their owner's responsibility.
+The launcher runs the centrail that set it up when that install is stable (mise
+or a global npm install), else `centrail` on PATH, else `npx centrail`; it never
+points into npx's cache. Unrelated hooks are preserved, and `centrail doctor`
+reports what each agent runs without printing paths or commands.
 
-### Without the plugin
-
-`install-hooks` writes an explicit pinned Node command into Codex's `hooks.json`
-(when Codex is installed), and a standalone Claude hook when its user plugin
-is disabled. Codex's command needs no plugin-root variable or Unix shell.
-The Claude plugin carries an explicit empty Codex hook override, so importing
-it into Codex does not register its Claude launcher as a second Stop hook. Install
-the CLI once (`npm i -g centrail`) so the hook has a fixed path to run; the
-hook pins the `node` that ran the install, so run it again after upgrading
-node. After upgrading to the hook-ownership patch, rerun `centrail install-hooks`
-to update existing Codex commands, review/trust the changed hook in Codex, and
-restart/reload sessions. Updating the package alone does not rewrite settings.
-
-`centrail doctor-hooks` checks the two user installation files without running
-hooks or printing commands, paths or config values. It reports pinned executable
-and bundle resolution, enabled Claude user-plugin settings, possible duplicates,
-and ambiguous plugin-root launchers. It does not inventory project, managed,
-inline TOML or cached-plugin hooks; review Codex's hook inventory and Claude's
-`/hooks` for the effective runtime sources. Hook sources are additive in Codex.
-
-Reinstall/uninstall preserves unrelated handlers, even when they share a Stop
-group with Centrail. Generic `${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh` entries copied
-without ownership evidence are reported for review rather than deleted. Uninstall
-removes owned standalone entries in these user files; disable/uninstall the Claude
-plugin through Claude to stop its plugin hook. See the [local investigation and
-rollout receipt](docs/hook-integration-2026-10.md).
+`setup-plugin`, `install-hooks`, `uninstall-hooks` and `doctor-hooks` still work
+for one release and point at their replacements. After upgrading from them, run
+`centrail setup` once to move a pinned Codex hook to the launcher.
 
 ### Staying current
 
-The CLI never installs itself. When a newer release is out, a sync in a
+The CLI never installs itself unasked. When a newer release is out, a sync in a
 terminal says so in one line with the command for how you installed it
 (`npx centrail@latest`, `npm i -g centrail@latest`, `mise upgrade
-npm:centrail`, or "updates through Claude Code" for the plugin); a sync the
-hook started keeps the notice for `centrail status`. A version the server no
-longer accepts stops syncing (the pairing is kept) and says which version it
-needs; its hook starts no syncs until the copy is updated.
+npm:centrail`, or `/plugin marketplace update centrail` in Claude Code for the
+plugin); `centrail upgrade` runs that command for you after asking. A sync the
+hook started keeps the notice for `centrail status` and `centrail doctor`, which
+name the copy it is about and drop a plugin notice once Claude Code has updated
+the plugin. `centrail --version` prints the version of the copy you ran. A
+version the server no longer accepts stops syncing (the pairing is kept) and
+says which version it needs; its hook starts no syncs until the copy is updated.
 
 ## What leaves your machine
 
@@ -131,7 +129,7 @@ only the repos you list and holds new ones until you `include` them.
 
 **Upgrading from 0.5.x.** Nothing beyond what 0.5.1 sent (usage numbers, and
 commit attribution by folder name) leaves until you answer that question. Your
-first `centrail sync` in a terminal asks it, or run `centrail setup`; a sync
+first `centrail sync` in a terminal asks it, or run `centrail scope`; a sync
 started by the hook never asks and never waits, and `centrail repos` says
 "scope not answered" until you do. Once you answer, your history is re-sent
 once with repo identity; the server fills it into the usage it already holds
@@ -157,6 +155,9 @@ home directory, so it isn't tied to Unix-style paths.
   variable (comma-separated for multi-account setups), matching how Claude Code
   itself and tools like [ccusage](https://ccusage.com) locate the config.
 - **GitHub Copilot CLI** — `~/.copilot/session-state`.
+- **Gemini CLI** — `~/.gemini/tmp` and `~/.cache/.gemini/tmp` (under
+  `$GEMINI_CLI_HOME` when set).
+- **Pi** — `~/.pi/agent/sessions` (`$PI_CODING_AGENT_DIR/sessions`).
 - **Codex** — `$CODEX_HOME/sessions` (default `~/.codex/sessions`). The parser
   reads only session/turn metadata and per-call token counts; message,
   reasoning, and tool records are ignored.

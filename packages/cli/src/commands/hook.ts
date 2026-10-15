@@ -33,7 +33,32 @@ export type HookInput = {
   transcript_path?: unknown;
   hook_event_name?: unknown;
   turn_id?: unknown; // Codex only ("Codex extension" in its stop.command.input schema)
+  sessionId?: unknown; // Copilot CLI's camelCase agentStop payload
+  transcriptPath?: unknown;
+  conversation_id?: unknown; // Cursor: the conversation, stable across turns
+  workspace_roots?: unknown; // Cursor: its stop payload has no cwd
 };
+
+// What each harness's hook passes on stdin, mapped to one shape:
+//   Claude Code, Codex, Gemini CLI  { session_id, cwd, transcript_path }
+//   Copilot CLI (agentStop)         { sessionId, cwd, transcriptPath }
+//   Pi, OpenCode (centrail's module) { session_id, cwd }
+//   Cursor (stop)                   { conversation_id, workspace_roots }
+// The session id is stamped the way that surface's log scanner names its
+// sessions, so sync joins the sidecar line to the scanned events: Gemini
+// CLI's and Pi's scanners prefix theirs ("gemini:", "pi:").
+const SESSION_PREFIX: Record<string, string> = { "gemini-cli": "gemini:", pi: "pi:" };
+// Transcripts read for the paths a turn touched: the formats lineEvidence
+// and codexCallEvidence understand. Other surfaces are placed by their cwd.
+const TRANSCRIPT_SURFACES = new Set(["claude-code", "codex"]);
+
+// The reply each harness expects on stdout. Codex and Gemini CLI parse
+// stdout as JSON; Copilot CLI takes `{}` as "no decision". Claude Code's
+// plugin hook and Pi's and OpenCode's detached modules print nothing.
+// Cursor reads stdout as JSON and takes `{}` as no follow-up message.
+export function hookReply(surface: string): string {
+  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" || surface === "cursor" ? "{}\n" : "";
+}
 
 // The processing core accepts both harnesses; installation and launchers
 // have separate owners. Codex adds `turn_id` and keeps its
@@ -82,10 +107,15 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   } catch {
     return null;
   }
-  const sessionId = typeof input.session_id === "string" ? input.session_id : "";
-  const cwd = typeof input.cwd === "string" ? input.cwd : "";
-  if (!sessionId || !cwd) return null;
-  surface = detectSurface(input, surface);
+  if (!isObject(input)) return null;
+  const rawId = firstString(input.session_id, input.sessionId, surface === "cursor" ? input.conversation_id : undefined);
+  // Cursor's stop payload names the workspace's folders, not a cwd: the first is the one it opened.
+  const workspace = surface === "cursor" && Array.isArray(input.workspace_roots) ? input.workspace_roots : [];
+  const cwd = firstString(input.cwd, workspace[0]);
+  if (!rawId || !cwd) return null;
+  // An unnamed entry (Claude Code's plugin, older Codex forms) is told apart by its payload.
+  if (surface === "claude-code") surface = detectSurface(input, surface);
+  const sessionId = `${SESSION_PREFIX[surface] ?? ""}${rawId}`;
 
   const now = deps.now ? deps.now() : new Date();
   const root = await resolveRepoRoot(cwd);
@@ -105,7 +135,7 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   // § 3.9: a session outside a repo is placed by the files its turns
   // touch. Their repos must be identified NOW, while the folders exist;
   // the transcript is read from where the last turn's hook left off.
-  const transcript = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  const transcript = !TRANSCRIPT_SURFACES.has(surface) ? "" : typeof input.transcript_path === "string" ? input.transcript_path : "";
   const previous = (await readSidecar(deps.sidecarPath)).get(sessionId);
   const roots = { ...(previous?.roots ?? {}) };
   const mains = { ...(previous?.mains ?? {}) };
@@ -242,6 +272,10 @@ function logicalRoot(dir: string, root: string): string | null {
   if (!dir.endsWith(suffix)) return null;
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
+}
+
+function firstString(...values: unknown[]): string {
+  return (values.find((v) => typeof v === "string" && v !== "") as string | undefined) ?? "";
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

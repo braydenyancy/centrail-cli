@@ -1,9 +1,8 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { readConfig, updateConfig } from "../config.js";
 import {
   backUpSettings,
   claudeSettingsPath,
@@ -22,12 +21,10 @@ import {
 // move, so the marketplace is pinned to the `release` branch, which the
 // publish workflow fast-forwards to each published tag.
 //
-// `connect` asks once, in a terminal, after pairing; `centrail setup-plugin`
-// asks again. On yes: Claude Code's own commands add the marketplace and
-// install the plugin (both no-ops when already done), then the settings
-// entry gets `autoUpdate`, and a Stop hook `install-hooks` wrote is removed
-// so the two never both run. Without a terminal it never asks and never
-// writes; on no, or without `claude`, it prints the steps.
+// `centrail setup` (integrations.ts) calls setUpPlugin: Claude Code's own
+// commands add the marketplace and install the plugin (both no-ops when
+// already done), then the settings entry gets `autoUpdate`, and a
+// standalone centrail Stop hook is removed so the two never both run.
 
 export const MARKETPLACE = "centrail"; // .claude-plugin/marketplace.json `name`
 export const MARKETPLACE_REPO = "braydenyancy/centrail-cli";
@@ -42,47 +39,7 @@ export const PLUGIN_STEPS = `
 // Runs `claude <args>`; injected by tests, which never run the real one.
 export type ClaudeRunner = (args: string[]) => Promise<{ code: number; output: string }>;
 
-export type PluginSetupDeps = {
-  settingsPath?: string;
-  claude?: ClaudeRunner | null; // null: no `claude` on PATH
-  ask?: (prompt: string) => Promise<string | null>; // null: input ended, no answer
-};
-
-export async function offerPlugin(
-  opts: { interactive: boolean; again?: boolean },
-  deps: PluginSetupDeps = {},
-): Promise<void> {
-  if ((await readConfig()).pluginAnswer && !opts.again) return; // asked once
-  if (!opts.interactive) {
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  const claude = deps.claude === undefined ? await findClaude() : deps.claude;
-  if (!claude) {
-    // Not recorded: a `connect` after Claude Code is installed asks.
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  console.log("");
-  const reply = await (deps.ask ?? askLine)("  Keep centrail's Claude Code plugin installed and updated automatically? [Y/n] ");
-  if (reply === null) {
-    // Input closed (Ctrl-D, a pipe that ran out): no answer is not a yes.
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  const answer = reply.trim().toLowerCase();
-  const yes = answer === "" || answer.startsWith("y");
-  await updateConfig((c) => {
-    c.pluginAnswer = yes ? "yes" : "no";
-  });
-  if (!yes) {
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  await setUpPlugin(claude, deps.settingsPath ?? claudeSettingsPath());
-}
-
-async function setUpPlugin(claude: ClaudeRunner, path: string): Promise<boolean> {
+export async function setUpPlugin(claude: ClaudeRunner, path: string): Promise<boolean> {
   // The file must parse before anything touches it: `claude` rewrites it too.
   let file = await readOrSay(path);
   if (!file) return false;
@@ -104,7 +61,7 @@ async function setUpPlugin(claude: ClaudeRunner, path: string): Promise<boolean>
     if (r.code !== 0) {
       const why = r.output.trim().split("\n").filter(Boolean).pop() ?? `exit ${r.code}`;
       console.log(`  ✗ \`claude ${args.join(" ")}\` failed: ${why}`);
-      console.log("  Try again with `npx centrail setup-plugin`, or by hand:");
+      console.log("  Try again with `centrail setup`, or by hand:");
       console.log(PLUGIN_STEPS);
       return false;
     }
@@ -118,29 +75,29 @@ async function setUpPlugin(claude: ClaudeRunner, path: string): Promise<boolean>
   await writeSettingsFile(path, next, file.indent);
   console.log("  ✓ Claude Code plugin installed. Claude Code updates it after each release (from its next launch);");
   console.log(`    to stop that: /plugin → Marketplaces → ${MARKETPLACE} → Disable auto-update.`);
-  if (removedHook) console.log("  ✓ Removed the Stop hook `centrail install-hooks` wrote: the plugin's hook replaces it.");
+  if (removedHook) console.log("  ✓ Removed the standalone centrail Stop hook: the plugin's hook replaces it.");
   // Claude Code loads a plugin when a session starts; one already open runs
   // without it (and without the hook just removed) until it reloads.
   console.log("  Claude Code sessions already open: run /reload-plugins in each, or restart them, so their turns are recorded.");
   return true;
 }
 
-const RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
+export const RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
 
-type MarketplaceEntry = Record<string, unknown> & { source?: unknown };
+export type MarketplaceEntry = Record<string, unknown> & { source?: unknown };
 
-function marketplaceEntry(settings: Settings): MarketplaceEntry | undefined {
+export function marketplaceEntry(settings: Settings): MarketplaceEntry | undefined {
   const all = settings.extraKnownMarketplaces;
   const entry = isObject(all) ? all[MARKETPLACE] : undefined;
   return isObject(entry) ? entry : undefined;
 }
 
-function withMarketplace(settings: Settings, entry: MarketplaceEntry): Settings {
+export function withMarketplace(settings: Settings, entry: MarketplaceEntry): Settings {
   const all = isObject(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
   return { ...settings, extraKnownMarketplaces: { ...all, [MARKETPLACE]: entry } };
 }
 
-function isReleaseSource(source: unknown): boolean {
+export function isReleaseSource(source: unknown): boolean {
   return isObject(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
 }
 
@@ -154,36 +111,43 @@ async function readOrSay(path: string): Promise<{ settings: Settings; indent: st
   }
 }
 
-// `claude` on PATH, run without a shell except where Windows needs one for
-// an npm-installed `claude.cmd` (the arguments are this file's constants).
-async function findClaude(env: NodeJS.ProcessEnv = process.env): Promise<ClaudeRunner | null> {
-  const win = process.platform === "win32";
+// An executable on PATH (with PATHEXT on Windows), or null.
+export async function findExecutable(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<string | null> {
+  const win = platform === "win32";
   const exts = win ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  for (const dir of (env.PATH ?? "").split(delimiter)) {
+  for (const dir of (env.PATH ?? env.Path ?? "").split(win ? ";" : delimiter)) {
     if (!dir) continue;
     for (const ext of exts) {
-      const bin = join(dir, `claude${ext}`);
+      const bin = join(dir, `${name}${ext}`);
       try {
-        await access(bin, constants.X_OK);
+        await access(bin, win ? constants.F_OK : constants.X_OK);
+        return bin;
       } catch {
-        continue;
+        // keep looking
       }
-      return (args) =>
-        new Promise((resolve) => {
-          execFile(win ? "claude" : bin, args, { shell: win, timeout: 180_000, windowsHide: true }, (err, stdout, stderr) => {
-            const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
-            resolve({ code, output: `${stdout}${stderr}` });
-          });
-        });
     }
   }
   return null;
 }
 
-// A line iterator, not rl.question(), as in `setup`: question() drops a line
-// that arrives before it is asked, which piped or pasted input does. Input
-// that already ended (the scope question met its end) answers nothing.
-async function askLine(prompt: string): Promise<string | null> {
+// Runs a found executable without a shell, except where Windows needs one
+// for an npm-installed `.cmd`, where it runs the name from PATH (the
+// arguments are this CLI's constants).
+export function runnerFor(bin: string, platform: NodeJS.Platform = process.platform): ClaudeRunner {
+  const win = platform === "win32";
+  return (args) =>
+    new Promise((resolve) => {
+      execFile(win ? basename(bin).replace(/\.(?:cmd|exe|bat)$/i, "") : bin, args, { shell: win, timeout: 180_000, windowsHide: true }, (err, stdout, stderr) => {
+        const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+        resolve({ code, output: `${stdout}${stderr}` });
+      });
+    });
+}
+
+// A line iterator, not rl.question(), as in the scope review: question()
+// drops a line that arrives before it is asked, which piped or pasted input
+// does. Input that already ended (the scope question met its end) answers nothing.
+export async function askLine(prompt: string): Promise<string | null> {
   process.stdout.write(prompt);
   if (process.stdin.readableEnded) {
     process.stdout.write("\n");

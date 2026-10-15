@@ -95,7 +95,7 @@ the 0.5.1 shape exactly; a server that answered before and cannot be asked now
 is taken at its last answer, so a flaky route never strips identity.
 
 The user's scope answer (decision § 3.7) gates all of it. Until the install
-has answered the scope question (`connect`, `setup`, `install-hooks`, or the
+has answered the scope question (`connect`, `scope`, `setup`, or the
 first `sync` run in a terminal), the CLI treats `fields` as empty on every
 route, whatever the server lists: ingest bodies, attributions and fate rows
 are the 0.5.1 shape exactly, and the CLI matches commits itself. An install
@@ -290,7 +290,7 @@ mise's npm backend `mise upgrade npm:centrail`; a global npm prefix
 `npm i -g centrail@latest`; anything else a generic line. The plugin is the
 primary hook path: its marketplace is pinned to the `release` branch, which
 `publish.yml` fast-forwards to each tag after `npm publish` succeeds, and
-`connect` (in a terminal, asked once; `centrail setup-plugin` asks again)
+`centrail setup` (run by `connect` in a terminal)
 sets `autoUpdate: true` on `extraKnownMarketplaces.centrail` in the user's
 Claude Code settings, the switch Claude Code reads for third-party
 marketplaces. Claude Code notices an update by the plugin's `version`, which
@@ -302,38 +302,33 @@ every release bumps.
 
 ## Release ordering
 
-### Local hook ownership (0.7.4 candidate)
+### Local hook ownership
 
 Claude Code's plugin owns its shell launcher and may rely on Claude's
-`CLAUDE_PLUGIN_ROOT` contract. Codex owns an explicit user hook installed by
-`install-hooks`, pinned to absolute Node and CLI bundle paths. The processing
-core accepts both Stop inputs; launchers and output contracts are separate.
-`--surface codex` selects the Codex fallback surface and emits an empty JSON
-object on stdout, including for malformed input; Claude's launcher stays silent.
-`--centrail-hook` marks newly emitted standalone commands for conservative
-cleanup even at a custom installation path. Explicit installation from the
-plugin bundle is refused before scope/setup or hook-settings writes, preventing
-a pinned Codex command from depending on Claude's replaceable cache.
+`CLAUDE_PLUGIN_ROOT` contract. `centrail setup` owns explicit user Stop hooks
+(Codex's, and Claude Code's only without its plugin): each runs centrail's
+stable launcher, `<config dir>/bin/centrail-hook` (`.cmd` on Windows), with
+fixed arguments `hook stop --centrail-hook [--surface codex]`, so the entry
+never changes across releases and Codex's hash-based trust holds. The launcher
+resolves a stable install, `centrail` on PATH, or `npx -y centrail@<major>`;
+it never embeds an npx or plugin cache path. The processing core accepts both
+Stop inputs; `--surface codex` selects the Codex fallback surface and emits an
+empty JSON object on stdout, including for malformed input; Claude's launcher
+stays silent. `--centrail-hook` marks owned entries for conservative cleanup.
 These switches change no wire fields.
 
 The plugin's Codex compatibility manifest explicitly supplies empty inline
-hooks, suppressing default `hooks/hooks.json` discovery. `setup-plugin` writes
-only Claude's user configuration. `install-hooks` replaces identifiable legacy
-Centrail handlers individually, removes obsolete standalone Claude handlers when
-the user plugin is enabled, and preserves unrelated handlers and group metadata.
-Uninstall owns the same user files and never uninstalls a harness-managed plugin.
+hooks, suppressing default `hooks/hooks.json` discovery. Setup replaces
+identifiable older centrail handlers (pinned Node/bundle, direct-node, absolute
+plugin launchers) individually, removes standalone Claude handlers when the
+user plugin is enabled, and preserves unrelated handlers and group metadata.
+`centrail uninstall` removes only centrail's plugin, entries and launcher.
 Unattributed generic plugin-root launchers, project/managed/inline TOML entries
 and stale plugin caches require review through their owning harness; no global
 exactly-once guarantee can be made while an independent registration remains.
-
-Existing pinned Codex entries must be reinstalled to receive the Codex output
-switch; a bundle update alone does not edit hook settings. Changed definitions
-need Codex trust review and sessions need reload/restart. Pinned Node/bundle
-paths must be refreshed after they move. Windows Codex uses its native command
-runner and needs no `sh`; Claude's shell plugin still requires Claude's Git Bash
-environment on Windows. With no Git on PATH, the pinned command can record a
-folder/session but cannot resolve repository identity. No migration, forced
-historical scan or server rollout is required for this local hook change.
+Commands, migration and the doctor report: [docs/integrations.md](docs/integrations.md).
+No migration, forced historical scan or server rollout is required for this
+local hook change.
 
 ### Server/CLI sequence
 

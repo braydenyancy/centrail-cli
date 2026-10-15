@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { inspectUserHooks, runHooksDoctor } from "./hooks-doctor.js";
-import { codexHookCommand, installStopHook } from "./hooks-install.js";
+import { hookCommand, installStopHook } from "./hooks-install.js";
+
+const codexHookCommand = (node: string, script: string) => `${hookCommand(node, script)} --surface codex`;
 
 describe("user hook doctor", () => {
   it("reports source, resolution and duplicates without executing hooks or changing files", async () => {

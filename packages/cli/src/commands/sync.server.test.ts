@@ -137,7 +137,10 @@ describe("a newer release", () => {
     stdout = [];
     await runStatus();
     expect(stdout[0]).toMatch(/^Connected to centrail\.org as a@example\.test/);
-    expect(stdout[1]).toMatch(new RegExp(`^centrail ${AHEAD} is available \\(you have ${CLI_VERSION.replace(/\./g, "\\.")}\\): `));
+    const version = CLI_VERSION.replace(/\./g, "\\.");
+    expect(stdout[1]).toMatch(new RegExp(`^This command ran centrail ${version} \\(`));
+    // The saved notice names its copy, so it never reads as the one just run.
+    expect(stdout[2]).toMatch(new RegExp(`^[a-zA-Z ]+: centrail ${AHEAD} is available \\(you have ${version}\\): `));
   });
 
   it("is forgotten once this version is the latest, and an older server changes nothing", async () => {

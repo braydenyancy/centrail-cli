@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { claudeProjectDirs } from "@centrail/parsers";
 import { readAuth, readConfig, readState, writeAuth, writeState } from "../config.js";
 import { openBrowser, shouldOpenBrowser } from "../browser.js";
-import { offerPlugin, type PluginSetupDeps } from "./plugin-setup.js";
+import { runIntegrationSetup, type IntegrationDeps } from "./integrations.js";
 import { isInteractiveTerminal, runSetup } from "./scope.js";
 import { CLI_VERSION, versionHeaders } from "../version.js";
 import { here, howToUpdate, minimumFrom } from "../update.js";
@@ -21,7 +21,7 @@ type PairResponse = {
 
 type PollResponse = { status: string; token?: string; account?: { email?: unknown } };
 
-export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }, pluginDeps: PluginSetupDeps = {}): Promise<void> {
+export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }, setupDeps: IntegrationDeps = {}): Promise<void> {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
 
@@ -105,10 +105,20 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
-      await offerPlugin({ interactive: isInteractiveTerminal() }, pluginDeps);
       console.log("");
-      console.log("  Run `npx centrail sync` to push usage now. Codex, or Claude Code without the plugin:");
-      console.log("  `npx centrail install-hooks` syncs after each turn.");
+      if (isInteractiveTerminal()) {
+        // The agent integrations, asked once for every detected agent. A
+        // failure here leaves the pairing in place and says how to retry.
+        try {
+          await runIntegrationSetup({ interactive: true }, setupDeps);
+        } catch (err) {
+          console.log(`  Agent setup did not finish (${err instanceof Error ? err.message : String(err)}); run \`centrail setup\` to retry.`);
+        }
+      } else {
+        console.log("  To sync after every agent turn (Claude Code, Codex), run `npx centrail setup` in a terminal.");
+      }
+      console.log("");
+      console.log("  Run `npx centrail sync` to push usage now.");
       return;
     }
     if (body.status === "expired") {

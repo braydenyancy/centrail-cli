@@ -1,10 +1,14 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { isAbsolute, win32 } from "node:path";
+import { isExecutable } from "../launcher.js";
 import { claudeSettingsPath, codexHooksPath, commandWords, isCentrailCommand, pluginEnabled, readSettingsFile, type Settings } from "./hooks-install.js";
 
-type Finding = { source: "Claude user settings" | "Codex user hooks"; kind: "pinned CLI" | "plugin launcher" | "unattributed plugin launcher"; resolves: boolean };
+type Finding = { source: "Claude user settings" | "Codex user hooks"; kind: "stable launcher" | "pinned CLI" | "plugin launcher" | "unattributed plugin launcher"; resolves: boolean };
 
+// `centrail doctor-hooks --json` (deprecated alias; `centrail doctor` is
+// doctor.ts) keeps this version-1 report for tools that read it. A hook
+// through the stable launcher reports kind "stable launcher".
 // Bounded, read-only inspection of the two user files the installer owns.
 // Never run a hook or print commands, paths, config values or exception text.
 // This is not Codex's active-layer/trust inventory: its own hook UI owns that.
@@ -27,6 +31,10 @@ export async function inspectUserHooks(claudePath = claudeSettingsPath(), codexP
         const pluginLauncher = /^\$\{(?:CLAUDE_PLUGIN_ROOT|PLUGIN_ROOT)\}\/scripts\/(?:hook\.sh|centrail\.mjs)$/.test(words?.[1] ?? "");
         const owned = isCentrailCommand(command);
         if (!owned && !pluginLauncher) continue;
+        if (owned && /(?:^|[\\/])centrail-hook(?:\.cmd)?$/.test(words?.[0] ?? "")) {
+          findings.push({ source, kind: "stable launcher", resolves: await isExecutable(words![0]) });
+          continue;
+        }
         const paths = words?.slice(0, 2) ?? [];
         const absolute = paths.length === 2 && paths.every((p) => isAbsolute(p) || win32.isAbsolute(p));
         const resolves = !pluginLauncher && absolute && (await Promise.all(paths.map(async (p, i) => {

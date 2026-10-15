@@ -9,5 +9,7 @@ import { TEST_TIMEOUT } from "./src/testing/timeout.js";
 export default defineConfig({
   test: {
     testTimeout: TEST_TIMEOUT,
+    // No test reaches the real Gemini CLI, Copilot CLI or Pi homes.
+    setupFiles: ["./src/testing/agent-homes.ts"],
   },
 });

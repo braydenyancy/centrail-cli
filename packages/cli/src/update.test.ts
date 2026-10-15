@@ -3,7 +3,9 @@ import {
   compareVersions,
   detectChannel,
   hookParked,
+  copyLabel,
   howToUpdate,
+  liveVersionRecords,
   outdatedLine,
   parseCliVersions,
   settleVersions,
@@ -52,8 +54,16 @@ describe("detectChannel: the copy that runs, and the command that updates it", (
     expect(detectChannel(script, env)).toBe(want);
   });
 
+  it("names the copy a saved notice is about, so status never blames the one that just updated", () => {
+    expect(copyLabel("plugin")).toBe("Claude Code plugin");
+    expect(copyLabel("mise")).toBe("mise install");
+    expect(copyLabel("npx")).toBe("npx");
+    expect(copyLabel("npm-global")).toBe("global npm install");
+    expect(copyLabel("unknown")).toBe("another install");
+  });
+
   it("names one command per channel, and never installs anything itself", () => {
-    expect(howToUpdate("plugin")).toBe("it updates through Claude Code (/plugin)");
+    expect(howToUpdate("plugin")).toBe("update it in Claude Code with `/plugin marketplace update centrail`");
     expect(howToUpdate("npx")).toContain("npx centrail@latest");
     expect(howToUpdate("mise")).toContain("mise upgrade npm:centrail");
     expect(howToUpdate("npm-global")).toContain("npm i -g centrail@latest");
@@ -62,7 +72,7 @@ describe("detectChannel: the copy that runs, and the command that updates it", (
       "centrail 0.7.0 is available (you have 0.6.1): run `npm i -g centrail@latest`.",
     );
     expect(outdatedLine({ version: "0.6.1", channel: "plugin", minimum: "0.7.0" })).toBe(
-      "centrail 0.6.1 is older than the server accepts (0.7.0 or newer), so syncing has stopped until it is updated: it updates through Claude Code (/plugin).",
+      "centrail 0.6.1 is older than the server accepts (0.7.0 or newer), so syncing has stopped until it is updated: update it in Claude Code with `/plugin marketplace update centrail`.",
     );
   });
 });
@@ -119,5 +129,30 @@ describe("the server's word on versions", () => {
     const parked = { version: "0.6.1", channel: "npm-global" as const }; // a 426 with no minimum named
     expect(stillTrue(parked, { version: "0.6.1", channel: "npm-global" }, undefined)).toBe(parked);
     expect(stillTrue(parked, { version: "0.7.0", channel: "npm-global" }, undefined)).toBeUndefined();
+  });
+});
+
+describe("liveVersionRecords: what status and doctor still say", () => {
+  const npx = { version: "0.8.1", channel: "npx" as const };
+  const plugin = { version: "0.7.3", channel: "plugin" as const, latest: "0.8.1" };
+
+  it("drops a plugin notice once Claude Code installed the version it named (the stale 'you have 0.7.3')", () => {
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, "0.7.3")).toEqual({ notice: plugin });
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, null)).toEqual({ notice: plugin });
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, "0.8.1")).toEqual({});
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, "0.9.0")).toEqual({});
+  });
+
+  it("drops a parked plugin once its installed version moved past the park", () => {
+    const parked = { version: "0.6.0", channel: "plugin" as const, minimum: "0.7.0" };
+    expect(liveVersionRecords({ outdated: parked }, npx, "0.6.0")).toEqual({ outdated: parked });
+    expect(liveVersionRecords({ outdated: parked }, npx, "0.7.0")).toEqual({});
+  });
+
+  it("never blames the copy that is running once it caught up, and keeps other copies' records", () => {
+    const mine = { version: "0.8.0", channel: "npx" as const, latest: "0.8.1" };
+    expect(liveVersionRecords({ updateNotice: mine }, npx, null)).toEqual({});
+    const global = { version: "0.8.0", channel: "npm-global" as const, latest: "0.8.1" };
+    expect(liveVersionRecords({ updateNotice: global }, npx, "0.8.1")).toEqual({ notice: global });
   });
 });
