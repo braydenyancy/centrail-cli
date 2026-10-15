@@ -44,6 +44,12 @@ export function progress(message: string): void {
   process.stderr.write(`  ${message}\n`);
 }
 
+// A line only `--verbose` shows: detail for a log or a diagnosis (where a
+// sync's time went), not for a person watching a terminal.
+export function progressDetail(message: string): void {
+  if (mode === "verbose") progress(message);
+}
+
 // One line the next write replaces (a batch counter), redrawn every second
 // with how long its phase has run: `reading logs — 12/340 files · 14s`.
 // Without a terminal to rewrite it in (`--verbose` into a file), each phase
