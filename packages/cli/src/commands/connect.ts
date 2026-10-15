@@ -115,7 +115,7 @@ export async function runConnect(opts: { baseUrl?: string; noBrowser?: boolean }
           console.log(`  Agent setup did not finish (${err instanceof Error ? err.message : String(err)}); run \`centrail setup\` to retry.`);
         }
       } else {
-        console.log("  To sync after every agent turn (Claude Code, Codex), run `npx centrail setup` in a terminal.");
+        console.log("  To sync after every supported agent turn, run `npx centrail setup` in a terminal.");
       }
       console.log("");
       console.log("  Run `npx centrail sync` to push usage now.");

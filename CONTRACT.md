@@ -346,7 +346,8 @@ advancing watermarks:
    unconditional scanner or the wire version. Scanners explicitly marked
    `requiresSurfaceCapability` are excluded from this merge-time check; they
    remain disabled until the server advertises their surface and `billing-route`.
-3. **Tag last.** Push a `v*` tag only when the contract check is green. The
+3. **Release last.** Merge the reviewed release PR only when the contract check is
+   green; release automation creates the tag ([runbook](docs/releases.md)). The
    publish workflow re-runs the same check against production and **fails
    closed** — nothing reaches npm unless the deployed server accepts every
    scanner surface at the current wire version, plus `billing-route` when any
@@ -374,9 +375,9 @@ shape changes, regenerate this file from a real sync and update both.
 
 `pi` and `gemini-cli` require an answered scope and a capabilities response naming
 both the surface and the `billing-route` field. Otherwise sync skips their logs
-without advancing their watermarks. They use existing sync invocations; this does
-not install additional lifecycle hooks. Existing surfaces retain their old route
-semantics.
+without advancing their watermarks. Sync reads their logs independently of hook setup; `centrail setup` installs
+their per-turn integrations as described in [agent integrations](docs/integrations.md).
+Existing surfaces retain their old route semantics.
 
 For these two surfaces, each event sends top-level `billingProvider`, required by
 the server, and optional `serviceClass`:

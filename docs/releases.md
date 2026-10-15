@@ -29,6 +29,9 @@ Stable versions use npm `latest`; prereleases use `next` and leave the stable pl
 A prerelease needs a reviewed version PR first. Tags must match coordinated versions on main.
 Publishing uses GitHub-hosted Node 24/npm 11.5.1+; installed CLI support remains Node 20+.
 
+Registry visibility is polled for up to 10 minutes per version or dist-tag check
+(`scripts/release-policy.mjs`); publication can succeed before the registry shows it.
+
 For interruption recovery, rerun the failed tag workflow or dispatch `publish.yml` at that
 existing tag. Matching immutable versions are verified and reused; mismatches fail. Never
 recreate a published tag/version or move a channel backward. This process does no historical
@@ -55,8 +58,8 @@ repricing. Users upgrade their installation, then normal sync replays eligible l
 - Configure trusted publishing for **both** `centrail` and `@centrail/parsers`: owner
   `braydenyancy`, repository `centrail-cli`, workflow `publish.yml`, environment `npm`.
   Allow direct `npm publish` and `npm dist-tag`. No long-lived npm token fallback is used.
-- Create fresh npm trust shortly before publication; first use currently must be within two days.
-  Verify OIDC works before retiring old automation tokens.
+- Follow npm's current trusted-publisher setup instructions and verify OIDC works
+  before retiring old automation tokens.
 - Keep the repository public and package repository metadata aligned for provenance.
 
 Owner settings and a real publication require external verification; local checks do not prove them.
@@ -69,3 +72,28 @@ Receipts: [actual SDK rehearsal](verification/release-automation-2026-10-12.json
 Sources: [Release Please](https://github.com/googleapis/release-please-action),
 [GitHub event triggering](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow),
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+
+## Excluded-path releases
+
+`release-please-config.json` excludes `docs`, `scripts`, `.github`, `tools` and
+`packages/parsers/test` from normal release detection. When a release is needed
+for changes only in those paths, include a `Release-As: <version>` footer in the
+reviewed Conventional Commit message (for a squash merge, its final commit body).
+See [Release Please's version override](https://github.com/googleapis/release-please#how-do-i-change-the-version-number).
+Review the resulting release PR and bundle normally; do not hand-edit a published tag.
+
+## Open release-channel blocker
+
+Verified read-only on 2026-10-15: ruleset `25045270` still restricts updates to
+`release` with no bypass. The v0.9.0 npm publication succeeded, but its
+plugin-pointer update was blocked.
+That means plugin auto-update can lag the npm CLI even after npm verification.
+The personal-account rule described above is the desired configuration, not a
+claim that the blocker is fixed. An owner must reconcile the ruleset, then rerun
+the existing tag workflow; do not republish under a different tag to repair a pointer.
+
+The planned organization move will require reviewing repository owner references,
+trusted-publisher settings and branch protections together. Current `braydenyancy`
+references remain intentional until that move occurs. The calculations package's
+separate `npm` environment still requires a reviewer; whether to align it with the
+CLI's single release-PR gate is an open owner decision.

@@ -226,3 +226,31 @@ Kept for one release; each prints a one-line pointer on stderr, then runs:
 
 After upgrading, run `centrail setup` once: it moves pinned Codex entries to the launcher (review
 the changed hook in Codex's `/hooks` once) and restart open sessions.
+
+## Uninstall and troubleshooting
+
+`centrail uninstall` removes owned integrations and the launcher when no remaining
+selected-out hook needs it. It leaves pairing, scope, sync state and local usage
+logs intact; manual `centrail sync` still works. It does not uninstall an npm or
+mise package. After removing integrations, remove the global package with
+`npm uninstall -g centrail`, or remove the mise tool with `mise uninstall npm:centrail`
+and remove its entry from your mise configuration. npx has no global package to remove.
+If Claude Code's executable is unavailable, uninstall prints the in-app plugin
+removal command; complete that step in Claude Code. Restart open agents afterwards.
+
+- Run `centrail doctor`, then `centrail doctor --fix` to repair owned integration
+  entries. Inspect `/hooks` in the agent for trust and disabled-hook state: doctor
+  does not prove a hook actually fired.
+- Gemini's global hook enable/disable settings are left untouched by setup.
+  Enable hooks in Gemini if an installed `AfterAgent` handler does not run.
+- Copilot hook setup honors `COPILOT_HOME`; its usage scanner still reads only
+  `~/.copilot/session-state`. A healthy hook does not prove logs in a custom home
+  will upload.
+- “Another sync is running” does not display the holder or age. Wait for the
+  running sync to finish and retry. Locks with a live owner are retained; dead
+  owners are reclaimed automatically, while ownerless locks have a 15-minute
+  grace period. Do not delete a lock while a sync is active.
+- OpenCode v2 remains unsupported. Neither Cursor nor OpenCode has a usage
+  scanner, even when doctor reports its identity integration as healthy.
+- Plugin auto-update depends on the publisher advancing `release`. See the
+  [open release-channel blocker](releases.md#open-release-channel-blocker).

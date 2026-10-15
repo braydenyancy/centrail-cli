@@ -5,13 +5,13 @@ Thanks for helping improve the Centrail CLI.
 ## Dev setup
 
 ```bash
-npm install          # links the workspace packages
+npm ci               # installs the locked workspace dependencies
 npm run build        # parsers (tsc) + cli (esbuild bundle)
 npm test             # vitest across packages
 npm run typecheck
 ```
 
-- `packages/cli` — the `centrail` bin (commands: connect, sync, exclude).
+- `packages/cli` — the `centrail` bin; [command guide](README.md#install--use).
 - `packages/parsers` — local log parsers + shared wire types.
 
 ## Adding a provider parser
@@ -28,5 +28,5 @@ follow the versioning rules there. Breaking changes bump `centrail-wire`.
 
 ## PRs
 
-Keep changes focused, include tests, and ensure `npm run build && npm test &&
-npm run typecheck` are green.
+Keep changes focused, include tests, and run `npm run verify`. See [verification](docs/verification.md) for optional
+comparison and runtime probes.

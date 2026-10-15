@@ -1,5 +1,7 @@
 # CLI integration and publication contract
 
+> Historical record; current behavior and commands: [CLI guide](../README.md), [integrations](integrations.md), [wire contract](../CONTRACT.md), [verification](verification.md).
+
 PR checks now run offline contract tests on the existing Node 20/24 matrix for
 Linux, macOS and native Windows. They do not hide production contract failures
 with `continue-on-error`. Main's deployment check requires the wire version and

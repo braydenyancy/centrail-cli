@@ -1,5 +1,7 @@
 # Hook integration investigation — local 0.7.4 candidate
 
+> Historical record; current behavior and commands: [CLI guide](../README.md), [integrations](integrations.md), [wire contract](../CONTRACT.md), [verification](verification.md).
+
 Historical receipt. Current commands and the stable launcher that replaced the pinned
 Codex command: [agent integrations](integrations.md).
 
