@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -59,5 +60,17 @@ export async function waitForRegistry(read, ready, { what, timeoutMs = 600_000, 
     if (ready(value)) return value;
     if (now() >= deadline) throw new Error(`${what} did not appear in the registry within ${Math.round(timeoutMs / 1000)}s`);
     await sleep(intervalMs);
+  }
+}
+
+// The last step of a stable publish moves the plugin's `release` branch to the
+// published commit. A refusal there is almost always the branch ruleset, not
+// the tag, so it gets its own message with git's stderr (remote names and
+// rule text; the token never appears in it).
+export function advanceReleasePointer(root, sha, run = spawnSync) {
+  const p = run('git', ['push', 'origin', `${sha}:refs/heads/release`], { cwd: root, encoding: 'utf8' });
+  if (p.error || p.status !== 0) {
+    const detail = (p.error?.message ?? p.stderr ?? '').trim();
+    throw new Error('Advancing the plugin release pointer was refused: check the `release` branch ruleset allows this workflow to push' + (detail ? `\n${detail}` : ''));
   }
 }

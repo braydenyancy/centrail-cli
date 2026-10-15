@@ -268,7 +268,7 @@ describe("sync invariants across triggers", () => {
 // not one byte on stderr, as before 0.6.1.
 describe("what a sync prints, and where", () => {
   const ttyWas = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
-  const SUMMARY = /^(Inserted \d+ · Skipped \d+.*|  ↳ .*)$/;
+  const SUMMARY = /^(Inserted \d+ · Skipped \d+.*|  ↳ .*|  [a-z-]+ +inserted \d+ · skipped \d+)$/;
   async function syncWithStderr(isTTY: boolean): Promise<{ stdout: string[]; stderr: string[] }> {
     Object.defineProperty(process.stderr, "isTTY", { value: isTTY, configurable: true, writable: true });
     vi.stubEnv("CI", "");
@@ -292,7 +292,7 @@ describe("what a sync prints, and where", () => {
     const { stdout, stderr } = await syncWithStderr(false);
     expect(stderr).toEqual([]);
     expect(out("req_P")).toBe(4);
-    expect(stdout[stdout.length - 1]).toMatch(/^Inserted \d+ · Skipped \d+/);
+    expect(stdout.slice(-2)).toEqual([expect.stringMatching(/^Inserted \d+ · Skipped \d+/), expect.stringMatching(/^  claude-code  inserted \d+ · skipped \d+$/)]);
     for (const l of stdout) expect(l).toMatch(SUMMARY);
   });
 
@@ -306,7 +306,7 @@ describe("what a sync prints, and where", () => {
     expect(shown).toMatch(/Checking ship status — 1\/\d+ repos/);
     expect(stderr[stderr.length - 1]).toBe("\r\x1b[K"); // nothing left on the line the summary prints under
     expect(out("req_Q")).toBe(5);
-    expect(stdout[stdout.length - 1]).toMatch(/^Inserted \d+ · Skipped \d+/);
+    expect(stdout.slice(-2)).toEqual([expect.stringMatching(/^Inserted \d+ · Skipped \d+/), expect.stringMatching(/^  claude-code  inserted \d+ · skipped \d+$/)]);
     for (const l of stdout) expect(l).toMatch(SUMMARY);
   });
 });

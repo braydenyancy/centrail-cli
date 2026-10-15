@@ -2,18 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareVersions, existingVersion, integrity, waitForRegistry } from './release-policy.mjs';
+import { advanceReleasePointer, compareVersions, existingVersion, integrity, waitForRegistry } from './release-policy.mjs';
 import { checkReleaseTag } from './check-release-tag.mjs';
 
 const root = resolve(process.env.CENTRAIL_RELEASE_CHECKOUT ?? fileURLToPath(new URL('..', import.meta.url)));
 const npm = process.env.npm_execpath;
 if (!npm) throw new Error('Run through npm run release:publish');
 const { version, channel, sha } = checkReleaseTag(root);
-const git = (...args) => {
-  const p = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  if (p.error || p.status !== 0) throw new Error('Tag must identify a commit already reviewed on main');
-  return p.stdout.trim();
-};
 const out = join(root, '.release-artifacts');
 const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
 if (manifest.version !== version || manifest.sourceSha !== sha || manifest.packedConsumers !== 'passed' || manifest.packages.map(p => p.name).join() !== '@centrail/parsers,centrail') throw new Error('Packed manifest mismatch');
@@ -53,5 +48,5 @@ for (const artifact of manifest.packages) {
   receipt.packages.push({ name: artifact.name, integrity: artifact.integrity, existing: exists, bytesVerified: true, channelVerified: true });
   writeFileSync(join(out, 'publication.json'), JSON.stringify(receipt, null, 2) + '\n');
 }
-if (channel === 'latest') git('push', 'origin', `${sha}:refs/heads/release`);
+if (channel === 'latest') advanceReleasePointer(root, sha);
 console.log(`Verified both packages under ${channel}; ${channel === 'latest' ? 'stable plugin advanced' : 'stable plugin unchanged'}`);

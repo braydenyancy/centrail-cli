@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { alignedVersion, compareVersions, existingVersion, integrity, releaseTag } from './release-policy.mjs';
+import { advanceReleasePointer, alignedVersion, compareVersions, existingVersion, integrity, releaseTag } from './release-policy.mjs';
 import { checkReleaseTag } from './check-release-tag.mjs';
 import { checkReleaseArtifacts } from './check-release-artifacts.mjs';
 
@@ -106,4 +106,24 @@ test('registry checks wait out npm propagation and fail at a deadline', async ()
   clock = 0;
   await assert.rejects(waitForRegistry(async () => ({}), () => false, { what: '@centrail/parsers@0.8.1', sleep, now, timeoutMs: 60_000, intervalMs: 10_000 }), /@centrail\/parsers@0\.8\.1 did not appear in the registry within 60s/);
   assert.equal(clock, 60_000);
+});
+test('a refused release-pointer push names the ruleset and keeps git stderr', () => {
+  const temp = mkdtempSync(join(tmpdir(),'centrail-pointer-'));
+  const git = (cwd,...args) => { const r = spawnSync('git',args,{cwd,encoding:'utf8'}); assert.equal(r.status,0,r.stderr); return r.stdout.trim(); };
+  try {
+    const remote = join(temp,'remote.git'); const work = join(temp,'work');
+    git(temp,'init','--bare',remote);
+    // A pre-receive hook stands in for the branch ruleset refusing the push.
+    writeFileSync(join(remote,'hooks','pre-receive'),'#!/bin/sh\necho "refusing ruleset fixture" >&2\nexit 1\n',{mode:0o755});
+    git(temp,'init',work);git(work,'config','user.name','Fixture');git(work,'config','user.email','fixture@example.invalid');
+    git(work,'commit','--allow-empty','-m','Fixture');git(work,'remote','add','origin',remote);
+    const sha = git(work,'rev-parse','HEAD');
+    // Windows runners may not execute the hook; a stubbed refusal proves the message either way.
+    const refused = () => ({ status: 1, stderr: 'remote: error: GH013: Repository rule violations found for refs/heads/release.\n' });
+    assert.throws(() => advanceReleasePointer(work, sha, refused), e => /release pointer was refused/.test(e.message) && /ruleset/.test(e.message) && /GH013/.test(e.message) && !/reviewed on main/.test(e.message));
+    if (process.platform !== 'win32') assert.throws(() => advanceReleasePointer(work, sha), /release pointer was refused[\s\S]*refusing ruleset fixture/);
+    rmSync(join(remote,'hooks','pre-receive'));
+    advanceReleasePointer(work, sha);
+    assert.equal(git(remote,'rev-parse','refs/heads/release'),sha);
+  } finally { rmSync(temp,{recursive:true,force:true}); }
 });
