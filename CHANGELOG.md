@@ -3,6 +3,13 @@
 All notable changes are documented here. This project follows semantic
 versioning.
 
+## [0.9.0](https://github.com/braydenyancy/centrail-cli/compare/v0.8.1...v0.9.0) (2026-10-15)
+
+
+### Features
+
+* **cli:** one setup, doctor and uninstall for every supported agent ([#29](https://github.com/braydenyancy/centrail-cli/issues/29)) ([d76c1ac](https://github.com/braydenyancy/centrail-cli/commit/d76c1ac05970b4689874cb8762d512e35a5f2605))
+
 ## [0.8.1](https://github.com/braydenyancy/centrail-cli/compare/v0.8.0...v0.8.1) (2026-10-14)
 
 

@@ -1,6 +1,6 @@
 // Keep CLI_VERSION in sync with packages/cli/package.json "version".
 // (The esbuild bundle has no package.json at runtime, so this is a constant.)
-export const CLI_VERSION = "0.8.1"; // x-release-please-version
+export const CLI_VERSION = "0.9.0"; // x-release-please-version
 
 // Wire contract version — bump only on a BREAKING payload change. The server
 // supports the current and previous contract versions (see CONTRACT.md).
