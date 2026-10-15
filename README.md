@@ -16,7 +16,7 @@ No install needed:
 ```bash
 npx centrail connect          # pair this machine (opens your browser); shows what it found, asks what
                               # to sync, then runs `centrail setup` for the agents installed here
-npx centrail setup            # sync after every agent turn: Claude Code's plugin, Codex's Stop hook
+npx centrail setup            # sync after every agent turn: Claude Code's plugin, a hook or extension in the others
 npx centrail doctor           # is every agent wired up, and is centrail current? (read-only; --fix repairs)
 npx centrail status           # which account this machine syncs to, whether its pairing still works, and updates
 npx centrail sync             # push new usage (and git commit attribution)
@@ -26,21 +26,22 @@ npx centrail import ccusage.json  # a `ccusage claude daily --json` file as Meas
 npx centrail repos            # every repo and folder seen here, with sync status
 npx centrail exclude <repo>   # nothing about this repo leaves (host/owner/repo or folder name)
 npx centrail include <repo>   # undo; in allow mode, add it
-npx centrail surfaces codex off   # switch a source off (claude-code, codex, copilot-cli)
+npx centrail surfaces codex off   # switch a source off (claude-code, codex, copilot-cli, gemini-cli, pi)
 npx centrail scope            # ask the scope question again
 npx centrail inspect --last   # the last payload, exactly as it left this machine
 ```
 
-Node.js 20+ required. Each integration runs one `Stop` hook that records
+Node.js 20+ required. Each integration runs one per-turn hook that records
 session id, folder, repo identity, branch, head and the repos the turn's files
 touched, locally, at the end of every turn, and starts a background sync at
 most every 10 minutes.
 
 ### Agent setup
 
-`centrail setup` detects Claude Code and Codex, prints one line per agent
-(install, update, repair, ok or skip), asks once, and applies; a second run
-changes nothing. `--agent claude-code|codex` limits it, `--dry-run` only prints
+`centrail setup` detects Claude Code, Codex, Gemini CLI, Copilot CLI and Pi,
+prints one line per agent (install, update, repair, ok or skip), asks once, and
+applies; a second run changes nothing. `--agent <name>` (claude-code, codex,
+gemini-cli, copilot-cli, pi) limits it, `--dry-run` only prints
 the plan, `-y` skips the question. Design, launcher and migration details:
 [agent integrations](docs/integrations.md).
 
@@ -56,6 +57,12 @@ the plan, `-y` skips the question. Design, launcher and migration details:
   launcher `~/.config/centrail/bin/centrail-hook` (`.cmd` on Windows). Review and
   trust it once in Codex's `/hooks`: its command never changes between releases,
   so updates need no new trust.
+- **Gemini CLI** gets one `AfterAgent` hook named `centrail` in
+  `~/.gemini/settings.json`, **Copilot CLI** one `agentStop` hook in its own file
+  `~/.copilot/hooks/centrail.json`, and **Pi** one extension,
+  `~/.pi/agent/extensions/centrail.js`. All three run the same launcher with
+  fixed arguments, and each agent's home variable (`GEMINI_CLI_HOME`,
+  `COPILOT_HOME`, `PI_CODING_AGENT_DIR`) is honored.
 
 The launcher runs the centrail that set it up when that install is stable (mise
 or a global npm install), else `centrail` on PATH, else `npx centrail`; it never
@@ -143,6 +150,9 @@ home directory, so it isn't tied to Unix-style paths.
   variable (comma-separated for multi-account setups), matching how Claude Code
   itself and tools like [ccusage](https://ccusage.com) locate the config.
 - **GitHub Copilot CLI** — `~/.copilot/session-state`.
+- **Gemini CLI** — `~/.gemini/tmp` and `~/.cache/.gemini/tmp` (under
+  `$GEMINI_CLI_HOME` when set).
+- **Pi** — `~/.pi/agent/sessions` (`$PI_CODING_AGENT_DIR/sessions`).
 - **Codex** — `$CODEX_HOME/sessions` (default `~/.codex/sessions`). The parser
   reads only session/turn metadata and per-call token counts; message,
   reasoning, and tool records are ignored.

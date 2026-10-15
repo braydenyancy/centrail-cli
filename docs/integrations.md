@@ -1,14 +1,14 @@
 # Agent integrations
 
 How centrail runs after every agent turn, and how it stays working across releases.
-Source: `packages/cli/src/commands/integrations.ts`, `doctor.ts`, `upgrade.ts`,
+Source: `packages/cli/src/commands/integrations.ts`, `agent-hooks.ts`, `doctor.ts`, `upgrade.ts`,
 `packages/cli/src/launcher.ts`.
 
 ## Commands
 
 | Command | Does |
 | --- | --- |
-| `centrail setup [--agent claude-code\|codex] [-y] [--dry-run]` | Detects installed agents, prints one plan line each (install/update/repair/ok/skip), asks once, applies. Idempotent: a second run writes nothing. Asks the scope question first if it was never answered. |
+| `centrail setup [--agent claude-code\|codex\|gemini-cli\|copilot-cli\|pi] [-y] [--dry-run]` | Detects installed agents, prints one plan line each (install/update/repair/ok/skip), asks once, applies. Idempotent: a second run writes nothing. Asks the scope question first if it was never answered. |
 | `centrail doctor [--json] [--fix]` | Read-only check of each agent's integration, the launcher and centrail's versions. Exit 1 when something needs action; `--fix` runs `setup -y` for those agents. |
 | `centrail uninstall [--agent <name>] [-y]` | Exact inverse of setup, limited to what centrail owns. Asks first (default no). |
 | `centrail upgrade [-y]` | Runs the updater of the copy that is running, with consent; then refreshes the launcher. |
@@ -39,8 +39,67 @@ the first install it needs one review in `/hooks`; because the command never cha
 releases need none. The plugin's `.codex-plugin` manifest declares no hooks, so importing it into
 Codex never registers a second Stop hook.
 
-Detection: Claude Code when `claude` is on PATH or its config dir (`CLAUDE_CONFIG_DIR`, else
-`~/.claude`) exists; Codex when `codex` is on PATH or `CODEX_HOME` (else `~/.codex`) exists.
+**Gemini CLI** gets one `AfterAgent` handler (once per turn, after the final response) in its user
+settings, `~/.gemini/settings.json` (`$GEMINI_CLI_HOME/.gemini/settings.json` when set):
+
+```json
+{ "hooks": { "AfterAgent": [ { "hooks": [ { "name": "centrail", "type": "command",
+  "command": "\"<config dir>/bin/centrail-hook\" hook stop --centrail-hook --surface gemini-cli",
+  "timeout": 10000 } ] } ] } }
+```
+
+User-level hooks run without the trust prompt Gemini gives project hooks; `/hooks disable centrail`
+turns it off there. `SessionEnd` was not used: it fires once at exit, and Gemini does not wait for
+it. A `settings.json` that is not plain JSON (Gemini tolerates comments) is reported as unreadable
+and never rewritten. Docs: [hooks](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/index.md),
+[reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md).
+
+**Copilot CLI** loads every `*.json` in `~/.copilot/hooks/` (`$COPILOT_HOME/hooks/`); centrail owns
+one, `centrail.json`, with one `agentStop` entry (the main agent finished a turn):
+
+```json
+{ "version": 1, "hooks": { "agentStop": [ { "type": "command",
+  "bash": "\"<config dir>/bin/centrail-hook\" hook stop --centrail-hook --surface copilot-cli",
+  "timeoutSec": 10 } ] } }
+```
+
+On Windows the field is `powershell` and the command starts with PowerShell's call operator `&`.
+Uninstall removes the file when only centrail's entry is in it. `sessionEnd` was not used for the
+same reason as Gemini's. Docs: [use hooks](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks),
+[reference](https://docs.github.com/en/copilot/reference/hooks-reference).
+
+**Pi** has no hook file; per-turn code is an extension. centrail writes one plain-JavaScript module,
+`~/.pi/agent/extensions/centrail.js` (`$PI_CODING_AGENT_DIR/extensions/`), which Pi loads at start
+with no package to publish or install. At each `agent_end` it starts the launcher detached with
+`hook stop --centrail-hook --surface pi` and `{ session_id, cwd }` on stdin, so Pi never waits on
+it. The file is centrail's by its `centrail-pi-extension` header; a `centrail.js` without it is
+never touched. Docs: [extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md),
+[configuration](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/configuration.md).
+Checked against Pi 1.1.0 with a local OpenAI-compatible stub: the extension fired once per run,
+and the sidecar's `pi:<id>` matched the Pi scanner's session id for that run.
+
+Detection: an agent counts as installed when its command is on PATH (`claude`, `codex`, `gemini`,
+`copilot`, `pi`) or its config dir exists (`CLAUDE_CONFIG_DIR` else `~/.claude`; `CODEX_HOME` else
+`~/.codex`; `GEMINI_CLI_HOME/.gemini` else `~/.gemini`; `COPILOT_HOME` else `~/.copilot`;
+`PI_CODING_AGENT_DIR` else `~/.pi/agent`).
+
+## What `hook stop` receives
+
+One processor for every agent; `--surface` names the agent (none: Claude Code's plugin, told apart
+from Codex by its payload) and selects the stdout reply it parses.
+
+| `--surface` | stdin fields read | sidecar session id | stdout |
+| --- | --- | --- | --- |
+| (none) Claude Code | `session_id`, `cwd`, `transcript_path` | as given | nothing |
+| `codex` | `session_id`, `cwd`, `transcript_path` | as given | `{}` |
+| `gemini-cli` | `session_id`, `cwd` | `gemini:<id>` | `{}` |
+| `copilot-cli` | `sessionId`, `cwd` (or the `Stop` form's `session_id`) | as given | `{}` |
+| `pi` | `session_id`, `cwd` | `pi:<id>` | nothing |
+
+The session id is written the way that agent's log scanner names its sessions, so sync joins the
+line to the usage events. Log scanners stay the source of usage; the hook adds the repo identity
+while the folder exists, and a timely sync. Only Claude Code's and Codex's transcripts are read for
+the paths a turn touched; the others are placed by their folder.
 
 ## The stable launcher
 
@@ -81,10 +140,12 @@ Claude Code's `installed_plugins.json` shows the plugin at or past the version i
 - `cli` — `version`, `copy` (install channel), `latest` known from the last sync, `updateAvailable`.
 - `launcher` — `needed`, `present`, `executable`, `resolvesCli` (a stable install, `centrail` or
   `npx` it can run).
-- `agents.<claude-code|codex>` — `detected`, `integration` (`plugin`/`hook`/`none`), `plugin`
+- `agents.<claude-code|codex|gemini-cli|copilot-cli|pi>` — `detected`, `integration` (`plugin`/`hook`/`none`), `plugin`
   (Claude Code: `enabled`, `autoUpdate`, installed `version`), `hooks` (centrail Stop entries),
   `usesLauncher`, `commandResolves`, `status` (`ok`, `not-detected`, `unreadable`, `missing`,
-  `duplicate`, `outdated-pin`, `unresolved`, `repair`), `fix` (what setup would do).
+  `duplicate`, `outdated-pin`, `outdated` (an entry this release would write differently),
+  `unresolved` (its launcher is missing), `repair`), `fix` (what setup would do). Pi's `hooks`
+  counts its extension.
 - `notices` — saved version records still true: `copy`, `kind` (`update-available`/`below-minimum`), `line`.
 
 It prints no paths, commands or config values. Codex trust state and project/managed hook layers
