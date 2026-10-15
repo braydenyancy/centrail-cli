@@ -344,7 +344,7 @@ export async function ensureInstallId(): Promise<string> {
   return cfg.installId;
 }
 
-// The last ingest body exactly as sent, for `centrail inspect --last`. One
+// The last attempted ingest body, saved before the request, for `centrail inspect --last`. One
 // file, overwritten per batch, mode 0600: it is the answer to "what leaves
 // my machine", and it must be the real payload, not a description of it.
 const LAST_SYNC_PATH = join(CONFIG_DIR, "last-sync.json");

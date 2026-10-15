@@ -115,10 +115,10 @@ export async function runRepos(): Promise<void> {
   if (!cfg.scopeDecidedAt) console.log(`  ${SCOPE_UNANSWERED}`);
 }
 
-// `centrail inspect --last`: the last ingest body exactly as it left. The
+// `centrail inspect --last`: the last attempted ingest body, saved before sending. The
 // note goes to stderr, so stdout stays that body and nothing else.
 export async function runInspect(): Promise<void> {
-  console.log((await readLastSync()) ?? "No sync has run on this machine yet.");
+  console.log((await readLastSync()) ?? "No usage-ingest batch has been saved on this machine yet.");
   if (!(await readConfig()).scopeDecidedAt) console.error(SCOPE_UNANSWERED);
 }
 

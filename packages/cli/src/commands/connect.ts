@@ -173,15 +173,18 @@ function sleep(ms: number): Promise<void> {
 
 // Shown once, at pairing: the complete list of what sync sends. Kept in step
 // with toWireEvent and toWireFate (wire.ts) — they are the policy, this is its
-// summary. `centrail inspect --last` prints the real payload any time.
+// summary. `centrail inspect --last` prints only the last attempted ingest body.
 const FIELDS_SHOWN_ONCE = `
   What leaves this machine on each sync — and nothing else:
     tokens per model, timestamps, the agent and CLI version, session id,
     repo identity (host/owner/repo or a root-commit hash), folder name,
-    branch, commit shas, line counts and change hashes (git patch-id),
-    a random per-install id.
-  Never: source, prompts, completions, secrets, paths, hostname, platform,
-  account details.
-  Verify any time:  npx centrail inspect --last
+    branch, commit shas, commit times, line/file counts and change hashes,
+    author-match and ship-status flags, a random per-install id;
+    fast-mode/web-search usage and bounded billing-route labels when supported.
+  Never extracted for upload: source, prompts, completions, credential fields,
+  paths, hostname, platform,
+  account details. Allowed names/identifiers are not scanned for secrets.
+  Last attempted usage batch:  npx centrail inspect --last
+  This excludes attribution/fate requests and does not prove delivery.
   Toggles in ~/.config/centrail/config.json: hideRepoNames, hideBranchNames.
 `;

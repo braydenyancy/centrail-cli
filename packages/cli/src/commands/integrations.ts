@@ -340,7 +340,7 @@ export async function runIntegrationSetup(opts: SetupOptions, deps: IntegrationD
   }
   console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
   console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
-  console.log("Nothing leaves this machine except what `centrail inspect --last` shows. Check any time: `centrail doctor`.");
+  console.log("Inspect the last attempted usage batch with `centrail inspect --last` (not attribution/fate requests). Check integrations with `centrail doctor`.");
   return { plan, changed: true };
 }
 

@@ -1,5 +1,7 @@
 # Documentation review — 2026-10-15
 
+Privacy/disclosure conclusions superseded by the [independent follow-up](docs-review-independent-2026-10-15.md); historical results below are retained.
+
 Reviewed the 29 pre-existing Markdown files (including hidden GitHub templates),
 three package descriptions, plugin metadata, command usage/output strings and four
 workflow files against the checked-out 0.9.0 implementation. Historical prose and

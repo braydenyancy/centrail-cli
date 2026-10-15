@@ -24,7 +24,7 @@ npx centrail exclude <repo>   # nothing about this repo leaves (host/owner/repo 
 npx centrail include <repo>   # undo; in allow mode, add it
 npx centrail surfaces codex off   # switch a source off (claude-code, codex, copilot-cli, gemini-cli, pi)
 npx centrail scope            # ask the scope question again
-npx centrail inspect --last   # the last payload, exactly as it left this machine
+npx centrail inspect --last   # the last attempted usage batch (not attribution)
 ```
 
 Node.js 20+ required. Installed integrations record session and repo identity
@@ -66,8 +66,9 @@ says which version it needs; its hook starts no syncs until the copy is updated.
 ## What leaves your machine
 
 The CLI is **local-first**. It reads your agent's usage logs and computes git
-commit attribution **on your machine**. Every field it sends is named in one
-allowlist (`packages/cli/src/wire.ts`); nothing else leaves:
+commit attribution **on your machine**. Usage and commit-fate fields pass explicit allowlists in
+`packages/cli/src/wire.ts`; attribution request envelopes are assembled in
+`commands/sync.ts` and `ship-status.ts`. Sync sends:
 
 - an opaque event ID, model, token counts and timestamp per event; the agent
   and the CLI version per sync
@@ -78,21 +79,25 @@ allowlist (`packages/cli/src/wire.ts`); nothing else leaves:
   web-search request counts; Pi/Gemini also send a bounded billing-provider
   label and optional service class (evidence of route, not proof of a charge)
 - git attribution: repo name or identity, branch, commit SHAs, commit times,
-  aggregate line/file counts, whether you authored the commit (your email
+  aggregate line/file counts (including repository size/file totals), whether you authored the commit (your email
   stays local), and the squash commit it landed as; to a server that accepts
   them, a content hash of each commit's change and of its branch so far
-  (`git patch-id`), which proves a rebased or squashed commit is the same
-  work and reveals none of it
+  (`git patch-id`), used to match likely equivalent patches after rebases
+  or squashes; the hash contains no diff text but can identify a known patch
 - for a folder that is not a repo: a keyed hash of the path plus the folder name
 
 Never: absolute paths, hostnames, platform details, provider-account details,
-source, prompts, completions, diffs, commit messages or secrets. Tool-provided identifiers are used
-only as opaque deduplication keys. `centrail inspect --last` prints the real
-payload. Two toggles in `~/.config/centrail/config.json`: `hideRepoNames`
+source, prompts, completions, diffs, commit messages or credential fields.
+Allowed names and identifiers are not scanned for embedded sensitive values. Tool-provided identifiers are used
+only as opaque deduplication keys. `centrail inspect --last` prints the last attempted usage-ingest batch, saved
+before the request: it does not prove delivery or show earlier batches, pairing,
+attribution or commit-fate requests. Two toggles in `~/.config/centrail/config.json`: `hideRepoNames`
 (identity ships as a hash, still counted) and `hideBranchNames`, applied to
 usage events and git attribution alike. Commit SHAs still go with a hidden
 repo (they are what attribution matches), so a public repo's commits can
-still be looked up. See [SECURITY.md](./SECURITY.md).
+still be looked up. Hiding names is not anonymization: the hash key is the
+install id, also sent with consented events, so a recipient can test candidate
+repo names. See [SECURITY.md](./SECURITY.md).
 
 **Which repos.** `connect` lists every repo and folder your agents have touched
 on this machine, with the identity each will ship under, and asks once: sync all
@@ -114,9 +119,15 @@ and the new one gets its own private copy of the local history this machine
 can still read. Repeated syncs deduplicate within each account. Older servers
 may retain the earlier ownership policy and report events held elsewhere.
 
-Repo identity is the same for every worktree, clone and machine, so one
+For a canonical remote, repo identity is the same across worktrees, clones and
+machines (hidden names instead use a per-install key), so one
 assignment in the dashboard covers all of them, and a session whose worktree
 was deleted before sync still lands on its repo (the hook captured it).
+
+Git attribution links usage to commits by repository, time and available branch
+and author evidence. It does not establish that AI caused a change, saved time or
+produced business value. Token counts come from local logs; dashboard costs and
+energy are estimates, not provider invoices or hardware measurements.
 
 ## Where it reads logs
 

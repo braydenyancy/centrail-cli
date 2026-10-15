@@ -15,7 +15,7 @@ OpenCode v1 integrations are opt-in and record repo identity only.
 ```sh
 npx centrail doctor          # inspect integrations; --fix repairs
 npx centrail sync            # upload usage and git attribution
-npx centrail inspect --last  # inspect the most recent upload batch
+npx centrail inspect --last  # inspect the last attempted usage batch
 npx centrail uninstall      # remove integrations; pairing and local logs remain
 ```
 

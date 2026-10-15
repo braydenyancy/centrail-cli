@@ -220,11 +220,13 @@ rename detection, myers, quoted paths) so two machines agree:
   the older base. Absent for commits on the default branch, and past the
   newest 50 commits of a branch.
 
-A vanished sha's events may then move to a live commit only on proof: its
+A vanished sha's events may then move to a live commit on patch equivalence: its
 `patchId` equals the live commit's (a rebase, a cherry-pick, a reworded
 amend), or its `branchPatchId` equals a default-branch commit's
-`patchId` (a squash merge, even with the branch deleted). Neither field
-reveals code; they are sent with or without `"repo"`, once the scope question
+`patchId` (a squash merge, even with the branch deleted). Neither field contains diff text; both can be compared with known patches.
+Git stable patch IDs ignore whitespace and line numbers: they identify likely
+equivalent changes, not semantic correctness or authorship. See
+[Git's patch-id specification](https://git-scm.com/docs/git-patch-id). They are sent with or without `"repo"`, once the scope question
 is answered. Without `"patch-id"` fate rows are exactly as above.
 
 **Usage extras (0.6.0).** When `fields` contains `"usage-extras"`, an event may
