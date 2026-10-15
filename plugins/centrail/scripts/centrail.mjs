@@ -3984,6 +3984,9 @@ function abandoned(holder, now, isAlive = processIsAlive) {
   if (!isAlive(owner.pid)) return true;
   return owner.startedAt !== void 0 && silentMs >= LOCK_ABANDONED_MS;
 }
+var RENAME_BUSY = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES"]);
+var RENAME_RETRIES = 20;
+var RENAME_RETRY_MS = 50;
 async function reclaim(lockPath, judged, host, now) {
   const guard = `${lockPath}.reclaim`;
   try {
@@ -4005,11 +4008,17 @@ async function reclaim(lockPath, judged, host, now) {
     const same = judged.owner ? current.owner?.nonce === judged.owner.nonce : !current.owner;
     if (!same) return false;
     const aside = `${lockPath}.stale-${randomUUID2()}`;
-    try {
-      await rename2(lockPath, aside);
-    } catch (err) {
-      if (err.code === "ENOENT") return true;
-      throw err;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await rename2(lockPath, aside);
+        break;
+      } catch (err) {
+        const code = err.code;
+        if (code === "ENOENT") return true;
+        if (!RENAME_BUSY.has(code ?? "")) throw err;
+        if (attempt >= RENAME_RETRIES) return false;
+        await new Promise((r) => setTimeout(r, RENAME_RETRY_MS));
+      }
     }
     await rm4(aside, { recursive: true, force: true });
     return true;
