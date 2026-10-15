@@ -3,6 +3,7 @@ import {
   compareVersions,
   detectChannel,
   hookParked,
+  copyLabel,
   howToUpdate,
   outdatedLine,
   parseCliVersions,
@@ -52,8 +53,16 @@ describe("detectChannel: the copy that runs, and the command that updates it", (
     expect(detectChannel(script, env)).toBe(want);
   });
 
+  it("names the copy a saved notice is about, so status never blames the one that just updated", () => {
+    expect(copyLabel("plugin")).toBe("Claude Code plugin");
+    expect(copyLabel("mise")).toBe("mise install");
+    expect(copyLabel("npx")).toBe("npx");
+    expect(copyLabel("npm-global")).toBe("global npm install");
+    expect(copyLabel("unknown")).toBe("another install");
+  });
+
   it("names one command per channel, and never installs anything itself", () => {
-    expect(howToUpdate("plugin")).toBe("it updates through Claude Code (/plugin)");
+    expect(howToUpdate("plugin")).toBe("update it in Claude Code with `/plugin marketplace update centrail`");
     expect(howToUpdate("npx")).toContain("npx centrail@latest");
     expect(howToUpdate("mise")).toContain("mise upgrade npm:centrail");
     expect(howToUpdate("npm-global")).toContain("npm i -g centrail@latest");
@@ -62,7 +71,7 @@ describe("detectChannel: the copy that runs, and the command that updates it", (
       "centrail 0.7.0 is available (you have 0.6.1): run `npm i -g centrail@latest`.",
     );
     expect(outdatedLine({ version: "0.6.1", channel: "plugin", minimum: "0.7.0" })).toBe(
-      "centrail 0.6.1 is older than the server accepts (0.7.0 or newer), so syncing has stopped until it is updated: it updates through Claude Code (/plugin).",
+      "centrail 0.6.1 is older than the server accepts (0.7.0 or newer), so syncing has stopped until it is updated: update it in Claude Code with `/plugin marketplace update centrail`.",
     );
   });
 });

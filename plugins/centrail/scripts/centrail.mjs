@@ -1349,7 +1349,7 @@ function detectChannel(script = process.argv[1] ?? "", env = process.env) {
 function howToUpdate(channel) {
   switch (channel) {
     case "plugin":
-      return "it updates through Claude Code (/plugin)";
+      return "update it in Claude Code with `/plugin marketplace update centrail`";
     case "npx":
       return "run `npx centrail@latest`";
     case "mise":
@@ -1358,6 +1358,20 @@ function howToUpdate(channel) {
       return "run `npm i -g centrail@latest`";
     default:
       return "update it the way you installed it (`npm i -g centrail@latest` for a global install)";
+  }
+}
+function copyLabel(channel) {
+  switch (channel) {
+    case "plugin":
+      return "Claude Code plugin";
+    case "npx":
+      return "npx";
+    case "mise":
+      return "mise install";
+    case "npm-global":
+      return "global npm install";
+    default:
+      return "another install";
   }
 }
 function updateNoticeLine(n) {
@@ -3600,10 +3614,11 @@ async function runStatus() {
 async function printVersionRecords() {
   const state = await readState();
   const at = here();
+  console.log(`This command ran centrail ${at.version} (${copyLabel(at.channel)}).`);
   const outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
   const notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
-  if (outdated) console.log(outdatedLine(outdated));
-  if (notice && !(outdated && sameInstall(notice, outdated))) console.log(updateNoticeLine(notice));
+  if (outdated) console.log(`${copyLabel(outdated.channel)}: ${outdatedLine(outdated)}`);
+  if (notice && !(outdated && sameInstall(notice, outdated))) console.log(`${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}`);
 }
 
 // src/progress.ts
@@ -4385,6 +4400,7 @@ var USAGE = `centrail \u2014 sync local AI agent usage to centrail.org
 Usage:
   centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser)
   centrail status                   Which account this machine syncs to, and whether its pairing still works
+  centrail --version                Print this copy's version
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
   centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
@@ -4407,7 +4423,9 @@ async function readStdin() {
 }
 try {
   if (command !== "hook" && command !== "doctor-hooks" && isInteractiveTerminal()) await recordNode();
-  if (command === "connect") {
+  if (command === "--version" || command === "-v" || command === "version") {
+    console.log(`centrail ${CLI_VERSION}`);
+  } else if (command === "connect") {
     await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
   } else if (command === "status") {
     await runStatus();

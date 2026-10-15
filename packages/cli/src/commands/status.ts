@@ -1,6 +1,6 @@
 import { disconnectedMessage, parkAuth, readAuth, readDisconnected, readState } from "../config.js";
 import { checkDevice } from "../device.js";
-import { here, outdatedLine, sameInstall, stillTrue, updateNoticeLine } from "../update.js";
+import { copyLabel, here, outdatedLine, sameInstall, stillTrue, updateNoticeLine } from "../update.js";
 
 // Which account this machine syncs to, asked of the server, so two people or
 // two accounts on one machine can tell before a sync goes anywhere. Exits 1
@@ -34,8 +34,10 @@ export async function runStatus(): Promise<void> {
 async function printVersionRecords(): Promise<void> {
   const state = await readState();
   const at = here();
+  console.log(`This command ran centrail ${at.version} (${copyLabel(at.channel)}).`);
   const outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
   const notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
-  if (outdated) console.log(outdatedLine(outdated));
-  if (notice && !(outdated && sameInstall(notice, outdated))) console.log(updateNoticeLine(notice));
+  // Saved by whichever copy last synced, often the plugin's hook: name it.
+  if (outdated) console.log(`${copyLabel(outdated.channel)}: ${outdatedLine(outdated)}`);
+  if (notice && !(outdated && sameInstall(notice, outdated))) console.log(`${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}`);
 }

@@ -6,6 +6,7 @@ import { runHooksDoctor } from "./commands/hooks-doctor.js";
 import { offerPlugin } from "./commands/plugin-setup.js";
 import { runImport } from "./commands/import.js";
 import { runStatus } from "./commands/status.js";
+import { CLI_VERSION } from "./version.js";
 import { runSync } from "./commands/sync.js";
 import { recordNode } from "./config.js";
 import { progressDone, setProgressMode } from "./progress.js";
@@ -29,6 +30,7 @@ const USAGE = `centrail — sync local AI agent usage to centrail.org
 Usage:
   centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser)
   centrail status                   Which account this machine syncs to, and whether its pairing still works
+  centrail --version                Print this copy's version
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
   centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
@@ -54,7 +56,9 @@ async function readStdin(): Promise<string> {
 try {
   // A terminal knows where Node is; the plugin's hook, run by an app, may not.
   if (command !== "hook" && command !== "doctor-hooks" && isInteractiveTerminal()) await recordNode();
-  if (command === "connect") {
+  if (command === "--version" || command === "-v" || command === "version") {
+    console.log(`centrail ${CLI_VERSION}`);
+  } else if (command === "connect") {
     await runConnect({ baseUrl: flags.url, noBrowser: flags.noBrowser });
   } else if (command === "status") {
     await runStatus();

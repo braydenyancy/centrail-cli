@@ -38,7 +38,7 @@ export function detectChannel(script: string = process.argv[1] ?? "", env: Recor
 export function howToUpdate(channel: UpdateChannel): string {
   switch (channel) {
     case "plugin":
-      return "it updates through Claude Code (/plugin)";
+      return "update it in Claude Code with `/plugin marketplace update centrail`";
     case "npx":
       return "run `npx centrail@latest`";
     case "mise":
@@ -47,6 +47,18 @@ export function howToUpdate(channel: UpdateChannel): string {
       return "run `npm i -g centrail@latest`";
     default:
       return "update it the way you installed it (`npm i -g centrail@latest` for a global install)";
+  }
+}
+
+// Which copy a record is about: a machine can run the Claude Code plugin's
+// bundle, a Codex hook through mise or npm, and a hand-run npx at once.
+export function copyLabel(channel: UpdateChannel): string {
+  switch (channel) {
+    case "plugin": return "Claude Code plugin";
+    case "npx": return "npx";
+    case "mise": return "mise install";
+    case "npm-global": return "global npm install";
+    default: return "another install";
   }
 }
 

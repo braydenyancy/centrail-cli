@@ -88,8 +88,9 @@ rollout receipt](docs/hook-integration-2026-10.md).
 The CLI never installs itself. When a newer release is out, a sync in a
 terminal says so in one line with the command for how you installed it
 (`npx centrail@latest`, `npm i -g centrail@latest`, `mise upgrade
-npm:centrail`, or "updates through Claude Code" for the plugin); a sync the
-hook started keeps the notice for `centrail status`. A version the server no
+npm:centrail`, or `/plugin marketplace update centrail` in Claude Code for the plugin); a sync
+the hook started keeps the notice for `centrail status`, which names the copy it is about.
+`centrail --version` prints the version of the copy you ran. A version the server no
 longer accepts stops syncing (the pairing is kept) and says which version it
 needs; its hook starts no syncs until the copy is updated.
 
