@@ -153,6 +153,8 @@ describe.skipIf(process.platform === "win32")("the POSIX launcher, executed", ()
 
   it("with no centrail anywhere, runs npx at the launcher's major", async () => {
     const b = await bin();
+    // npx ships beside its Node; without that Node, a runner's real Node (and its npx) wins.
+    await fake(join(b, "node"), "node");
     await fake(join(b, "npx"), "npx");
     expect((await run({ script: null, node: null }, b)).code).toBe(0);
     expect(await argv()).toEqual(["npx", "-y", "centrail@0", "hook", "stop", "--centrail-hook", "--surface", "codex"]);
