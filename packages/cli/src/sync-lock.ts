@@ -150,6 +150,10 @@ export function abandoned(holder: LockHolder, now: number, isAlive: (pid: number
 // ownerless), so a fresh holder that took it meanwhile is never deleted.
 // The lock is renamed aside before it is removed: a crash mid-delete leaves
 // no half-removed lock behind.
+const RENAME_BUSY = new Set(["EPERM", "EBUSY", "EACCES"]);
+const RENAME_RETRIES = 20;
+const RENAME_RETRY_MS = 50;
+
 async function reclaim(lockPath: string, judged: LockHolder, host: string, now: () => number): Promise<boolean> {
   const guard = `${lockPath}.reclaim`;
   try {
@@ -171,11 +175,20 @@ async function reclaim(lockPath: string, judged: LockHolder, host: string, now: 
     const same = judged.owner ? current.owner?.nonce === judged.owner.nonce : !current.owner;
     if (!same) return false;
     const aside = `${lockPath}.stale-${randomUUID()}`;
-    try {
-      await rename(lockPath, aside);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return true;
-      throw err;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await rename(lockPath, aside);
+        break;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return true;
+        // Windows refuses to rename a directory while another process has a
+        // file in it open (a claimer reading owner.json): retry briefly, as
+        // npm's graceful-fs does, then leave the lock to whoever holds it.
+        if (!RENAME_BUSY.has(code ?? "")) throw err;
+        if (attempt >= RENAME_RETRIES) return false;
+        await new Promise((r) => setTimeout(r, RENAME_RETRY_MS));
+      }
     }
     await rm(aside, { recursive: true, force: true });
     return true;
