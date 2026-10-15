@@ -5,6 +5,8 @@
 # one: PATH first, then the Node that last ran centrail in a terminal
 # (recorded in its config dir), then the usual install spots. Builtins only,
 # so it runs under any PATH; stdin passes through to the CLI untouched.
+# The discovery block is shared verbatim with the stable launcher that
+# `centrail setup` writes (packages/cli/src/launcher.ts NODE_DISCOVERY_SH).
 script="${0%/*}/centrail.mjs"
 use() { [ -n "$1" ] && [ -x "$1" ] && exec "$1" "$script" hook stop; }
 
@@ -22,5 +24,5 @@ done
 for n in "${NVM_DIR:-${HOME:-}/.nvm}"/versions/node/*/bin/node; do last="$n"; done
 use "${last:-}"
 
-echo "centrail: no Node.js found for the Stop hook; run \`npx centrail setup-plugin\` once in a terminal to record yours" >&2
+echo "centrail: no Node.js found for the Stop hook; run \`npx centrail setup\` once in a terminal to record yours" >&2
 exit 1

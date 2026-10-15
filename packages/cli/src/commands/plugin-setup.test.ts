@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The Claude Code plugin offer, against a scratch settings.json and a fake
+// The Claude Code plugin setup, against a scratch settings.json and a fake
 // `claude`: no test runs the real one or touches ~/.claude. The fake does
 // what the real one was seen to do (Claude Code 2.1.293, in a scratch
 // CLAUDE_CONFIG_DIR): `marketplace add` refuses a source its settings entry
@@ -15,9 +15,8 @@ const dir = vi.hoisted(() => {
   return d;
 });
 
-import { readConfig } from "../config.js";
 import { hookCommand, installStopHook } from "./hooks-install.js";
-import { offerPlugin, PLUGIN_STEPS, type ClaudeRunner } from "./plugin-setup.js";
+import { PLUGIN_STEPS, setUpPlugin, type ClaudeRunner } from "./plugin-setup.js";
 
 const RELEASE = { source: "github", repo: "braydenyancy/centrail-cli", ref: "release" };
 let settingsPath: string;
@@ -42,9 +41,6 @@ function fakeClaude(opts: { fail?: string } = {}): ClaudeRunner {
     return { code: 0, output: "✔ done\n" };
   };
 }
-const never = async (): Promise<string> => {
-  throw new Error("asked without a terminal");
-};
 
 beforeEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -59,7 +55,7 @@ afterEach(() => vi.restoreAllMocks());
 
 const settings = async () => JSON.parse(await readFile(settingsPath, "utf-8"));
 
-describe("offerPlugin, on yes", () => {
+describe("setUpPlugin", () => {
   const handHook = hookCommand("/usr/bin/node", "/usr/lib/node_modules/centrail/dist/index.js");
   const original = installStopHook(
     {
@@ -87,11 +83,11 @@ describe("offerPlugin, on yes", () => {
         { type: "command", command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/centrail.mjs" hook stop' },
         { type: "command", command: 'sh "/old/plugins/centrail/0.7.2/scripts/hook.sh"' },
       ] }] } }));
-      const deps = { settingsPath, claude: fakeClaude(), ask: async () => "y" };
-      await offerPlugin({ interactive: true, again: true }, deps);
+      const claude = fakeClaude();
+      await setUpPlugin(claude, settingsPath);
       const once = await settings();
       expect(once.hooks.Stop).toEqual([{ matcher: "*", hooks: [keep] }]);
-      await offerPlugin({ interactive: true, again: true }, deps);
+      await setUpPlugin(claude, settingsPath);
       expect(await settings()).toEqual(once);
       expect(await readFile(codexPath, "utf-8")).toBe(codexRaw);
     } finally {
@@ -105,7 +101,7 @@ describe("offerPlugin, on yes", () => {
     const raw = `${JSON.stringify(original, null, 4)}\n`;
     await writeFile(settingsPath, raw);
 
-    await offerPlugin({ interactive: true }, { settingsPath, claude: fakeClaude(), ask: async () => "" });
+    expect(await setUpPlugin(fakeClaude(), settingsPath)).toBe(true);
 
     expect(calls).toEqual([
       ["plugin", "marketplace", "add", "braydenyancy/centrail-cli#release", "--scope", "user"],
@@ -121,15 +117,14 @@ describe("offerPlugin, on yes", () => {
     expect(after.hooks.PreToolUse).toEqual(original.hooks!.PreToolUse);
     expect(after.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: "node other-stop.mjs" }] }]);
     expect(await readFile(`${settingsPath}.centrail-backup`, "utf-8")).toBe(raw); // as found, before `claude` touched it
-    expect((await readConfig()).pluginAnswer).toBe("yes");
-    expect(said).toContain("Removed the Stop hook `centrail install-hooks` wrote");
+    expect(said).toContain("Removed the standalone centrail Stop hook");
     expect(said).toContain("Claude Code sessions already open: run /reload-plugins in each, or restart them");
   });
 
   it("re-points a marketplace 0.6.1's README added at the default branch, which `claude` alone refuses to move", async () => {
     await writeFile(settingsPath, JSON.stringify({ extraKnownMarketplaces: { centrail: { source: { source: "github", repo: "braydenyancy/centrail-cli" } } } }));
 
-    await offerPlugin({ interactive: true }, { settingsPath, claude: fakeClaude(), ask: async () => "yes" });
+    await setUpPlugin(fakeClaude(), settingsPath);
 
     expect((await settings()).extraKnownMarketplaces.centrail).toEqual({ source: RELEASE, autoUpdate: true });
   });
@@ -137,7 +132,7 @@ describe("offerPlugin, on yes", () => {
   it("a failed `claude` step writes no autoUpdate, keeps the hand-written hook, and prints the steps", async () => {
     await writeFile(settingsPath, JSON.stringify(original));
 
-    await offerPlugin({ interactive: true }, { settingsPath, claude: fakeClaude({ fail: "install" }), ask: async () => "" });
+    expect(await setUpPlugin(fakeClaude({ fail: "install" }), settingsPath)).toBe(false);
 
     const after = await settings();
     expect(after.extraKnownMarketplaces.centrail.autoUpdate).toBeUndefined();
@@ -149,47 +144,11 @@ describe("offerPlugin, on yes", () => {
   it("never writes over a settings.json that does not parse", async () => {
     await writeFile(settingsPath, '{ "model": "opus", }');
 
-    await offerPlugin({ interactive: true }, { settingsPath, claude: fakeClaude(), ask: async () => "" });
+    expect(await setUpPlugin(fakeClaude(), settingsPath)).toBe(false);
 
     expect(calls).toEqual([]);
     expect(await readFile(settingsPath, "utf-8")).toBe('{ "model": "opus", }');
     expect(said).toContain(`Cannot parse ${settingsPath}`);
     expect(said).toContain("claude plugin marketplace add braydenyancy/centrail-cli#release");
-  });
-});
-
-describe("offerPlugin, otherwise", () => {
-  it("on no: prints the steps once, writes nothing, and is not asked again", async () => {
-    await writeFile(settingsPath, '{"model":"opus"}');
-
-    await offerPlugin({ interactive: true }, { settingsPath, claude: fakeClaude(), ask: async () => "n" });
-
-    expect(calls).toEqual([]);
-    expect(await readFile(settingsPath, "utf-8")).toBe('{"model":"opus"}');
-    expect(said).toContain("claude plugin install centrail@centrail");
-    expect((await readConfig()).pluginAnswer).toBe("no");
-
-    said = "";
-    await offerPlugin({ interactive: true }, { settingsPath, claude: fakeClaude(), ask: never });
-    expect(said).toBe("");
-    // `centrail setup-plugin` asks again.
-    await offerPlugin({ interactive: true, again: true }, { settingsPath, claude: fakeClaude(), ask: async () => "y" });
-    expect((await settings()).extraKnownMarketplaces.centrail.autoUpdate).toBe(true);
-  });
-
-  it("without `claude` on PATH: prints the steps, does not ask, and asks at a later connect", async () => {
-    await offerPlugin({ interactive: true }, { settingsPath, claude: null, ask: never });
-
-    expect(said).toContain("claude plugin marketplace add braydenyancy/centrail-cli#release");
-    expect((await readConfig()).pluginAnswer).toBeNull();
-  });
-
-  it("without a terminal: never asks, never writes", async () => {
-    await offerPlugin({ interactive: false }, { settingsPath, claude: fakeClaude(), ask: never });
-
-    expect(calls).toEqual([]);
-    await expect(readFile(settingsPath)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(said).toContain(PLUGIN_STEPS);
-    expect((await readConfig()).pluginAnswer).toBeNull();
   });
 });

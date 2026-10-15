@@ -115,6 +115,29 @@ export function stillTrue<T extends VersionRecord>(rec: T | undefined, at: Versi
   return (floor ? isOlder(at.version, floor) : rec.version === at.version) ? rec : undefined;
 }
 
+// A record about the Claude Code plugin's copy is stale once Claude Code has
+// installed a version past it (installed_plugins.json): the notice that said
+// "you have 0.7.3" outlives the update until the plugin's hook next syncs.
+export function pluginCaughtUp(rec: VersionRecord | undefined, pluginVersion: string | null, floor: string | undefined): boolean {
+  if (!rec || rec.channel !== "plugin" || !pluginVersion) return false;
+  return floor ? !isOlder(pluginVersion, floor) : pluginVersion !== rec.version;
+}
+
+// The saved records still worth saying, for `status` and `doctor`: never
+// one this running copy has outgrown, nor one the plugin has updated past.
+export function liveVersionRecords(
+  state: Pick<SyncState, "outdated" | "updateNotice">,
+  at: VersionRecord,
+  pluginVersion: string | null,
+): { outdated?: Outdated; notice?: UpdateNotice } {
+  let outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
+  let notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
+  if (pluginCaughtUp(outdated, pluginVersion, outdated?.minimum)) outdated = undefined;
+  if (pluginCaughtUp(notice, pluginVersion, notice?.latest)) notice = undefined;
+  if (notice && outdated && sameInstall(notice, outdated)) notice = undefined;
+  return { ...(outdated ? { outdated } : {}), ...(notice ? { notice } : {}) };
+}
+
 // The server refused this version. Thrown past the best-effort catches of
 // the attribute calls, so a sync ends on the one line that says what to do.
 export class CliOutdatedError extends Error {

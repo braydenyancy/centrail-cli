@@ -5,6 +5,7 @@ import {
   hookParked,
   copyLabel,
   howToUpdate,
+  liveVersionRecords,
   outdatedLine,
   parseCliVersions,
   settleVersions,
@@ -128,5 +129,30 @@ describe("the server's word on versions", () => {
     const parked = { version: "0.6.1", channel: "npm-global" as const }; // a 426 with no minimum named
     expect(stillTrue(parked, { version: "0.6.1", channel: "npm-global" }, undefined)).toBe(parked);
     expect(stillTrue(parked, { version: "0.7.0", channel: "npm-global" }, undefined)).toBeUndefined();
+  });
+});
+
+describe("liveVersionRecords: what status and doctor still say", () => {
+  const npx = { version: "0.8.1", channel: "npx" as const };
+  const plugin = { version: "0.7.3", channel: "plugin" as const, latest: "0.8.1" };
+
+  it("drops a plugin notice once Claude Code installed the version it named (the stale 'you have 0.7.3')", () => {
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, "0.7.3")).toEqual({ notice: plugin });
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, null)).toEqual({ notice: plugin });
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, "0.8.1")).toEqual({});
+    expect(liveVersionRecords({ updateNotice: plugin }, npx, "0.9.0")).toEqual({});
+  });
+
+  it("drops a parked plugin once its installed version moved past the park", () => {
+    const parked = { version: "0.6.0", channel: "plugin" as const, minimum: "0.7.0" };
+    expect(liveVersionRecords({ outdated: parked }, npx, "0.6.0")).toEqual({ outdated: parked });
+    expect(liveVersionRecords({ outdated: parked }, npx, "0.7.0")).toEqual({});
+  });
+
+  it("never blames the copy that is running once it caught up, and keeps other copies' records", () => {
+    const mine = { version: "0.8.0", channel: "npx" as const, latest: "0.8.1" };
+    expect(liveVersionRecords({ updateNotice: mine }, npx, null)).toEqual({});
+    const global = { version: "0.8.0", channel: "npm-global" as const, latest: "0.8.1" };
+    expect(liveVersionRecords({ updateNotice: global }, npx, "0.8.1")).toEqual({ notice: global });
   });
 });

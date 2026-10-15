@@ -1,6 +1,7 @@
 import { disconnectedMessage, parkAuth, readAuth, readDisconnected, readState } from "../config.js";
 import { checkDevice } from "../device.js";
-import { copyLabel, here, outdatedLine, sameInstall, stillTrue, updateNoticeLine } from "../update.js";
+import { copyLabel, here, liveVersionRecords, outdatedLine, updateNoticeLine } from "../update.js";
+import { installedPluginVersion } from "./integrations.js";
 
 // Which account this machine syncs to, asked of the server, so two people or
 // two accounts on one machine can tell before a sync goes anywhere. Exits 1
@@ -30,14 +31,16 @@ export async function runStatus(): Promise<void> {
 
 // What the last syncs learned about the CLI's version (update.ts): a hook's
 // background sync has no terminal to say it in, so it is said here. A
-// record this install has outgrown since is not repeated.
+// record this install, or Claude Code's plugin update, has outgrown since is
+// not repeated.
 async function printVersionRecords(): Promise<void> {
   const state = await readState();
   const at = here();
   console.log(`This command ran centrail ${at.version} (${copyLabel(at.channel)}).`);
-  const outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
-  const notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
+  // The plugin's version as Claude Code installed it: a record about an
+  // older plugin copy is not repeated once Claude Code has updated it.
+  const { outdated, notice } = liveVersionRecords(state, at, await installedPluginVersion());
   // Saved by whichever copy last synced, often the plugin's hook: name it.
   if (outdated) console.log(`${copyLabel(outdated.channel)}: ${outdatedLine(outdated)}`);
-  if (notice && !(outdated && sameInstall(notice, outdated))) console.log(`${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}`);
+  if (notice) console.log(`${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}`);
 }

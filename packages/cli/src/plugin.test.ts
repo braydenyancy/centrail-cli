@@ -11,7 +11,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readSidecar } from "./sidecar.js";
 import { scratch, type Scratch } from "./testing/git-fixture.js";
-import { codexHookCommand, installStopHook } from "./commands/hooks-install.js";
+import { hookCommand as pinnedCommand, installStopHook } from "./commands/hooks-install.js";
+
+// The pinned Codex form 0.7.4–0.8.x wrote; still what an upgraded machine runs
+// until `centrail setup` moves it to the launcher (launcher.test.ts).
+const codexHookCommand = (node: string, script: string) => `${pinnedCommand(node, script)} --surface codex`;
 
 const ROOT = join(__dirname, "..", "..", "..");
 const PLUGIN = join(ROOT, "plugins", "centrail");
@@ -164,7 +168,7 @@ describe("plugins/centrail", () => {
     const bin = await bareBin(cfg);
     const { stdout, stderr, code } = await runHook("/bin/sh", ["-c", await hookCommand()], cfg, "{}", { PATH: bin, HOME: join(cfg, "home") });
     expect([stdout, code]).toEqual(["", 1]);
-    expect(stderr.trim().split("\n")).toEqual([expect.stringMatching(/^centrail: no Node\.js found .*npx centrail setup-plugin/)]);
+    expect(stderr.trim().split("\n")).toEqual([expect.stringMatching(/^centrail: no Node\.js found .*npx centrail setup`/)]);
     await rm(cfg, { recursive: true, force: true });
   });
 });

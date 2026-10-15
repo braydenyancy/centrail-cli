@@ -1,22 +1,20 @@
-import { constants, realpathSync } from "node:fs";
+import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, win32 } from "node:path";
 import { claudeConfigDirs, codexHomeDir } from "@centrail/parsers";
-import { stat } from "node:fs/promises";
-import { readConfig, replaceFile } from "../config.js";
-import { runSetup } from "./scope.js";
+import { replaceFile } from "../config.js";
+import { safeRealpath, stableInstallPath } from "../launcher.js";
 
-// `centrail install-hooks` / `uninstall-hooks`: one Stop entry in Claude
-// Code's user settings that runs `centrail hook stop`. Idempotent — an
-// existing centrail entry is replaced, every other hook is left exactly as
-// found, and the file is rewritten atomically. The command pins the node
-// binary and bundle path that ran the install, so the hook keeps working
-// without a PATH and never triggers a network resolve per turn. Under a version
-// manager's `installs/<tool>/<version>/` it pins the version alias instead
-// (stableInstallPath), so an upgrade or prune does not strand it. For Claude Code the plugin is the
-// primary path (plugin-setup.ts): its shell launcher discovers Node, and Claude
-// Code keeps its bundle current. Launchers are harness-specific. This stays
-// for Codex and for anyone without the plugin.
+export { stableInstallPath } from "../launcher.js";
+
+// The hook entries centrail owns in a harness's user hook file (Claude Code's
+// settings.json, Codex's hooks.json; both `{ "hooks": { "Stop": [...] } }`).
+// `centrail setup` writes one Stop entry running the stable launcher
+// (launcher.ts) with fixed arguments; `centrail uninstall` removes it. Every
+// form an earlier release wrote is recognised, so a rerun replaces it: the
+// pinned `"<node>" "<bundle>" hook stop --centrail-hook`, direct-node and
+// absolute plugin launchers. Every other hook is left exactly as found, and
+// the file is rewritten atomically after a one-time backup.
 export type Settings = Record<string, unknown> & { hooks?: Record<string, unknown> };
 
 export const HOOK_MARK = "hook stop"; // legacy invocation, qualified by launcher ownership below
@@ -25,13 +23,21 @@ export function claudeSettingsPath(): string {
   return join(claudeConfigDirs()[0], "settings.json");
 }
 
-// Codex reads the same hooks.json shape (`{ "hooks": { "Stop": [...] } }`)
-// from its home. Compatible input does not make Claude's plugin launcher
-// portable: Codex gets an explicit pinned command. Only written when its home exists.
+// Codex reads the same hooks.json shape from its home. Compatible input does
+// not make Claude's plugin launcher portable: Codex gets the stable launcher.
 export function codexHooksPath(): string {
   return join(codexHomeDir(), "hooks.json");
 }
 
+// The Stop command for a harness: the launcher path, quoted for the shell
+// the harness runs hooks with, and fixed arguments. `--centrail-hook` is
+// the ownership marker; `--surface codex` selects Codex's JSON output.
+export function launcherCommand(launcher: string, surface: "claude-code" | "codex", platform: NodeJS.Platform = process.platform): string {
+  return `${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "codex" ? " --surface codex" : ""}`;
+}
+
+// The pinned form 0.7.4–0.8.x wrote (absolute Node and bundle). Recognised
+// for migration; never written any more.
 export function hookCommand(
   node: string = process.execPath,
   script: string = process.argv[1],
@@ -39,37 +45,6 @@ export function hookCommand(
 ): string {
   const abs = stableInstallPath(safeRealpath(script));
   return `${quote(stableInstallPath(node), platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
-}
-
-// mise installs each tool version under `…/installs/<tool>/<version>/` and keeps
-// alias links beside it (`latest`, the major). A hook pinned to the version dir
-// breaks when that version is upgraded and pruned; pinned through an alias it
-// follows the upgrade. An alias is used only when it resolves to this very
-// install, so installing never switches versions. `latest` survives a major
-// bump; the major alias is the fallback when a newer major is installed beside
-// it. Without a matching alias (asdf, nvm, a plain install) the path is kept.
-export function stableInstallPath(p: string): string {
-  const m = /^(.*[\\/]installs[\\/][^\\/]+[\\/])([^\\/]+)([\\/].*)$/.exec(p);
-  if (!m) return p;
-  const [, base, version, rest] = m;
-  const target = safeRealpath(p);
-  for (const alias of ["latest", version.split(".")[0]]) {
-    if (alias === version) return p;
-    const candidate = `${base}${alias}${rest}`;
-    if (safeRealpath(candidate) === target && candidate !== target) return candidate;
-  }
-  return p;
-}
-
-export function codexHookCommand(node = process.execPath, script = process.argv[1], platform: NodeJS.Platform = process.platform): string {
-  requireStandaloneBundle(script);
-  return `${hookCommand(node, script, platform)} --surface codex`;
-}
-
-function requireStandaloneBundle(script: string): void {
-  if (/[\\/]scripts[\\/]centrail\.mjs$/.test(safeRealpath(script))) {
-    throw new Error("Install explicit hooks from a standalone Centrail CLI installation, then run centrail install-hooks. A plugin bundle cannot own the Codex launcher.");
-  }
 }
 
 export function installStopHook(settings: Settings, command: string): Settings {
@@ -94,51 +69,6 @@ export function uninstallStopHook(settings: Settings): Settings {
   const out: Settings = { ...settings, hooks };
   if (Object.keys(hooks).length === 0) delete out.hooks;
   return out;
-}
-
-export async function runInstallHooks(
-  opts: { remove: boolean },
-  path = claudeSettingsPath(),
-  codexPath: string | null = null,
-): Promise<void> {
-  // Refuse before scope/setup or user settings writes: otherwise a plugin
-  // invocation could pin Codex to a cache directory its harness can replace.
-  if (!opts.remove) requireStandaloneBundle(process.argv[1]);
-  if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
-    await runSetup({ interactive: process.stdin.isTTY === true });
-  }
-  const targets = [path];
-  const codex = codexPath ?? ((await isDir(codexHomeDir())) ? codexHooksPath() : null);
-  if (codex) targets.push(codex);
-  for (const target of targets) {
-    const { settings, indent } = await readSettingsFile(target);
-    if (!opts.remove && target === path && pluginEnabled(settings)) {
-      // The plugin's own Stop hook already runs every turn; a second one
-      // would only race it.
-      const next = uninstallStopHook(settings);
-      if (JSON.stringify(next) !== JSON.stringify(settings)) await writeSettingsFile(target, next, indent);
-      console.log(`Claude Code runs centrail through its plugin (${PLUGIN_ID}); obsolete standalone Centrail hooks removed, no hook added.`);
-      continue;
-    }
-    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, target === codex ? codexHookCommand() : hookCommand());
-    await writeSettingsFile(target, next, indent);
-    console.log(opts.remove ? `Removed the centrail Stop hook from ${target}.` : `Installed the centrail Stop hook in ${target}.`);
-  }
-  if (opts.remove) return;
-  if (codex) console.log("Codex: review and trust the updated user hook, then reload/restart sessions. Other config layers and plugin caches are not edited.");
-  console.log(
-    `Once the hooks are enabled and trusted, each ${codex ? "Claude Code and Codex" : "Claude Code"} turn records session id, folder, repo identity, branch, head and the\n` +
-      "repos its files touched, locally, and starts a background `centrail sync` at most every 10 minutes.\n" +
-      "Nothing leaves this machine except what `centrail inspect --last` shows.",
-  );
-}
-
-async function isDir(p: string): Promise<boolean> {
-  try {
-    return (await stat(p)).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 // Recognise emitted launch forms, not arbitrary text mentioning Centrail.
@@ -181,6 +111,7 @@ export function isCentrailCommand(command: string): boolean {
   const bundle = (s: string) => /(?:^|\/)centrail(?:[-@][^/]*)?\/(?:.*\/)?(?:index\.js|centrail\.mjs)$/.test(s) || /\/scripts\/centrail\.mjs$/.test(s);
   const stopArgs = (args: string[]) => [HOOK_MARK, `${HOOK_MARK} --surface codex`, `${HOOK_MARK} --centrail-hook`, `${HOOK_MARK} --centrail-hook --surface codex`].includes(args.join(" "));
   const absolute = (s: string) => isAbsolute(s) || win32.isAbsolute(s);
+  if (absolute(words[0] ?? "") && /^centrail-hook(?:\.cmd)?$/.test(base(normal[0] ?? "")) && words.includes("--centrail-hook") && stopArgs(words.slice(1))) return true;
   if (words.slice(2).includes("--centrail-hook") && stopArgs(words.slice(2)) && absolute(words[0] ?? "") && absolute(words[1] ?? "")) return true;
   if (cli(normal[0] ?? "") && stopArgs(normal.slice(1))) return true;
   if (/^node(?:\.exe)?$/.test(base(normal[0] ?? "")) && stopArgs(normal.slice(2)) && (words.includes("--centrail-hook") || bundle(normal[1] ?? ""))) return true;
@@ -237,14 +168,6 @@ export async function backUpSettings(path: string): Promise<void> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "EEXIST" && code !== "ENOENT") throw err;
-  }
-}
-
-function safeRealpath(p: string): string {
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
   }
 }
 

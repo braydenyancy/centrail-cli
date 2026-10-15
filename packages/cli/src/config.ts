@@ -274,7 +274,6 @@ export type Config = {
   pendingBackfill: boolean; // scope widened: next sync rescans everything once
   hideRepoNames: boolean; // ship repo identity as a keyed hash, no label
   hideBranchNames: boolean; // never ship gitBranch
-  pluginAnswer: "yes" | "no" | null; // connect's Claude Code plugin question; asked once (plugin-setup.ts)
 };
 
 const DEFAULT_CONFIG: Config = {
@@ -287,7 +286,6 @@ const DEFAULT_CONFIG: Config = {
   pendingBackfill: false,
   hideRepoNames: false,
   hideBranchNames: false,
-  pluginAnswer: null,
 };
 
 export function parseConfig(raw: unknown): Config {
@@ -309,7 +307,6 @@ export function parseConfig(raw: unknown): Config {
     pendingBackfill: o.pendingBackfill === true,
     hideRepoNames: o.hideRepoNames === true,
     hideBranchNames: o.hideBranchNames === true,
-    pluginAnswer: o.pluginAnswer === "yes" || o.pluginAnswer === "no" ? o.pluginAnswer : null,
   };
 }
 

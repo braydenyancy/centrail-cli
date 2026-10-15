@@ -736,7 +736,7 @@ async function parseSession(path, since) {
   } catch {
     return [];
   }
-  const context = {};
+  const context2 = {};
   const events = [];
   let previousTotals = null;
   let baselineValid = true;
@@ -750,19 +750,19 @@ async function parseSession(path, since) {
     }
     if (!isObject4(raw) || !isObject4(raw.payload)) continue;
     if (raw.type === "session_meta") {
-      readSessionMeta(raw.payload, context);
+      readSessionMeta(raw.payload, context2);
       continue;
     }
     if (raw.type === "turn_context") {
-      readTurnContext(raw.payload, context);
+      readTurnContext(raw.payload, context2);
       continue;
     }
     if (raw.type === "response_item" && raw.payload.type === "function_call") {
-      context.touched = mergeEvidence(context.touched, codexCallEvidence(raw.payload.name, raw.payload.arguments, context.cwd ?? "/"));
+      context2.touched = mergeEvidence(context2.touched, codexCallEvidence(raw.payload.name, raw.payload.arguments, context2.cwd ?? "/"));
       continue;
     }
     if (raw.type !== "event_msg" || raw.payload.type !== "token_count") continue;
-    const parsed = parseTokenCount(raw, context, previousTotals, baselineValid);
+    const parsed = parseTokenCount(raw, context2, previousTotals, baselineValid);
     if (parsed.total) {
       previousTotals = parsed.total;
       baselineValid = true;
@@ -780,23 +780,23 @@ async function parseSession(path, since) {
   }
   return events;
 }
-function readSessionMeta(payload, context) {
-  context.sessionId = stringOr2(payload.session_id) ?? stringOr2(payload.id);
-  context.cwd = stringOr2(payload.cwd);
-  context.client = stringOr2(payload.originator) ?? stringOr2(payload.source);
-  context.clientVersion = stringOr2(payload.cli_version);
-  if (isObject4(payload.git)) context.gitBranch = stringOr2(payload.git.branch);
+function readSessionMeta(payload, context2) {
+  context2.sessionId = stringOr2(payload.session_id) ?? stringOr2(payload.id);
+  context2.cwd = stringOr2(payload.cwd);
+  context2.client = stringOr2(payload.originator) ?? stringOr2(payload.source);
+  context2.clientVersion = stringOr2(payload.cli_version);
+  if (isObject4(payload.git)) context2.gitBranch = stringOr2(payload.git.branch);
 }
-function readTurnContext(payload, context) {
+function readTurnContext(payload, context2) {
   const turnId = stringOr2(payload.turn_id);
-  if (turnId !== context.turnId) context.touched = void 0;
-  context.turnId = turnId;
-  context.model = stringOr2(payload.model);
-  context.cwd = stringOr2(payload.cwd) ?? context.cwd;
+  if (turnId !== context2.turnId) context2.touched = void 0;
+  context2.turnId = turnId;
+  context2.model = stringOr2(payload.model);
+  context2.cwd = stringOr2(payload.cwd) ?? context2.cwd;
 }
-function parseTokenCount(raw, context, previousTotals, baselineValid) {
+function parseTokenCount(raw, context2, previousTotals, baselineValid) {
   const timestamp = stringOr2(raw.timestamp);
-  if (!timestamp || !context.sessionId) return { event: null, total: null, bareLast: false };
+  if (!timestamp || !context2.sessionId) return { event: null, total: null, bareLast: false };
   const occurredAt = new Date(timestamp);
   if (Number.isNaN(occurredAt.getTime())) return { event: null, total: null, bareLast: false };
   const payload = raw.payload;
@@ -814,16 +814,16 @@ function parseTokenCount(raw, context, previousTotals, baselineValid) {
   }
   const usage = last ?? (total && baselineValid ? subtractTokenUsage(total, previousTotals) : null);
   const bareLast = last !== null && total === null;
-  const model = stringOr2(payload.model) ?? stringOr2(info.model) ?? context.model;
+  const model = stringOr2(payload.model) ?? stringOr2(info.model) ?? context2.model;
   if (!usage || !model) return { event: null, total, bareLast };
   const totalInput = usage.inputTokens;
   const cacheRead = usage.cachedInputTokens;
   const cacheWrite = usage.cacheWriteInputTokens;
   const input = Math.max(0, totalInput - cacheRead - cacheWrite);
-  const turn = context.turnId ?? "turn-unknown";
+  const turn = context2.turnId ?? "turn-unknown";
   return {
     event: {
-      externalId: `${context.sessionId}:${turn}:${occurredAt.toISOString()}`,
+      externalId: `${context2.sessionId}:${turn}:${occurredAt.toISOString()}`,
       provider: "openai",
       model,
       inputTokens: input,
@@ -835,13 +835,13 @@ function parseTokenCount(raw, context, previousTotals, baselineValid) {
       cacheCreation1hTokens: 0,
       occurredAt,
       metadata: {
-        cwd: context.cwd,
-        gitBranch: context.gitBranch,
-        sessionId: context.sessionId,
-        version: context.clientVersion,
-        entrypoint: context.client,
-        turn: context.turnId ? `${context.sessionId}#${context.turnId}` : void 0,
-        touched: context.touched ? { writes: [...context.touched.writes], reads: [...context.touched.reads] } : { writes: [], reads: [] }
+        cwd: context2.cwd,
+        gitBranch: context2.gitBranch,
+        sessionId: context2.sessionId,
+        version: context2.clientVersion,
+        entrypoint: context2.client,
+        turn: context2.turnId ? `${context2.sessionId}#${context2.turnId}` : void 0,
+        touched: context2.touched ? { writes: [...context2.touched.writes], reads: [...context2.touched.reads] } : { writes: [], reads: [] }
       }
     },
     total,
@@ -1406,6 +1406,18 @@ function stillTrue(rec, at, floor) {
   if (!rec || !sameInstall(rec, at)) return rec;
   return (floor ? isOlder(at.version, floor) : rec.version === at.version) ? rec : void 0;
 }
+function pluginCaughtUp(rec, pluginVersion, floor) {
+  if (!rec || rec.channel !== "plugin" || !pluginVersion) return false;
+  return floor ? !isOlder(pluginVersion, floor) : pluginVersion !== rec.version;
+}
+function liveVersionRecords(state, at, pluginVersion) {
+  let outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
+  let notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
+  if (pluginCaughtUp(outdated, pluginVersion, outdated?.minimum)) outdated = void 0;
+  if (pluginCaughtUp(notice, pluginVersion, notice?.latest)) notice = void 0;
+  if (notice && outdated && sameInstall(notice, outdated)) notice = void 0;
+  return { ...outdated ? { outdated } : {}, ...notice ? { notice } : {} };
+}
 var CliOutdatedError = class extends Error {
   constructor(outdated) {
     super(outdatedLine(outdated));
@@ -1719,8 +1731,7 @@ var DEFAULT_CONFIG = {
   scopeDecidedAt: null,
   pendingBackfill: false,
   hideRepoNames: false,
-  hideBranchNames: false,
-  pluginAnswer: null
+  hideBranchNames: false
 };
 function parseConfig(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_CONFIG };
@@ -1740,8 +1751,7 @@ function parseConfig(raw) {
     scopeDecidedAt: typeof o.scopeDecidedAt === "string" ? o.scopeDecidedAt : null,
     pendingBackfill: o.pendingBackfill === true,
     hideRepoNames: o.hideRepoNames === true,
-    hideBranchNames: o.hideBranchNames === true,
-    pluginAnswer: o.pluginAnswer === "yes" || o.pluginAnswer === "no" ? o.pluginAnswer : null
+    hideBranchNames: o.hideBranchNames === true
   };
 }
 function stringList(v) {
@@ -1811,31 +1821,442 @@ function openBrowser(url, baseUrl) {
   }
 }
 
-// src/commands/plugin-setup.ts
-import { execFile as execFile2 } from "node:child_process";
-import { constants as constants2 } from "node:fs";
-import { access } from "node:fs/promises";
-import { delimiter, join as join11 } from "node:path";
-import { createInterface as createInterface2 } from "node:readline/promises";
+// src/commands/integrations.ts
+import { readFile as readFile12, stat as stat10 } from "node:fs/promises";
+import { dirname as dirname7, isAbsolute as isAbsolute3, join as join13, win32 as win323 } from "node:path";
+
+// src/launcher.ts
+import { realpathSync as realpathSync2 } from "node:fs";
+import { chmod as chmod2, mkdir as mkdir2, readFile as readFile7, rm as rm2, stat as stat7, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname2, join as join8 } from "node:path";
+function launcherPath(dir = CONFIG_DIR, platform = process.platform) {
+  return join8(dir, "bin", platform === "win32" ? "centrail-hook.cmd" : "centrail-hook");
+}
+function stableScript(script, env = process.env) {
+  const channel = detectChannel(script, env);
+  if (channel !== "mise" && channel !== "npm-global") return null;
+  const real = safeRealpath(script);
+  if (real.replace(/\\/g, "/").includes("/_npx/")) return null;
+  return stableInstallPath(real);
+}
+function launcherTarget(script = process.argv[1] ?? "", node = process.execPath, previous = null, env = process.env) {
+  const stableNode = stableInstallPath(node);
+  return {
+    // A copy that is not stable (npx, a checkout) keeps the stable install
+    // an earlier setup recorded, so running setup from npx never downgrades.
+    script: stableScript(script, env) ?? previous,
+    node: stableNode.replace(/\\/g, "/").includes("/_npx/") ? null : stableNode,
+    major: CLI_VERSION.split(".")[0]
+  };
+}
+var NODE_DISCOVERY_SH = `use "$(command -v node)"
+cfg="\${CENTRAIL_CONFIG_DIR:-\${HOME:-}/.config/centrail}"
+if [ -r "$cfg/node" ]; then
+  read -r recorded < "$cfg/node"
+  use "\${recorded:-}"
+fi
+for n in /opt/homebrew/bin/node /usr/local/bin/node \\
+  "\${HOME:-}/.volta/bin/node" "\${HOME:-}/.local/share/mise/shims/node" "\${HOME:-}/.asdf/shims/node" \\
+  "\${HOME:-}/.local/share/fnm/aliases/default/bin/node" "\${HOME:-}/Library/Application Support/fnm/aliases/default/bin/node"; do
+  use "$n"
+done
+for n in "\${NVM_DIR:-\${HOME:-}/.nvm}"/versions/node/*/bin/node; do last="$n"; done
+use "\${last:-}"
+`;
+var MISSING = "centrail: no centrail CLI or Node.js found for this hook; run `npx centrail setup` once in a terminal";
+function launcherScript(target, platform = process.platform) {
+  return platform === "win32" ? windowsLauncher(target) : posixLauncher(target);
+}
+function posixLauncher(t) {
+  return `#!/bin/sh
+# centrail-hook: written by \`centrail setup\`, rewritten by each setup and
+# upgrade; do not edit. Agent hooks run this fixed path, so their entries
+# never change between releases. Finds a Node as the Claude Code plugin's
+# hook.sh does, then runs the first centrail that exists: the install that
+# ran setup, \`centrail\` on PATH, or npx. Arguments and stdin pass through.
+script=${shQuote(t.script ?? "")}
+pinned=${shQuote(t.node ?? "")}
+node=
+use() { [ -z "$node" ] && [ -n "$1" ] && [ -x "$1" ] && node="$1"; return 0; }
+${NODE_DISCOVERY_SH}use "$pinned"
+if [ -n "$node" ]; then
+  PATH="\${node%/*}\${PATH:+:$PATH}"
+  export PATH
+  [ -n "$script" ] && [ -f "$script" ] && exec "$node" "$script" "$@"
+fi
+cli="$(command -v centrail)"
+[ -n "$cli" ] && exec "$cli" "$@"
+npx="$(command -v npx)"
+[ -n "$npx" ] && exec "$npx" -y centrail@${t.major} "$@"
+echo "${MISSING.replace(/`/g, "\\`")}" >&2
+exit 1
+`;
+}
+function windowsLauncher(t) {
+  const lines = [
+    "@echo off",
+    "rem centrail-hook.cmd: written by `centrail setup`, rewritten by each setup and upgrade; do not edit.",
+    "rem Runs the install that ran setup, else centrail on PATH, else npx. Arguments and stdin pass through.",
+    "setlocal",
+    `set "script=${cmdValue(t.script ?? "")}"`,
+    `set "pinned=${cmdValue(t.node ?? "")}"`,
+    'set "node="',
+    'for %%I in (node.exe) do set "node=%%~$PATH:I"',
+    'set "cfg=%CENTRAIL_CONFIG_DIR%"',
+    'if not defined cfg set "cfg=%USERPROFILE%\\.config\\centrail"',
+    'if not defined node if exist "%cfg%\\node" set /p node=<"%cfg%\\node"',
+    'if defined node if not exist "%node%" set "node="',
+    'if not defined node if exist "%pinned%" set "node=%pinned%"',
+    'if not defined node if exist "%ProgramFiles%\\nodejs\\node.exe" set "node=%ProgramFiles%\\nodejs\\node.exe"',
+    'if not defined node if exist "%LOCALAPPDATA%\\Volta\\bin\\node.exe" set "node=%LOCALAPPDATA%\\Volta\\bin\\node.exe"',
+    'if defined node for %%D in ("%node%") do set "PATH=%%~dpD;%PATH%"',
+    'if defined node if exist "%script%" goto run_script',
+    'set "cli="',
+    'for %%I in (centrail.cmd) do set "cli=%%~$PATH:I"',
+    "if defined cli goto run_cli",
+    'set "npx="',
+    'for %%I in (npx.cmd) do set "npx=%%~$PATH:I"',
+    "if defined npx goto run_npx",
+    `>&2 echo ${MISSING.replace(/`/g, "")}`,
+    "exit /b 1",
+    ":run_script",
+    '"%node%" "%script%" %*',
+    "exit /b %ERRORLEVEL%",
+    ":run_cli",
+    'call "%cli%" %*',
+    "exit /b %ERRORLEVEL%",
+    ":run_npx",
+    `call "%npx%" -y centrail@${t.major} %*`,
+    "exit /b %ERRORLEVEL%"
+  ];
+  return `${lines.join("\r\n")}\r
+`;
+}
+function launcherScriptPath(content) {
+  return launcherValue(content, "script");
+}
+function launcherValue(content, name) {
+  const posix = new RegExp(`^${name}='((?:[^']|'\\\\'')*)'$`, "m").exec(content);
+  if (posix) return posix[1].replace(/'\\''/g, "'") || null;
+  const win = new RegExp(`^set "${name}=([^"\\r\\n]*)"\\r?$`, "m").exec(content);
+  return win ? win[1] || null : null;
+}
+async function readLauncher(path = launcherPath()) {
+  try {
+    return await readFile7(path, "utf-8");
+  } catch {
+    return null;
+  }
+}
+async function writeLauncher(content, path = launcherPath()) {
+  if (await readLauncher(path) === content && await isExecutable(path)) return false;
+  await mkdir2(dirname2(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile2(tmp, content, { mode: 493 });
+  await chmod2(tmp, 493);
+  await replaceFile(tmp, path);
+  return true;
+}
+async function removeLauncher(path = launcherPath()) {
+  if (await readLauncher(path) === null) return false;
+  await rm2(path, { force: true });
+  return true;
+}
+async function isExecutable(path, platform = process.platform) {
+  try {
+    const s = await stat7(path);
+    return s.isFile() && (platform === "win32" || (s.mode & 73) !== 0);
+  } catch {
+    return false;
+  }
+}
+function stableInstallPath(p) {
+  const m = /^(.*[\\/]installs[\\/][^\\/]+[\\/])([^\\/]+)([\\/].*)$/.exec(p);
+  if (!m) return p;
+  const [, base, version, rest2] = m;
+  const target = safeRealpath(p);
+  for (const alias of ["latest", version.split(".")[0]]) {
+    if (alias === version) return p;
+    const candidate = `${base}${alias}${rest2}`;
+    if (safeRealpath(candidate) === target && candidate !== target) return candidate;
+  }
+  return p;
+}
+function safeRealpath(p) {
+  try {
+    return realpathSync2(p);
+  } catch {
+    return p;
+  }
+}
+function shQuote(s) {
+  if (/[\n\r]/.test(s)) throw new Error("Cannot write a launcher with a newline in a path.");
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+function cmdValue(s) {
+  if (/[\n\r"%]/.test(s)) throw new Error("Cannot write a Windows launcher with quotes, percent signs or newlines in a path.");
+  return s;
+}
 
 // src/commands/hooks-install.ts
-import { constants, realpathSync as realpathSync3 } from "node:fs";
-import { copyFile, mkdir as mkdir3, readFile as readFile10, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname5, isAbsolute as isAbsolute2, join as join10, win32 as win322 } from "node:path";
-import { stat as stat9 } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir as mkdir3, readFile as readFile8, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname3, isAbsolute as isAbsolute2, join as join9, win32 } from "node:path";
+var HOOK_MARK = "hook stop";
+function claudeSettingsPath() {
+  return join9(claudeConfigDirs()[0], "settings.json");
+}
+function codexHooksPath() {
+  return join9(codexHomeDir(), "hooks.json");
+}
+function launcherCommand(launcher, surface, platform = process.platform) {
+  return `${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "codex" ? " --surface codex" : ""}`;
+}
+function installStopHook(settings, command2) {
+  const hooks = isObject7(settings.hooks) ? { ...settings.hooks } : {};
+  const cleaned = uninstallStopHook(settings);
+  const kept = Array.isArray(cleaned.hooks?.Stop) ? [...cleaned.hooks.Stop] : [];
+  kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
+  return { ...settings, hooks: { ...hooks, Stop: kept } };
+}
+function uninstallStopHook(settings) {
+  if (!isObject7(settings.hooks) || !Array.isArray(settings.hooks.Stop)) return settings;
+  const kept = settings.hooks.Stop.flatMap((g) => {
+    if (!isObject7(g) || !Array.isArray(g.hooks)) return [g];
+    const handlers = g.hooks.filter((h) => !isObject7(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
+    if (handlers.length === g.hooks.length) return [g];
+    return handlers.length ? [{ ...g, hooks: handlers }] : [];
+  });
+  const hooks = { ...settings.hooks };
+  if (kept.length > 0) hooks.Stop = kept;
+  else delete hooks.Stop;
+  const out = { ...settings, hooks };
+  if (Object.keys(hooks).length === 0) delete out.hooks;
+  return out;
+}
+function commandWords(command2) {
+  const words = [];
+  const windows = /"(?:[a-z]:\\|\\\\)/i.test(command2);
+  let word = "", quoted = "", started = false;
+  for (let i = 0; i < command2.length; i++) {
+    const char = command2[i];
+    if (/[\n\r]/.test(char)) return null;
+    if (quoted) {
+      if (char === quoted) quoted = "";
+      else if (!windows && quoted === '"' && char === "\\" && /[\\"$`]/.test(command2[i + 1] ?? "")) word += command2[++i];
+      else word += char;
+    } else if (char === '"' || char === "'") {
+      quoted = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) words.push(word);
+      word = "";
+      started = false;
+    } else {
+      if (/[;&|<>$`]/.test(char)) return null;
+      word += char;
+      started = true;
+    }
+  }
+  if (quoted) return null;
+  if (started) words.push(word);
+  return words;
+}
+function isCentrailCommand(command2) {
+  const words = commandWords(command2);
+  if (!words) return false;
+  const normal = words.map((w) => w.replaceAll("\\", "/"));
+  const base = (s) => s.split("/").pop() ?? "";
+  const cli = (s) => /(?:^|\/)centrail(?:\.cmd|\.exe|@[^/]*)?$/.test(s);
+  const bundle = (s) => /(?:^|\/)centrail(?:[-@][^/]*)?\/(?:.*\/)?(?:index\.js|centrail\.mjs)$/.test(s) || /\/scripts\/centrail\.mjs$/.test(s);
+  const stopArgs = (args) => [HOOK_MARK, `${HOOK_MARK} --surface codex`, `${HOOK_MARK} --centrail-hook`, `${HOOK_MARK} --centrail-hook --surface codex`].includes(args.join(" "));
+  const absolute2 = (s) => isAbsolute2(s) || win32.isAbsolute(s);
+  if (absolute2(words[0] ?? "") && /^centrail-hook(?:\.cmd)?$/.test(base(normal[0] ?? "")) && words.includes("--centrail-hook") && stopArgs(words.slice(1))) return true;
+  if (words.slice(2).includes("--centrail-hook") && stopArgs(words.slice(2)) && absolute2(words[0] ?? "") && absolute2(words[1] ?? "")) return true;
+  if (cli(normal[0] ?? "") && stopArgs(normal.slice(1))) return true;
+  if (/^node(?:\.exe)?$/.test(base(normal[0] ?? "")) && stopArgs(normal.slice(2)) && (words.includes("--centrail-hook") || bundle(normal[1] ?? ""))) return true;
+  if (/^npx(?:\.cmd)?$/.test(base(normal[0] ?? ""))) {
+    const args = normal.slice(1);
+    if (args[0] === "-y" || args[0] === "--yes") args.shift();
+    return cli(args[0] ?? "") && stopArgs(args.slice(1));
+  }
+  return normal.length === 2 && /^(?:sh|bash)(?:\.exe)?$/.test(base(normal[0])) && /\/centrail\/(?:[^/]+\/)?scripts\/hook\.sh$/.test(normal[1]);
+}
+var PLUGIN_ID = "centrail@centrail";
+function pluginEnabled(settings) {
+  return isObject7(settings.enabledPlugins) && settings.enabledPlugins[PLUGIN_ID] === true;
+}
+async function readSettingsFile(path) {
+  let raw;
+  try {
+    raw = await readFile8(path, "utf-8");
+  } catch (err) {
+    if (err.code === "ENOENT") return { settings: {}, indent: "  " };
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Cannot parse ${path}: ${err.message}`);
+  }
+  if (!isObject7(parsed)) throw new Error(`Cannot parse ${path}: not a JSON object`);
+  return { settings: parsed, indent: /^([ \t]+)"/m.exec(raw)?.[1] ?? "  " };
+}
+async function writeSettingsFile(path, settings, indent = "  ") {
+  await mkdir3(dirname3(path), { recursive: true });
+  await backUpSettings(path);
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile3(tmp, `${JSON.stringify(settings, null, indent)}
+`);
+  await replaceFile(tmp, path);
+}
+async function backUpSettings(path) {
+  try {
+    await copyFile(path, `${path}.centrail-backup`, constants.COPYFILE_EXCL);
+  } catch (err) {
+    const code = err.code;
+    if (code !== "EEXIST" && code !== "ENOENT") throw err;
+  }
+}
+function quote(s, platform) {
+  if (/[\n\r]/.test(s)) throw new Error("Cannot install a hook with a newline in an executable path.");
+  if (platform === "win32") {
+    if (/["%]/.test(s)) throw new Error("Cannot install a Windows hook with quotes or percent expansion in an executable path.");
+    return `"${s}"`;
+  }
+  return `"${s.replace(/[\\"$`]/g, "\\$&")}"`;
+}
+function isObject7(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// src/commands/plugin-setup.ts
+import { execFile } from "node:child_process";
+import { constants as constants2 } from "node:fs";
+import { access } from "node:fs/promises";
+import { basename as basename3, delimiter, join as join10 } from "node:path";
+import { createInterface } from "node:readline/promises";
+var MARKETPLACE = "centrail";
+var MARKETPLACE_REPO = "braydenyancy/centrail-cli";
+var RELEASE_REF = "release";
+var PLUGIN_STEPS = `
+  Claude Code can run centrail after every turn through its plugin, kept current by Claude Code:
+    claude plugin marketplace add ${MARKETPLACE_REPO}#${RELEASE_REF}
+    claude plugin install ${PLUGIN_ID}
+  then turn on its updates: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Enable auto-update.`;
+async function setUpPlugin(claude, path) {
+  let file = await readOrSay(path);
+  if (!file) return false;
+  await backUpSettings(path);
+  const entry = marketplaceEntry(file.settings);
+  if (entry && !isReleaseSource(entry.source)) {
+    await writeSettingsFile(path, withMarketplace(file.settings, { ...entry, source: RELEASE_SOURCE }), file.indent);
+  }
+  console.log("  Setting up the Claude Code plugin\u2026");
+  for (const args of [
+    ["plugin", "marketplace", "add", `${MARKETPLACE_REPO}#${RELEASE_REF}`, "--scope", "user"],
+    ["plugin", "install", PLUGIN_ID, "--scope", "user"]
+  ]) {
+    const r = await claude(args);
+    if (r.code !== 0) {
+      const why = r.output.trim().split("\n").filter(Boolean).pop() ?? `exit ${r.code}`;
+      console.log(`  \u2717 \`claude ${args.join(" ")}\` failed: ${why}`);
+      console.log("  Try again with `centrail setup`, or by hand:");
+      console.log(PLUGIN_STEPS);
+      return false;
+    }
+  }
+  file = await readOrSay(path);
+  if (!file) return false;
+  const withUpdates = withMarketplace(file.settings, { ...marketplaceEntry(file.settings) ?? { source: RELEASE_SOURCE }, autoUpdate: true });
+  const next = uninstallStopHook(withUpdates);
+  const removedHook = JSON.stringify(next) !== JSON.stringify(withUpdates);
+  await writeSettingsFile(path, next, file.indent);
+  console.log("  \u2713 Claude Code plugin installed. Claude Code updates it after each release (from its next launch);");
+  console.log(`    to stop that: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Disable auto-update.`);
+  if (removedHook) console.log("  \u2713 Removed the standalone centrail Stop hook: the plugin's hook replaces it.");
+  console.log("  Claude Code sessions already open: run /reload-plugins in each, or restart them, so their turns are recorded.");
+  return true;
+}
+var RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
+function marketplaceEntry(settings) {
+  const all = settings.extraKnownMarketplaces;
+  const entry = isObject8(all) ? all[MARKETPLACE] : void 0;
+  return isObject8(entry) ? entry : void 0;
+}
+function withMarketplace(settings, entry) {
+  const all = isObject8(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
+  return { ...settings, extraKnownMarketplaces: { ...all, [MARKETPLACE]: entry } };
+}
+function isReleaseSource(source) {
+  return isObject8(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
+}
+async function readOrSay(path) {
+  try {
+    return await readSettingsFile(path);
+  } catch (err) {
+    console.log(`  ${err.message}. Left it as it is; to set the plugin up by hand:`);
+    console.log(PLUGIN_STEPS);
+    return null;
+  }
+}
+async function findExecutable(name, env = process.env, platform = process.platform) {
+  const win = platform === "win32";
+  const exts = win ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  for (const dir of (env.PATH ?? env.Path ?? "").split(win ? ";" : delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const bin = join10(dir, `${name}${ext}`);
+      try {
+        await access(bin, win ? constants2.F_OK : constants2.X_OK);
+        return bin;
+      } catch {
+      }
+    }
+  }
+  return null;
+}
+function runnerFor(bin, platform = process.platform) {
+  const win = platform === "win32";
+  return (args) => new Promise((resolve) => {
+    execFile(win ? basename3(bin).replace(/\.(?:cmd|exe|bat)$/i, "") : bin, args, { shell: win, timeout: 18e4, windowsHide: true }, (err, stdout, stderr) => {
+      const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
+      resolve({ code, output: `${stdout}${stderr}` });
+    });
+  });
+}
+async function askLine(prompt) {
+  process.stdout.write(prompt);
+  if (process.stdin.readableEnded) {
+    process.stdout.write("\n");
+    return null;
+  }
+  const rl = createInterface({ input: process.stdin });
+  try {
+    const next = await rl[Symbol.asyncIterator]().next();
+    if (next.done) process.stdout.write("\n");
+    return next.done ? null : String(next.value);
+  } finally {
+    rl.close();
+  }
+}
+function isObject8(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
 
 // src/commands/scope.ts
-import { createInterface } from "node:readline/promises";
+import { createInterface as createInterface2 } from "node:readline/promises";
 
 // src/resolver.ts
-import { stat as stat8 } from "node:fs/promises";
+import { stat as stat9 } from "node:fs/promises";
 
 // src/git.ts
-import { execFile, spawn as spawn2 } from "node:child_process";
-import { readFile as readFile7, stat as stat7 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname2, join as join8, win32 } from "node:path";
+import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
+import { readFile as readFile9, stat as stat8 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname4, join as join11, win32 as win322 } from "node:path";
 import { promisify } from "node:util";
-var execFileAsync = promisify(execFile);
+var execFileAsync = promisify(execFile2);
 var GIT_REDIRECT_VARS = [
   "GIT_DIR",
   "GIT_WORK_TREE",
@@ -1874,7 +2295,7 @@ async function resolveRepoRoot(cwd) {
 }
 function nativePath(p, platform = process.platform) {
   if (platform !== "win32") return p;
-  const n = win32.normalize(p);
+  const n = win322.normalize(p);
   return /^[a-z]:/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
 }
 function isWithin(path, root, platform = process.platform) {
@@ -1886,16 +2307,16 @@ function samePath(a, b, platform = process.platform) {
   return platform === "win32" ? winKey(a) === winKey(b) : a === b;
 }
 function winKey(p) {
-  return win32.normalize(p).toLowerCase();
+  return win322.normalize(p).toLowerCase();
 }
 async function nearestDirectory(path) {
   let dir = path;
   for (; ; ) {
     try {
-      if ((await stat7(dir)).isDirectory()) return dir;
+      if ((await stat8(dir)).isDirectory()) return dir;
     } catch {
     }
-    const parent = dirname2(dir);
+    const parent = dirname4(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -1906,9 +2327,9 @@ function deepestRoot(roots, path) {
   return best;
 }
 async function nestedCheckout(root, dir) {
-  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname2(d)) {
+  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname4(d)) {
     try {
-      await stat7(join8(d, ".git"));
+      await stat8(join11(d, ".git"));
       return true;
     } catch {
     }
@@ -1919,8 +2340,8 @@ async function readMainCheckout(repoRoot) {
   try {
     const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
     const common = stdout.trim() ? nativePath(stdout.trim()) : "";
-    if (!common || basename3(common) !== ".git") return null;
-    const main = dirname2(common);
+    if (!common || basename4(common) !== ".git") return null;
+    const main = dirname4(common);
     return samePath(main, repoRoot) ? null : main;
   } catch {
     return null;
@@ -2159,7 +2580,7 @@ async function readRepoSize(repoRoot) {
   let totalLoc = 0;
   for (const rel of files) {
     try {
-      const content = await readFile7(`${repoRoot}/${rel}`);
+      const content = await readFile9(`${repoRoot}/${rel}`);
       if (content.byteLength > LOC_BYTES_CAP) continue;
       if (content.includes(0)) continue;
       totalLoc += content.toString("utf-8").split("\n").length;
@@ -2171,10 +2592,10 @@ async function readRepoSize(repoRoot) {
 
 // src/identity.ts
 import { createHmac } from "node:crypto";
-import { realpathSync as realpathSync2 } from "node:fs";
+import { realpathSync as realpathSync3 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { readFile as readFile8 } from "node:fs/promises";
-import { basename as basename4, dirname as dirname3, join as join9 } from "node:path";
+import { readFile as readFile10 } from "node:fs/promises";
+import { basename as basename5, dirname as dirname5, join as join12 } from "node:path";
 function remoteKey(url) {
   const raw = url.trim();
   if (!raw) return null;
@@ -2268,10 +2689,10 @@ function displayLabel(path) {
   const home = homedir7().replace(/[\/\\]+$/, "");
   if (samePath(p, home)) return "~";
   try {
-    if (samePath(realpathSync2.native(p), realpathSync2.native(home))) return "~";
+    if (samePath(realpathSync3.native(p), realpathSync3.native(home))) return "~";
   } catch {
   }
-  return basename4(p);
+  return basename5(p);
 }
 async function repoIdentity(repoRoot) {
   const label = displayLabel(repoRoot);
@@ -2289,14 +2710,14 @@ async function staleWorktree(dir) {
   let d = dir;
   for (; ; ) {
     try {
-      const text2 = await readFile8(join9(d, ".git"), "utf-8");
+      const text2 = await readFile10(join12(d, ".git"), "utf-8");
       const m = /^gitdir:\s*(.+?)\s*$/m.exec(text2);
       const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
       return wt ? { folder: d, main: wt[1] } : null;
     } catch (err) {
       if (err.code === "EISDIR") return null;
     }
-    const parent = dirname3(d);
+    const parent = dirname5(d);
     if (parent === d) return null;
     d = parent;
   }
@@ -2318,14 +2739,14 @@ async function readHeadState(repoRoot) {
 }
 
 // src/resolver.ts
-import { basename as basename5 } from "node:path";
+import { basename as basename6 } from "node:path";
 
 // src/sidecar.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile9, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname4 } from "node:path";
+import { appendFile, mkdir as mkdir4, readFile as readFile11, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname6 } from "node:path";
 var SIDECAR_PATH = `${CONFIG_DIR}/sessions.jsonl`;
 async function appendSidecar(line, path = SIDECAR_PATH) {
-  await mkdir2(dirname4(path), { recursive: true });
+  await mkdir4(dirname6(path), { recursive: true });
   await appendFile(path, `${JSON.stringify(line)}
 `, { mode: 384 });
 }
@@ -2333,7 +2754,7 @@ async function readSidecar(path = SIDECAR_PATH) {
   const out = /* @__PURE__ */ new Map();
   let text2;
   try {
-    text2 = await readFile9(path, "utf-8");
+    text2 = await readFile11(path, "utf-8");
   } catch {
     return out;
   }
@@ -2354,7 +2775,7 @@ var SIDECAR_RETENTION_DAYS = 90;
 async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   let text2;
   try {
-    text2 = await readFile9(path, "utf-8");
+    text2 = await readFile11(path, "utf-8");
   } catch {
     return;
   }
@@ -2379,7 +2800,7 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   const expired = now - SIDECAR_RETENTION_DAYS * 24 * 60 * 60 * 1e3;
   for (const [sessionId, at] of lastSeen) if (at < expired) keep.delete(sessionId);
   const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile2(tmp, [...keep.values(), ...recent].map((l) => `${l}
+  await writeFile4(tmp, [...keep.values(), ...recent].map((l) => `${l}
 `).join(""), { mode: 384 });
   await replaceFile(tmp, path);
 }
@@ -2505,7 +2926,7 @@ var IdentityResolver = class _IdentityResolver {
         const stale = await staleWorktree(cwd);
         const mainRoot = stale ? await this.rootFor(stale.main) : null;
         const id = mainRoot ? await this.identityForRoot(mainRoot) : null;
-        if (id && stale) return { ...id, label: basename5(stale.folder) };
+        if (id && stale) return { ...id, label: basename6(stale.folder) };
         return folderIdentity(cwd, this.installId);
       }
       if (fromSidecar) return folderIdentity(fromSidecar.cwd, this.installId);
@@ -2540,7 +2961,7 @@ var IdentityResolver = class _IdentityResolver {
     let known = this.existsByCwd.get(cwd);
     if (known === void 0) {
       try {
-        known = (await stat8(cwd)).isDirectory();
+        known = (await stat9(cwd)).isDirectory();
       } catch {
         known = false;
       }
@@ -2605,7 +3026,7 @@ function parseSelection(answer, count3) {
 }
 
 // src/commands/scope.ts
-var SCOPE_UNANSWERED = "Scope not answered: repo names held back; run `centrail setup`.";
+var SCOPE_UNANSWERED = "Scope not answered: repo names held back; run `centrail scope`.";
 function isInteractiveTerminal() {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
@@ -2632,10 +3053,10 @@ async function runSetup(opts) {
       recordAnswer(cfg);
       await writeConfig(cfg);
     }
-    console.log("  Change any time: `centrail setup`, `centrail exclude <repo>`, `centrail repos`.");
+    console.log("  Change any time: `centrail scope`, `centrail exclude <repo>`, `centrail repos`.");
     return;
   }
-  const rl = createInterface({ input: process.stdin });
+  const rl = createInterface2({ input: process.stdin });
   const lines = rl[Symbol.asyncIterator]();
   const ask = async (prompt) => {
     process.stdout.write(prompt);
@@ -2731,330 +3152,303 @@ async function runSurfaces(args) {
   console.log(`${name}: ${state}`);
 }
 
-// src/commands/hooks-install.ts
-var HOOK_MARK = "hook stop";
-function claudeSettingsPath() {
-  return join10(claudeConfigDirs()[0], "settings.json");
-}
-function codexHooksPath() {
-  return join10(codexHomeDir(), "hooks.json");
-}
-function hookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
-  const abs = stableInstallPath(safeRealpath(script));
-  return `${quote(stableInstallPath(node), platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
-}
-function stableInstallPath(p) {
-  const m = /^(.*[\\/]installs[\\/][^\\/]+[\\/])([^\\/]+)([\\/].*)$/.exec(p);
-  if (!m) return p;
-  const [, base, version, rest2] = m;
-  const target = safeRealpath(p);
-  for (const alias of ["latest", version.split(".")[0]]) {
-    if (alias === version) return p;
-    const candidate = `${base}${alias}${rest2}`;
-    if (safeRealpath(candidate) === target && candidate !== target) return candidate;
+// src/commands/integrations.ts
+var AGENTS = ["claude-code", "codex"];
+var LABEL = { "claude-code": "Claude Code", codex: "Codex" };
+function parseAgents(names) {
+  if (names.length === 0) return void 0;
+  const out = [];
+  for (const name of names.flatMap((n) => n.split(",")).map((n) => n.trim()).filter(Boolean)) {
+    if (!AGENTS.includes(name)) throw new Error(`Unknown agent "${name}": use ${AGENTS.join(" or ")}.`);
+    if (!out.includes(name)) out.push(name);
   }
-  return p;
-}
-function codexHookCommand(node = process.execPath, script = process.argv[1], platform = process.platform) {
-  requireStandaloneBundle(script);
-  return `${hookCommand(node, script, platform)} --surface codex`;
-}
-function requireStandaloneBundle(script) {
-  if (/[\\/]scripts[\\/]centrail\.mjs$/.test(safeRealpath(script))) {
-    throw new Error("Install explicit hooks from a standalone Centrail CLI installation, then run centrail install-hooks. A plugin bundle cannot own the Codex launcher.");
-  }
-}
-function installStopHook(settings, command2) {
-  const hooks = isObject7(settings.hooks) ? { ...settings.hooks } : {};
-  const cleaned = uninstallStopHook(settings);
-  const kept = Array.isArray(cleaned.hooks?.Stop) ? [...cleaned.hooks.Stop] : [];
-  kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
-  return { ...settings, hooks: { ...hooks, Stop: kept } };
-}
-function uninstallStopHook(settings) {
-  if (!isObject7(settings.hooks) || !Array.isArray(settings.hooks.Stop)) return settings;
-  const kept = settings.hooks.Stop.flatMap((g) => {
-    if (!isObject7(g) || !Array.isArray(g.hooks)) return [g];
-    const handlers = g.hooks.filter((h) => !isObject7(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
-    if (handlers.length === g.hooks.length) return [g];
-    return handlers.length ? [{ ...g, hooks: handlers }] : [];
-  });
-  const hooks = { ...settings.hooks };
-  if (kept.length > 0) hooks.Stop = kept;
-  else delete hooks.Stop;
-  const out = { ...settings, hooks };
-  if (Object.keys(hooks).length === 0) delete out.hooks;
   return out;
 }
-async function runInstallHooks(opts, path = claudeSettingsPath(), codexPath = null) {
-  if (!opts.remove) requireStandaloneBundle(process.argv[1]);
-  if (!opts.remove && !(await readConfig()).scopeDecidedAt) {
-    await runSetup({ interactive: process.stdin.isTTY === true });
-  }
-  const targets = [path];
-  const codex = codexPath ?? (await isDir(codexHomeDir()) ? codexHooksPath() : null);
-  if (codex) targets.push(codex);
-  for (const target of targets) {
-    const { settings, indent } = await readSettingsFile(target);
-    if (!opts.remove && target === path && pluginEnabled(settings)) {
-      const next2 = uninstallStopHook(settings);
-      if (JSON.stringify(next2) !== JSON.stringify(settings)) await writeSettingsFile(target, next2, indent);
-      console.log(`Claude Code runs centrail through its plugin (${PLUGIN_ID}); obsolete standalone Centrail hooks removed, no hook added.`);
-      continue;
+function context(deps) {
+  const platform = deps.platform ?? process.platform;
+  const claudeDir = deps.claudeDir ?? claudeConfigDirs()[0];
+  const codexHome = deps.codexHome ?? codexHomeDir();
+  return {
+    env: deps.env ?? process.env,
+    platform,
+    claudeDir,
+    codexHome,
+    claudeSettings: join13(claudeDir, "settings.json"),
+    codexHooks: join13(codexHome, "hooks.json"),
+    launcher: launcherPath(deps.configDir ?? CONFIG_DIR, platform),
+    recordedNode: join13(deps.configDir ?? CONFIG_DIR, "node"),
+    script: deps.script ?? process.argv[1] ?? "",
+    node: deps.node ?? process.execPath,
+    deps
+  };
+}
+async function inspectIntegrations(deps = {}) {
+  const ctx = context(deps);
+  const content = await readLauncher(ctx.launcher);
+  const recorded = content ? launcherScriptPath(content) : null;
+  const previous = recorded && await exists(recorded) ? recorded : null;
+  const target = launcherTarget(ctx.script, ctx.node, previous, ctx.env);
+  const expected = launcherScript(target, ctx.platform);
+  const executable = content !== null && await isExecutable(ctx.launcher, ctx.platform);
+  const launcher = {
+    path: ctx.launcher,
+    present: content !== null,
+    executable,
+    current: content === expected && executable,
+    script: recorded,
+    resolvesCli: executable && (previous !== null || await cliReachable(ctx, content ? launcherValue(content, "pinned") : null))
+  };
+  const expectedResolves = target.script !== null || await cliReachable(ctx, target.node);
+  const claudeCli = ctx.deps.claude === void 0 ? await findExecutable("claude", ctx.env, ctx.platform) : ctx.deps.claude ? "claude" : null;
+  const codexCli = await findExecutable("codex", ctx.env, ctx.platform);
+  const claudeFile = await readHooksFile(ctx, ctx.claudeSettings, "claude-code");
+  const settings = claudeFile.settings;
+  const entry = marketplaceEntry(settings);
+  const claude = {
+    ...claudeFile,
+    detected: claudeCli !== null || await isDir(ctx.claudeDir),
+    cli: claudeCli,
+    plugin: {
+      enabled: pluginEnabled(settings),
+      autoUpdate: entry?.autoUpdate === true,
+      release: isReleaseSource(entry?.source),
+      version: await installedPluginVersion(ctx.claudeDir)
     }
-    const next = opts.remove ? uninstallStopHook(settings) : installStopHook(settings, target === codex ? codexHookCommand() : hookCommand());
-    await writeSettingsFile(target, next, indent);
-    console.log(opts.remove ? `Removed the centrail Stop hook from ${target}.` : `Installed the centrail Stop hook in ${target}.`);
+  };
+  const codex = {
+    ...await readHooksFile(ctx, ctx.codexHooks, "codex"),
+    detected: codexCli !== null || await isDir(ctx.codexHome),
+    cli: codexCli
+  };
+  return { claude, codex, launcher, expected, expectedResolves };
+}
+async function cliReachable(ctx, pinnedNode) {
+  const recorded = (await readFile12(ctx.recordedNode, "utf-8").catch(() => "")).trim();
+  const beside = [recorded, pinnedNode].filter((n) => Boolean(n)).map((n) => ctx.platform === "win32" ? win323.dirname(n) : dirname7(n));
+  const path = [ctx.env.PATH ?? ctx.env.Path ?? "", ...beside].filter(Boolean).join(ctx.platform === "win32" ? ";" : ":");
+  const env = { ...ctx.env, PATH: path };
+  for (const name of ["centrail", "npx"]) if (await findExecutable(name, env, ctx.platform)) return true;
+  return false;
+}
+async function readHooksFile(ctx, path, agent) {
+  let file;
+  try {
+    file = await readSettingsFile(path);
+  } catch {
+    return { readable: false, settings: {}, indent: "  ", hooks: [] };
   }
-  if (opts.remove) return;
-  if (codex) console.log("Codex: review and trust the updated user hook, then reload/restart sessions. Other config layers and plugin caches are not edited.");
-  console.log(
-    `Once the hooks are enabled and trusted, each ${codex ? "Claude Code and Codex" : "Claude Code"} turn records session id, folder, repo identity, branch, head and the
-repos its files touched, locally, and starts a background \`centrail sync\` at most every 10 minutes.
-Nothing leaves this machine except what \`centrail inspect --last\` shows.`
-  );
+  const expected = launcherCommand(ctx.launcher, agent, ctx.platform);
+  const hooks = [];
+  for (const command2 of stopCommands(file.settings).filter(isCentrailCommand)) {
+    const words = commandWords(command2) ?? [];
+    const launcherForm = /(?:^|[\\/])centrail-hook(?:\.cmd)?$/.test(words[0] ?? "");
+    const absolute2 = words.slice(0, 2).filter((w) => isAbsolute3(w) || win323.isAbsolute(w));
+    const pinned = !launcherForm && absolute2.length === 2;
+    const resolves = launcherForm ? await isExecutable(words[0], ctx.platform) : pinned && (await Promise.all(absolute2.map(exists))).every(Boolean);
+    hooks.push({ form: launcherForm ? "launcher" : pinned ? "pinned" : "other", current: command2 === expected, resolves });
+  }
+  return { readable: true, ...file, hooks };
+}
+function stopCommands(settings) {
+  const groups = Array.isArray(settings.hooks?.Stop) ? settings.hooks.Stop : [];
+  const out = [];
+  for (const g of groups) {
+    if (!isObject9(g) || !Array.isArray(g.hooks)) continue;
+    for (const h of g.hooks) if (isObject9(h) && h.type === "command" && typeof h.command === "string") out.push(h.command);
+  }
+  return out;
+}
+async function installedPluginVersion(claudeDir = claudeConfigDirs()[0]) {
+  try {
+    const raw = JSON.parse(await readFile12(join13(claudeDir, "plugins", "installed_plugins.json"), "utf-8"));
+    const entry = raw?.plugins?.[PLUGIN_ID];
+    const versions = (Array.isArray(entry) ? entry : [entry]).map((e) => isObject9(e) ? e.version : void 0).filter(validVersion);
+    return versions.sort(compareVersions).pop() ?? null;
+  } catch {
+    return null;
+  }
+}
+function planSetup(ins, agents) {
+  return AGENTS.map((agent) => {
+    const state = agent === "claude-code" ? ins.claude : ins.codex;
+    const skip = (detail) => ({ agent, action: "skip", via: null, detail });
+    if (agents && !agents.includes(agent)) return skip("not selected");
+    if (!state.detected) return skip("not detected");
+    if (!state.readable) return skip(`${agent === "codex" ? "hooks.json" : "settings.json"} does not parse; fix it, then rerun`);
+    if (agent === "claude-code") {
+      const { plugin, hooks } = ins.claude;
+      if (plugin.enabled) {
+        const fixes = [
+          ...plugin.autoUpdate && plugin.release ? [] : [`turn on auto-update from #${RELEASE_REF}`],
+          ...hooks.length ? [`remove ${hooks.length} standalone hook${hooks.length > 1 ? "s" : ""}`] : []
+        ];
+        const version = plugin.version ? ` ${plugin.version}` : "";
+        return fixes.length ? { agent, action: "repair", via: "plugin", detail: `plugin${version}: ${fixes.join(", ")}` } : { agent, action: "ok", via: "plugin", detail: `plugin${version}, updated by Claude Code` };
+      }
+      if (ins.claude.cli) {
+        const replaces = hooks.length ? "; replaces the standalone hook" : "";
+        return { agent, action: "install", via: "plugin", detail: `plugin ${PLUGIN_ID} from ${MARKETPLACE_REPO}#${RELEASE_REF}, auto-update on${replaces}` };
+      }
+    }
+    return hookPlan(agent, state.hooks, ins.launcher, agent === "claude-code" ? " (no `claude` command for the plugin)" : "");
+  });
+}
+function hookPlan(agent, hooks, launcher, why) {
+  const via = "hook";
+  if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail Stop hooks \u2192 one, through the launcher` };
+  if (hooks.length === 0) return { agent, action: "install", via, detail: `Stop hook through the launcher${why}` };
+  if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : "hook"} \u2192 the launcher` };
+  if (!launcher.current) return { agent, action: "update", via, detail: "refresh the launcher" };
+  return { agent, action: "ok", via, detail: "Stop hook through the launcher" };
+}
+var pending = (item) => item.action !== "ok" && item.action !== "skip";
+function printPlan(items, launcher, title) {
+  console.log(title);
+  for (const i of items) console.log(`  ${LABEL[i.agent].padEnd(12)} ${i.action.padEnd(8)} ${i.detail}`);
+  if (items.some((i) => i.via === "hook" && i.action !== "skip")) {
+    const action = !launcher.present ? "install" : launcher.current ? "ok" : "update";
+    console.log(`  ${"launcher".padEnd(12)} ${action.padEnd(8)} ${launcher.path}`);
+  }
+}
+async function runIntegrationSetup(opts, deps = {}) {
+  const ctx = context(deps);
+  const ins = await inspectIntegrations(deps);
+  const plan = planSetup(ins, opts.agents);
+  if (!plan.some((i) => i.action !== "skip" || i.detail !== "not detected")) {
+    console.log("No supported agent found here (Claude Code, Codex). Install one, then run `centrail setup`.");
+    return { plan, changed: false };
+  }
+  printPlan(plan, ins.launcher, "centrail setup:");
+  const usesLauncher = plan.some((i) => i.via === "hook" && pending(i));
+  if (plan.some((i) => i.via === "hook" && i.action !== "skip") && !ins.expectedResolves) {
+    console.log("  Note: the launcher finds no centrail to run here (no stable install, `centrail` or `npx` on PATH).");
+    console.log("    Install one for agents to use: `npm i -g centrail` (or `mise use -g npm:centrail`), then rerun `centrail setup`.");
+  }
+  if (!plan.some(pending)) {
+    console.log("Everything is set up; nothing to change.");
+    return { plan, changed: false };
+  }
+  if (opts.dryRun) {
+    console.log("Dry run: nothing changed.");
+    return { plan, changed: false };
+  }
+  if (!await confirm(opts, deps, "Apply this? [Y/n] ", "centrail setup -y")) return { plan, changed: false };
+  if (!(await readConfig()).scopeDecidedAt) await (deps.scope ?? (() => runSetup({ interactive: opts.interactive === true })))();
+  if (usesLauncher) await writeLauncher(ins.expected, ctx.launcher);
+  for (const item of plan.filter(pending)) {
+    if (item.agent === "claude-code") await applyClaude(ctx, ins, item);
+    else await applyHook(ctx, ctx.codexHooks, "codex");
+  }
+  if (plan.some((i) => i.agent === "codex" && pending(i))) {
+    console.log("  Codex: open /hooks in Codex once and trust centrail's Stop hook. Codex trusts a hook by its hash;");
+    console.log("    this command stays the same across centrail releases, so later updates need no new trust. Restart open sessions.");
+  }
+  console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
+  console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
+  console.log("Nothing leaves this machine except what `centrail inspect --last` shows. Check any time: `centrail doctor`.");
+  return { plan, changed: true };
+}
+async function applyClaude(ctx, ins, item) {
+  const claude = claudeRunner(ctx, ins);
+  if (item.via === "plugin" && claude) {
+    if (await setUpPlugin(claude, ctx.claudeSettings)) return;
+    console.log("  Recording Claude Code turns through a standalone Stop hook until the plugin installs; rerun `centrail setup` to switch.");
+    await writeLauncher(ins.expected, ctx.launcher);
+    await applyHook(ctx, ctx.claudeSettings, "claude-code");
+    return;
+  }
+  if (item.via === "plugin") {
+    const { settings, indent } = await readSettingsFile(ctx.claudeSettings);
+    const entry = marketplaceEntry(settings) ?? { source: RELEASE_SOURCE };
+    const next = uninstallStopHook(withMarketplace(settings, { ...entry, source: RELEASE_SOURCE, autoUpdate: true }));
+    await writeSettingsFile(ctx.claudeSettings, next, indent);
+    console.log(`  \u2713 Claude Code plugin: auto-update on from #${RELEASE_REF}; standalone centrail hooks removed.`);
+    return;
+  }
+  await applyHook(ctx, ctx.claudeSettings, "claude-code");
+}
+async function applyHook(ctx, path, agent) {
+  const { settings, indent } = await readSettingsFile(path);
+  await writeSettingsFile(path, installStopHook(settings, launcherCommand(ctx.launcher, agent, ctx.platform)), indent);
+  console.log(`  \u2713 ${LABEL[agent]}: Stop hook in ${path} runs the launcher.`);
+}
+function claudeRunner(ctx, ins) {
+  if (ctx.deps.claude !== void 0) return ctx.deps.claude;
+  return ins.claude.cli ? runnerFor(ins.claude.cli, ctx.platform) : null;
+}
+async function runUninstall(opts, deps = {}) {
+  const ctx = context(deps);
+  const ins = await inspectIntegrations(deps);
+  const selected = (a) => !opts.agents || opts.agents.includes(a);
+  const removePlugin = selected("claude-code") && !opts.keepPlugin && ins.claude.plugin.enabled;
+  const files = [
+    ["claude-code", ctx.claudeSettings, ins.claude],
+    ["codex", ctx.codexHooks, ins.codex]
+  ];
+  const hookFiles = files.filter(([a, , s]) => selected(a) && s.hooks.length > 0);
+  const launcherKept = files.some(([a, , s]) => !selected(a) && s.hooks.some((h) => h.form === "launcher"));
+  const removeLauncherFile = ins.launcher.present && !launcherKept;
+  const lines = [
+    ...removePlugin ? [`  ${"Claude Code".padEnd(12)} remove   plugin ${PLUGIN_ID} and its marketplace`] : [],
+    ...hookFiles.map(([a, , s]) => `  ${LABEL[a].padEnd(12)} remove   ${s.hooks.length} centrail Stop hook${s.hooks.length > 1 ? "s" : ""}`),
+    ...removeLauncherFile ? [`  ${"launcher".padEnd(12)} remove   ${ins.launcher.path}`] : []
+  ];
+  if (lines.length === 0) {
+    console.log("Nothing of centrail's is installed in these agents.");
+    return { changed: false };
+  }
+  console.log("centrail uninstall:");
+  for (const l of lines) console.log(l);
+  if (!await confirm(opts, deps, "Remove these? [y/N] ", "centrail uninstall -y", false)) return { changed: false };
+  if (removePlugin) {
+    const claude = claudeRunner(ctx, ins);
+    if (!claude) {
+      console.log(`  Claude Code: run \`/plugin uninstall ${PLUGIN_ID}\` in Claude Code (no \`claude\` command here).`);
+    } else {
+      for (const args of [["plugin", "uninstall", PLUGIN_ID, "--scope", "user"], ["plugin", "marketplace", "remove", MARKETPLACE]]) {
+        const r = await claude(args);
+        const why = r.output.trim().split("\n").filter(Boolean).pop() ?? `exit ${r.code}`;
+        console.log(r.code === 0 ? `  \u2713 claude ${args.slice(0, -1).join(" ")}` : `  \u2717 \`claude ${args.join(" ")}\` failed: ${why}`);
+      }
+    }
+  }
+  for (const [agent, path] of hookFiles) {
+    const { settings, indent } = await readSettingsFile(path);
+    await writeSettingsFile(path, uninstallStopHook(settings), indent);
+    console.log(`  \u2713 ${LABEL[agent]}: removed centrail's Stop hook from ${path}.`);
+  }
+  if (removeLauncherFile && await removeLauncher(ins.launcher.path)) console.log("  \u2713 Removed the launcher.");
+  console.log("Restart or reload open agent sessions. Local usage logs and centrail's pairing are untouched (`centrail sync` still works).");
+  return { changed: true };
+}
+async function confirm(opts, deps, prompt, unattended, byDefault = true) {
+  if (opts.yes) return true;
+  if (!opts.interactive) {
+    console.log(`Nothing changed: no terminal to confirm in. Run \`${unattended}\` to apply without asking.`);
+    return false;
+  }
+  const reply = await (deps.ask ?? askLine)(`  ${prompt}`);
+  const answer = reply?.trim().toLowerCase();
+  const yes = answer === void 0 ? false : answer === "" ? byDefault : answer.startsWith("y");
+  if (!yes) console.log("Nothing changed.");
+  return yes;
 }
 async function isDir(p) {
   try {
-    return (await stat9(p)).isDirectory();
+    return (await stat10(p)).isDirectory();
   } catch {
     return false;
   }
 }
-function commandWords(command2) {
-  const words = [];
-  const windows = /"(?:[a-z]:\\|\\\\)/i.test(command2);
-  let word = "", quoted = "", started = false;
-  for (let i = 0; i < command2.length; i++) {
-    const char = command2[i];
-    if (/[\n\r]/.test(char)) return null;
-    if (quoted) {
-      if (char === quoted) quoted = "";
-      else if (!windows && quoted === '"' && char === "\\" && /[\\"$`]/.test(command2[i + 1] ?? "")) word += command2[++i];
-      else word += char;
-    } else if (char === '"' || char === "'") {
-      quoted = char;
-      started = true;
-    } else if (/\s/.test(char)) {
-      if (started) words.push(word);
-      word = "";
-      started = false;
-    } else {
-      if (/[;&|<>$`]/.test(char)) return null;
-      word += char;
-      started = true;
-    }
-  }
-  if (quoted) return null;
-  if (started) words.push(word);
-  return words;
-}
-function isCentrailCommand(command2) {
-  const words = commandWords(command2);
-  if (!words) return false;
-  const normal = words.map((w) => w.replaceAll("\\", "/"));
-  const base = (s) => s.split("/").pop() ?? "";
-  const cli = (s) => /(?:^|\/)centrail(?:\.cmd|\.exe|@[^/]*)?$/.test(s);
-  const bundle = (s) => /(?:^|\/)centrail(?:[-@][^/]*)?\/(?:.*\/)?(?:index\.js|centrail\.mjs)$/.test(s) || /\/scripts\/centrail\.mjs$/.test(s);
-  const stopArgs = (args) => [HOOK_MARK, `${HOOK_MARK} --surface codex`, `${HOOK_MARK} --centrail-hook`, `${HOOK_MARK} --centrail-hook --surface codex`].includes(args.join(" "));
-  const absolute2 = (s) => isAbsolute2(s) || win322.isAbsolute(s);
-  if (words.slice(2).includes("--centrail-hook") && stopArgs(words.slice(2)) && absolute2(words[0] ?? "") && absolute2(words[1] ?? "")) return true;
-  if (cli(normal[0] ?? "") && stopArgs(normal.slice(1))) return true;
-  if (/^node(?:\.exe)?$/.test(base(normal[0] ?? "")) && stopArgs(normal.slice(2)) && (words.includes("--centrail-hook") || bundle(normal[1] ?? ""))) return true;
-  if (/^npx(?:\.cmd)?$/.test(base(normal[0] ?? ""))) {
-    const args = normal.slice(1);
-    if (args[0] === "-y" || args[0] === "--yes") args.shift();
-    return cli(args[0] ?? "") && stopArgs(args.slice(1));
-  }
-  return normal.length === 2 && /^(?:sh|bash)(?:\.exe)?$/.test(base(normal[0])) && /\/centrail\/(?:[^/]+\/)?scripts\/hook\.sh$/.test(normal[1]);
-}
-var PLUGIN_ID = "centrail@centrail";
-function pluginEnabled(settings) {
-  return isObject7(settings.enabledPlugins) && settings.enabledPlugins[PLUGIN_ID] === true;
-}
-async function readSettingsFile(path) {
-  let raw;
+async function exists(p) {
   try {
-    raw = await readFile10(path, "utf-8");
-  } catch (err) {
-    if (err.code === "ENOENT") return { settings: {}, indent: "  " };
-    throw err;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Cannot parse ${path}: ${err.message}`);
-  }
-  if (!isObject7(parsed)) throw new Error(`Cannot parse ${path}: not a JSON object`);
-  return { settings: parsed, indent: /^([ \t]+)"/m.exec(raw)?.[1] ?? "  " };
-}
-async function writeSettingsFile(path, settings, indent = "  ") {
-  await mkdir3(dirname5(path), { recursive: true });
-  await backUpSettings(path);
-  const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile3(tmp, `${JSON.stringify(settings, null, indent)}
-`);
-  await replaceFile(tmp, path);
-}
-async function backUpSettings(path) {
-  try {
-    await copyFile(path, `${path}.centrail-backup`, constants.COPYFILE_EXCL);
-  } catch (err) {
-    const code = err.code;
-    if (code !== "EEXIST" && code !== "ENOENT") throw err;
-  }
-}
-function safeRealpath(p) {
-  try {
-    return realpathSync3(p);
+    await stat10(p);
+    return true;
   } catch {
-    return p;
+    return false;
   }
 }
-function quote(s, platform) {
-  if (/[\n\r]/.test(s)) throw new Error("Cannot install a hook with a newline in an executable path.");
-  if (platform === "win32") {
-    if (/["%]/.test(s)) throw new Error("Cannot install a Windows hook with quotes or percent expansion in an executable path.");
-    return `"${s}"`;
-  }
-  return `"${s.replace(/[\\"$`]/g, "\\$&")}"`;
-}
-function isObject7(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-
-// src/commands/plugin-setup.ts
-var MARKETPLACE = "centrail";
-var MARKETPLACE_REPO = "braydenyancy/centrail-cli";
-var RELEASE_REF = "release";
-var PLUGIN_STEPS = `
-  Claude Code can run centrail after every turn through its plugin, kept current by Claude Code:
-    claude plugin marketplace add ${MARKETPLACE_REPO}#${RELEASE_REF}
-    claude plugin install ${PLUGIN_ID}
-  then turn on its updates: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Enable auto-update.`;
-async function offerPlugin(opts, deps = {}) {
-  if ((await readConfig()).pluginAnswer && !opts.again) return;
-  if (!opts.interactive) {
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  const claude = deps.claude === void 0 ? await findClaude() : deps.claude;
-  if (!claude) {
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  console.log("");
-  const reply = await (deps.ask ?? askLine)("  Keep centrail's Claude Code plugin installed and updated automatically? [Y/n] ");
-  if (reply === null) {
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  const answer = reply.trim().toLowerCase();
-  const yes = answer === "" || answer.startsWith("y");
-  await updateConfig((c) => {
-    c.pluginAnswer = yes ? "yes" : "no";
-  });
-  if (!yes) {
-    console.log(PLUGIN_STEPS);
-    return;
-  }
-  await setUpPlugin(claude, deps.settingsPath ?? claudeSettingsPath());
-}
-async function setUpPlugin(claude, path) {
-  let file = await readOrSay(path);
-  if (!file) return false;
-  await backUpSettings(path);
-  const entry = marketplaceEntry(file.settings);
-  if (entry && !isReleaseSource(entry.source)) {
-    await writeSettingsFile(path, withMarketplace(file.settings, { ...entry, source: RELEASE_SOURCE }), file.indent);
-  }
-  console.log("  Setting up the Claude Code plugin\u2026");
-  for (const args of [
-    ["plugin", "marketplace", "add", `${MARKETPLACE_REPO}#${RELEASE_REF}`, "--scope", "user"],
-    ["plugin", "install", PLUGIN_ID, "--scope", "user"]
-  ]) {
-    const r = await claude(args);
-    if (r.code !== 0) {
-      const why = r.output.trim().split("\n").filter(Boolean).pop() ?? `exit ${r.code}`;
-      console.log(`  \u2717 \`claude ${args.join(" ")}\` failed: ${why}`);
-      console.log("  Try again with `npx centrail setup-plugin`, or by hand:");
-      console.log(PLUGIN_STEPS);
-      return false;
-    }
-  }
-  file = await readOrSay(path);
-  if (!file) return false;
-  const withUpdates = withMarketplace(file.settings, { ...marketplaceEntry(file.settings) ?? { source: RELEASE_SOURCE }, autoUpdate: true });
-  const next = uninstallStopHook(withUpdates);
-  const removedHook = JSON.stringify(next) !== JSON.stringify(withUpdates);
-  await writeSettingsFile(path, next, file.indent);
-  console.log("  \u2713 Claude Code plugin installed. Claude Code updates it after each release (from its next launch);");
-  console.log(`    to stop that: /plugin \u2192 Marketplaces \u2192 ${MARKETPLACE} \u2192 Disable auto-update.`);
-  if (removedHook) console.log("  \u2713 Removed the Stop hook `centrail install-hooks` wrote: the plugin's hook replaces it.");
-  console.log("  Claude Code sessions already open: run /reload-plugins in each, or restart them, so their turns are recorded.");
-  return true;
-}
-var RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
-function marketplaceEntry(settings) {
-  const all = settings.extraKnownMarketplaces;
-  const entry = isObject8(all) ? all[MARKETPLACE] : void 0;
-  return isObject8(entry) ? entry : void 0;
-}
-function withMarketplace(settings, entry) {
-  const all = isObject8(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
-  return { ...settings, extraKnownMarketplaces: { ...all, [MARKETPLACE]: entry } };
-}
-function isReleaseSource(source) {
-  return isObject8(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
-}
-async function readOrSay(path) {
-  try {
-    return await readSettingsFile(path);
-  } catch (err) {
-    console.log(`  ${err.message}. Left it as it is; to set the plugin up by hand:`);
-    console.log(PLUGIN_STEPS);
-    return null;
-  }
-}
-async function findClaude(env = process.env) {
-  const win = process.platform === "win32";
-  const exts = win ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  for (const dir of (env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
-    for (const ext of exts) {
-      const bin = join11(dir, `claude${ext}`);
-      try {
-        await access(bin, constants2.X_OK);
-      } catch {
-        continue;
-      }
-      return (args) => new Promise((resolve) => {
-        execFile2(win ? "claude" : bin, args, { shell: win, timeout: 18e4, windowsHide: true }, (err, stdout, stderr) => {
-          const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
-          resolve({ code, output: `${stdout}${stderr}` });
-        });
-      });
-    }
-  }
-  return null;
-}
-async function askLine(prompt) {
-  process.stdout.write(prompt);
-  if (process.stdin.readableEnded) {
-    process.stdout.write("\n");
-    return null;
-  }
-  const rl = createInterface2({ input: process.stdin });
-  try {
-    const next = await rl[Symbol.asyncIterator]().next();
-    if (next.done) process.stdout.write("\n");
-    return next.done ? null : String(next.value);
-  } finally {
-    rl.close();
-  }
-}
-function isObject8(v) {
+function isObject9(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -3079,7 +3473,7 @@ function assertSecureBaseUrl(raw) {
 // src/commands/connect.ts
 var DEFAULT_BASE_URL = "https://centrail.org";
 var PRIVATE_DEVICE_NAME = "Centrail CLI";
-async function runConnect(opts, pluginDeps = {}) {
+async function runConnect(opts, setupDeps = {}) {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   assertSecureBaseUrl(baseUrl);
   const previous = await readAuth();
@@ -3148,10 +3542,18 @@ async function runConnect(opts, pluginDeps = {}) {
       await reportDetectedLogs();
       console.log(FIELDS_SHOWN_ONCE);
       await runSetup({ interactive: process.stdin.isTTY === true });
-      await offerPlugin({ interactive: isInteractiveTerminal() }, pluginDeps);
       console.log("");
-      console.log("  Run `npx centrail sync` to push usage now. Codex, or Claude Code without the plugin:");
-      console.log("  `npx centrail install-hooks` syncs after each turn.");
+      if (isInteractiveTerminal()) {
+        try {
+          await runIntegrationSetup({ interactive: true }, setupDeps);
+        } catch (err) {
+          console.log(`  Agent setup did not finish (${err instanceof Error ? err.message : String(err)}); run \`centrail setup\` to retry.`);
+        }
+      } else {
+        console.log("  To sync after every agent turn (Claude Code, Codex), run `npx centrail setup` in a terminal.");
+      }
+      console.log("");
+      console.log("  Run `npx centrail sync` to push usage now.");
       return;
     }
     if (body.status === "expired") {
@@ -3209,8 +3611,8 @@ var FIELDS_SHOWN_ONCE = `
 // src/commands/hook.ts
 import { spawn as spawn3 } from "node:child_process";
 import { realpathSync as realpathSync4 } from "node:fs";
-import { mkdir as mkdir4, open, readdir as readdir7, rm as rm2, stat as stat10 } from "node:fs/promises";
-import { dirname as dirname6, join as join12 } from "node:path";
+import { mkdir as mkdir5, open, readdir as readdir7, rm as rm3, stat as stat11 } from "node:fs/promises";
+import { dirname as dirname8, join as join14 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id) return "codex";
@@ -3270,14 +3672,14 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(roots).length > 0) line.roots = roots;
   if (Object.keys(mains).length > 0) line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join12(dirname6(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join14(dirname8(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl")) return [];
-  const dir = join12(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join14(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir7(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join12(dir, f));
+    return (await readdir7(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join14(dir, f));
   } catch {
     return [];
   }
@@ -3316,11 +3718,11 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
       } catch {
         continue;
       }
-      if (!isObject9(line)) continue;
+      if (!isObject10(line)) continue;
       let ev = null;
-      if (line.type === "assistant" && isObject9(line.message)) ev = lineEvidence(line.message);
-      else if (line.type === "turn_context" && isObject9(line.payload) && typeof line.payload.cwd === "string") turnCwd = line.payload.cwd;
-      else if (line.type === "response_item" && isObject9(line.payload) && line.payload.type === "function_call") ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
+      if (line.type === "assistant" && isObject10(line.message)) ev = lineEvidence(line.message);
+      else if (line.type === "turn_context" && isObject10(line.payload) && typeof line.payload.cwd === "string") turnCwd = line.payload.cwd;
+      else if (line.type === "response_item" && isObject10(line.payload) && line.payload.type === "function_call") ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
       if (!ev) continue;
       lines.push({ paths: [...ev.writes, ...ev.reads], end: start });
     }
@@ -3361,7 +3763,7 @@ function logicalRoot(dir, root) {
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
 }
-function isObject9(v) {
+function isObject10(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 var CLOCK_STEP_MS = 60 * 1e3;
@@ -3386,7 +3788,7 @@ async function maybeAutoSync(now, deps, claimPath) {
   (deps.spawnSync ?? spawnDetachedSync)();
 }
 async function compactLocked(now, deps) {
-  const release = await acquireSyncLock(deps.lockPath ?? join12(dirname6(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  const release = await acquireSyncLock(deps.lockPath ?? join14(dirname8(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
   if (!release) return;
   try {
     await compactSidecar(deps.sidecarPath, now.getTime());
@@ -3397,23 +3799,23 @@ async function compactLocked(now, deps) {
 async function claimAutoSync(claimPath, now) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await mkdir4(claimPath, { recursive: false });
+      await mkdir5(claimPath, { recursive: false });
       return true;
     } catch (err) {
       const code = err.code;
       if (code === "ENOENT") {
-        await mkdir4(dirname6(claimPath), { recursive: true });
+        await mkdir5(dirname8(claimPath), { recursive: true });
         continue;
       }
       if (code !== "EEXIST") return false;
       let at;
       try {
-        at = (await stat10(claimPath)).mtimeMs;
+        at = (await stat11(claimPath)).mtimeMs;
       } catch {
         continue;
       }
       if (!shouldAutoSync({ autoSyncAt: new Date(at).toISOString() }, now)) return false;
-      await rm2(claimPath, { recursive: true, force: true });
+      await rm3(claimPath, { recursive: true, force: true });
     }
   }
   return false;
@@ -3432,7 +3834,7 @@ function spawnDetachedSync() {
 // src/commands/hooks-doctor.ts
 import { constants as constants3 } from "node:fs";
 import { access as access2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, win32 as win323 } from "node:path";
+import { isAbsolute as isAbsolute4, win32 as win324 } from "node:path";
 async function inspectUserHooks(claudePath = claudeSettingsPath(), codexPath = codexHooksPath()) {
   const findings = [];
   const errors = [];
@@ -3456,8 +3858,12 @@ async function inspectUserHooks(claudePath = claudeSettingsPath(), codexPath = c
         const pluginLauncher = /^\$\{(?:CLAUDE_PLUGIN_ROOT|PLUGIN_ROOT)\}\/scripts\/(?:hook\.sh|centrail\.mjs)$/.test(words?.[1] ?? "");
         const owned = isCentrailCommand(command2);
         if (!owned && !pluginLauncher) continue;
+        if (owned && /(?:^|[\\/])centrail-hook(?:\.cmd)?$/.test(words?.[0] ?? "")) {
+          findings.push({ source, kind: "stable launcher", resolves: await isExecutable(words[0]) });
+          continue;
+        }
         const paths = words?.slice(0, 2) ?? [];
-        const absolute2 = paths.length === 2 && paths.every((p) => isAbsolute3(p) || win323.isAbsolute(p));
+        const absolute2 = paths.length === 2 && paths.every((p) => isAbsolute4(p) || win324.isAbsolute(p));
         const resolves = !pluginLauncher && absolute2 && (await Promise.all(paths.map(async (p, i) => {
           try {
             await access2(p, i === 0 ? constants3.X_OK : constants3.R_OK);
@@ -3491,15 +3897,175 @@ async function runHooksDoctor(claudePath, codexPath, opts = {}) {
   console.log("Active project/managed/TOML/plugin-cache hooks and trust are not verified here. Review Codex's hook inventory and Claude's /hooks; restart/reload after changes.");
 }
 
+// src/commands/doctor.ts
+async function doctorReport(deps = {}) {
+  const ins = await inspectIntegrations(deps);
+  const plan = planSetup(ins);
+  const agents = {};
+  for (const agent of AGENTS) agents[agent] = agentReport(ins, agent, plan.find((p) => p.agent === agent).action);
+  const state = await readState();
+  const at = here(deps.script === void 0 ? void 0 : detectChannel(deps.script));
+  const { outdated, notice } = liveVersionRecords(state, at, ins.claude.plugin.version);
+  const notices = [
+    ...outdated ? [{ copy: outdated.channel, kind: "below-minimum", line: `${copyLabel(outdated.channel)}: ${outdatedLine(outdated)}` }] : [],
+    ...notice ? [{ copy: notice.channel, kind: "update-available", line: `${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}` }] : []
+  ];
+  const latest = state.updateNotice?.latest ?? null;
+  const needed = Object.values(agents).some((a) => a.usesLauncher);
+  return {
+    version: 2,
+    // An available update is reported, not failed on: it needs no action to keep collecting.
+    ok: Object.values(agents).every((a) => a.status === "ok" || a.status === "not-detected") && !outdated,
+    cli: { version: CLI_VERSION, copy: at.channel, latest, updateAvailable: latest !== null && isOlder(CLI_VERSION, latest) },
+    launcher: { needed, present: ins.launcher.present, executable: ins.launcher.executable, resolvesCli: ins.launcher.resolvesCli },
+    agents,
+    notices
+  };
+}
+function agentReport(ins, agent, fix) {
+  const state = agent === "claude-code" ? ins.claude : ins.codex;
+  const plugin = agent === "claude-code" ? ins.claude.plugin : null;
+  const hooks = state.hooks;
+  const usesLauncher = hooks.length ? hooks.every((h) => h.form === "launcher") : null;
+  const commandResolves = hooks.length ? hooks.every((h) => h.resolves) && (!usesLauncher || ins.launcher.resolvesCli) : null;
+  const integration = plugin?.enabled ? "plugin" : hooks.length ? "hook" : "none";
+  const status2 = (() => {
+    if (!state.detected) return "not-detected";
+    if (!state.readable) return "unreadable";
+    if (plugin?.enabled) return fix === "ok" ? "ok" : "repair";
+    if (hooks.length === 0) return "missing";
+    if (hooks.length > 1) return "duplicate";
+    if (!usesLauncher) return "outdated-pin";
+    return commandResolves ? "ok" : "unresolved";
+  })();
+  return {
+    detected: state.detected,
+    integration,
+    plugin: plugin ? { enabled: plugin.enabled, autoUpdate: plugin.autoUpdate && plugin.release, version: plugin.version } : null,
+    hooks: hooks.length,
+    usesLauncher,
+    commandResolves,
+    status: status2,
+    fix: status2 === "ok" || status2 === "not-detected" ? "ok" : fix
+  };
+}
+var LABEL2 = { "claude-code": "Claude Code", codex: "Codex" };
+var SAY = {
+  ok: "ok",
+  "not-detected": "not detected",
+  unreadable: "its hook file does not parse",
+  missing: "not set up: no centrail hook or plugin",
+  duplicate: "more than one centrail Stop hook (turns would be recorded twice)",
+  "outdated-pin": "outdated pinned command (breaks when Node or centrail moves)",
+  unresolved: "hook does not resolve (its launcher or pinned paths are missing)",
+  repair: "plugin installed, but auto-update is off or a standalone hook remains"
+};
+function printDoctor(r) {
+  console.log("centrail doctor (read-only)");
+  const latest = r.cli.latest ? `; latest known ${r.cli.latest}` : "";
+  console.log(`  ${"centrail".padEnd(12)} ${r.cli.version} (${copyLabel(r.cli.copy)})${latest}`);
+  for (const agent of AGENTS) {
+    const a = r.agents[agent];
+    const how = a.plugin?.enabled ? `plugin${a.plugin.version ? ` ${a.plugin.version}` : ""}, auto-update ${a.plugin.autoUpdate ? "on" : "off"}` : a.usesLauncher ? "Stop hook through the launcher" : a.hooks ? "Stop hook" : "";
+    const status2 = a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status];
+    console.log(`  ${LABEL2[agent].padEnd(12)} ${status2}`);
+  }
+  if (r.launcher.needed || r.launcher.present) {
+    const l = r.launcher;
+    const state = !l.present ? "missing" : !l.executable ? "not executable" : l.resolvesCli ? "ok: finds a centrail to run" : "finds no centrail, Node or npx to run";
+    console.log(`  ${"launcher".padEnd(12)} ${state}`);
+  }
+  for (const n of r.notices) console.log(`  ${n.line}`);
+  console.log("  Codex hook trust and project/managed hook layers are not checked here: review /hooks in each agent.");
+  console.log(r.ok ? "Nothing needs action." : "Needs action: run `centrail doctor --fix` (or `centrail setup`).");
+}
+async function runDoctor(opts, deps = {}) {
+  let report = await doctorReport(deps);
+  if (opts.fix && !report.ok) {
+    const agents = AGENTS.filter((a) => report.agents[a].fix !== "ok" && report.agents[a].fix !== "skip");
+    if (agents.length) {
+      const log = console.log;
+      if (opts.json) console.log = (...a) => console.error(...a);
+      try {
+        await runIntegrationSetup({ agents, yes: true, interactive: opts.interactive }, deps);
+      } finally {
+        console.log = log;
+      }
+      report = await doctorReport(deps);
+    }
+  }
+  if (opts.json) console.log(JSON.stringify(report));
+  else printDoctor(report);
+  if (!report.ok) process.exitCode = 1;
+  return report;
+}
+
+// src/commands/upgrade.ts
+import { spawn as spawn4 } from "node:child_process";
+function upgradeStep(channel) {
+  switch (channel) {
+    case "mise":
+      return { command: ["mise", "upgrade", "npm:centrail"], say: "mise installed this copy." };
+    case "npm-global":
+      return { command: ["npm", "i", "-g", "centrail@latest"], say: "A global npm install is this copy." };
+    case "npx":
+      return { command: null, say: "npx runs the newest release whenever it is invoked as `npx centrail@latest`; there is nothing to install." };
+    case "plugin":
+      return { command: null, say: "This copy is the Claude Code plugin's: run `/plugin marketplace update centrail` in Claude Code (it also updates itself when auto-update is on)." };
+    default:
+      return { command: null, say: `Cannot tell how this copy was installed: ${howToUpdate(channel)}.` };
+  }
+}
+async function runUpgrade(opts, deps = {}) {
+  const channel = deps.channel ?? detectChannel(deps.script);
+  const step = upgradeStep(channel);
+  console.log(step.say);
+  let ran = null;
+  if (step.command) {
+    const shown = step.command.join(" ");
+    if (!opts.yes) {
+      if (!opts.interactive) {
+        console.log(`Run \`${shown}\`, or \`centrail upgrade -y\` to let centrail run it.`);
+        return { ran: null, refreshed: false };
+      }
+      const reply = (await (deps.ask ?? askLine)(`  Run \`${shown}\` now? [Y/n] `))?.trim().toLowerCase();
+      if (reply === void 0 || reply !== "" && !reply.startsWith("y")) {
+        console.log("Nothing changed.");
+        return { ran: null, refreshed: false };
+      }
+    }
+    const code = await (deps.run ?? runInherit)(step.command);
+    if (code !== 0) throw new Error(`\`${shown}\` exited with ${code}; nothing else changed.`);
+    ran = step.command;
+  } else if (channel !== "npx") {
+    return { ran: null, refreshed: false };
+  }
+  const refreshed = await refreshLauncher(deps);
+  if (refreshed) console.log("\u2713 Refreshed the hook launcher.");
+  return { ran, refreshed };
+}
+async function refreshLauncher(deps = {}) {
+  const ins = await inspectIntegrations(deps);
+  if (await readLauncher(ins.launcher.path) === null) return false;
+  return writeLauncher(ins.expected, ins.launcher.path);
+}
+function runInherit(command2) {
+  return new Promise((resolve) => {
+    const child = spawn4(command2[0], command2.slice(1), { stdio: "inherit", shell: process.platform === "win32", windowsHide: true });
+    child.on("error", () => resolve(127));
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+}
+
 // src/commands/import.ts
-import { readFile as readFile11 } from "node:fs/promises";
+import { readFile as readFile13 } from "node:fs/promises";
 var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_MODEL = 100;
 function parseCcusageExport(json) {
-  if (!isObject10(json)) throw new Error("Not a ccusage export: expected a JSON object");
+  if (!isObject11(json)) throw new Error("Not a ccusage export: expected a JSON object");
   const merged = /* @__PURE__ */ new Map();
   const add = (day, breakdown) => {
-    if (!isObject10(breakdown)) throw new Error("Not a ccusage export: a model breakdown is not an object");
+    if (!isObject11(breakdown)) throw new Error("Not a ccusage export: a model breakdown is not an object");
     if (typeof breakdown.modelName !== "string" || !breakdown.modelName) throw new Error("Not a ccusage export: a model breakdown has no modelName");
     const model = breakdown.modelName.slice(0, MAX_MODEL);
     const key = `${day}\0${model}`;
@@ -3511,12 +4077,12 @@ function parseCcusageExport(json) {
   };
   if (Array.isArray(json.daily)) {
     for (const d of json.daily) {
-      if (!isObject10(d) || typeof d.date !== "string" || !DAY_RE.test(d.date)) throw new Error("Not a ccusage export: a daily row has no YYYY-MM-DD date");
+      if (!isObject11(d) || typeof d.date !== "string" || !DAY_RE.test(d.date)) throw new Error("Not a ccusage export: a daily row has no YYYY-MM-DD date");
       for (const b of Array.isArray(d.modelBreakdowns) ? d.modelBreakdowns : []) add(d.date, b);
     }
   } else if (Array.isArray(json.sessions)) {
     for (const s of json.sessions) {
-      if (!isObject10(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity))) throw new Error("Not a ccusage export: a session has no lastActivity");
+      if (!isObject11(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity))) throw new Error("Not a ccusage export: a session has no lastActivity");
       const day = new Date(s.lastActivity).toISOString().slice(0, 10);
       for (const b of Array.isArray(s.modelBreakdowns) ? s.modelBreakdowns : []) add(day, b);
     }
@@ -3536,7 +4102,7 @@ async function runImport(file, deps = {}) {
   assertSecureBaseUrl(auth.baseUrl);
   let json;
   try {
-    json = JSON.parse(await readFile11(file, "utf-8"));
+    json = JSON.parse(await readFile13(file, "utf-8"));
   } catch (err) {
     throw new Error(`Cannot read ${file}: ${err.message}`);
   }
@@ -3558,7 +4124,7 @@ async function runImport(file, deps = {}) {
   const days = new Set(rows.map((r) => r.day));
   console.log(`Imported ${rows.length} day\xB7model row(s) over ${days.size} day(s) as Measured history (provider ccusage). A re-import replaces them.`);
 }
-function isObject10(v) {
+function isObject11(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -3615,10 +4181,9 @@ async function printVersionRecords() {
   const state = await readState();
   const at = here();
   console.log(`This command ran centrail ${at.version} (${copyLabel(at.channel)}).`);
-  const outdated = stillTrue(state.outdated, at, state.outdated?.minimum);
-  const notice = stillTrue(state.updateNotice, at, state.updateNotice?.latest);
+  const { outdated, notice } = liveVersionRecords(state, at, await installedPluginVersion());
   if (outdated) console.log(`${copyLabel(outdated.channel)}: ${outdatedLine(outdated)}`);
-  if (notice && !(outdated && sameInstall(notice, outdated))) console.log(`${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}`);
+  if (notice) console.log(`${copyLabel(notice.channel)}: ${updateNoticeLine(notice)}`);
 }
 
 // src/progress.ts
@@ -4385,44 +4950,72 @@ async function pushAttributions(auth, events, resolver, config, caps, installId)
 
 // src/index.ts
 var [, , command, ...rest] = process.argv;
-var flags = { url: void 0, full: false, last: false, noBrowser: false, json: false };
+var flags = {
+  url: void 0,
+  full: false,
+  last: false,
+  noBrowser: false,
+  json: false,
+  yes: false,
+  dryRun: false,
+  fix: false,
+  agents: []
+};
 for (let i = 0; i < rest.length; i++) {
   if (rest[i] === "--url") flags.url = rest[++i];
   else if (rest[i] === "--full") flags.full = true;
   else if (rest[i] === "--last") flags.last = true;
   else if (rest[i] === "--no-browser") flags.noBrowser = true;
   else if (rest[i] === "--json") flags.json = true;
+  else if (rest[i] === "-y" || rest[i] === "--yes") flags.yes = true;
+  else if (rest[i] === "--dry-run") flags.dryRun = true;
+  else if (rest[i] === "--fix") flags.fix = true;
+  else if (rest[i] === "--agent") flags.agents.push(rest[++i] ?? "");
   else if (rest[i] === "--quiet") setProgressMode("quiet");
   else if (rest[i] === "--verbose") setProgressMode("verbose");
 }
 var USAGE = `centrail \u2014 sync local AI agent usage to centrail.org
 
 Usage:
-  centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser)
+  centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser),
+                                    then set up your agents
+  centrail setup [--agent <name>] [-y] [--dry-run]
+                                    Sync after every agent turn: Claude Code's plugin, Codex's Stop hook
+                                    (--agent claude-code|codex; asks once unless -y)
+  centrail doctor [--json] [--fix]  Check each agent's integration and centrail's version (read-only; --fix repairs)
+  centrail uninstall [--agent <name>] [-y]
+                                    Remove centrail's plugin, hooks and launcher
+  centrail upgrade [-y]             Update this copy of centrail the way it was installed
   centrail status                   Which account this machine syncs to, and whether its pairing still works
   centrail --version                Print this copy's version
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
-  centrail setup-plugin             Auto-sync in Claude Code: install its plugin and let Claude Code update it (asked at connect)
-  centrail install-hooks            Codex Stop hook; standalone Claude hook when its user plugin is disabled
-  centrail uninstall-hooks          Remove that hook
-  centrail doctor-hooks [--json]    Check user hook ownership, pinned paths and possible duplicates (read-only)
   centrail inspect --last           Print the last payload exactly as it left this machine
-  centrail setup                    Review which repos and folders sync (asked once at connect)
+  centrail scope                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
   centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)
   centrail include <repo>           Undo an exclude; in allow mode, add it
   centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli)
   centrail import <ccusage.json>    Import a ccusage "claude daily/session --json" file as Measured history
-  centrail hook stop                (run by the agent's Stop hook; reads JSON on stdin)
 `;
+var DEPRECATED = {
+  "setup-plugin": "centrail setup --agent claude-code",
+  "install-hooks": "centrail setup",
+  "uninstall-hooks": "centrail uninstall",
+  "doctor-hooks": "centrail doctor"
+};
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf-8");
 }
 try {
-  if (command !== "hook" && command !== "doctor-hooks" && isInteractiveTerminal()) await recordNode();
+  if (command && DEPRECATED[command]) {
+    console.error(`centrail ${command} is deprecated and will be removed in the next release: use \`${DEPRECATED[command]}\`.`);
+  }
+  const interactive = isInteractiveTerminal();
+  const agents = parseAgents(flags.agents.filter(Boolean));
+  if (command !== "hook" && command !== "doctor" && command !== "doctor-hooks" && interactive) await recordNode();
   if (command === "--version" || command === "-v" || command === "version") {
     console.log(`centrail ${CLI_VERSION}`);
   } else if (command === "connect") {
@@ -4431,14 +5024,23 @@ try {
     await runStatus();
   } else if (command === "sync") {
     await runSync({ full: flags.full });
+  } else if (command === "setup") {
+    await runIntegrationSetup({ agents, yes: flags.yes, dryRun: flags.dryRun, interactive });
   } else if (command === "setup-plugin") {
-    await offerPlugin({ interactive: isInteractiveTerminal(), again: true });
+    await runIntegrationSetup({ agents: ["claude-code"], yes: flags.yes, dryRun: flags.dryRun, interactive });
   } else if (command === "install-hooks") {
-    await runInstallHooks({ remove: false });
+    await runIntegrationSetup({ agents, yes: true, dryRun: flags.dryRun, interactive });
+  } else if (command === "uninstall") {
+    await runUninstall({ agents, yes: flags.yes, interactive });
   } else if (command === "uninstall-hooks") {
-    await runInstallHooks({ remove: true });
+    await runUninstall({ agents, yes: true, interactive, keepPlugin: true });
+  } else if (command === "doctor") {
+    await runDoctor({ json: flags.json, fix: flags.fix, interactive });
   } else if (command === "doctor-hooks") {
-    await runHooksDoctor(void 0, void 0, { json: flags.json });
+    if (flags.json) await runHooksDoctor(void 0, void 0, { json: true });
+    else await runDoctor({ fix: flags.fix, interactive });
+  } else if (command === "upgrade") {
+    await runUpgrade({ yes: flags.yes, interactive });
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {
@@ -4448,7 +5050,7 @@ try {
     } catch {
     }
     if (codex) process.stdout.write("{}\n");
-  } else if (command === "setup") {
+  } else if (command === "scope") {
     await runSetup({ interactive: true });
   } else if (command === "repos") {
     await runRepos();

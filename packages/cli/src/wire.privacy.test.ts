@@ -34,7 +34,7 @@ const repo = { key: "github.com/allowed-org/allowed-repo", label: "allowed-repo"
 const config: Config = {
   installId: install, mode: "all", allowRepos: [], denyRepos: [], surfaces: {},
   scopeDecidedAt: at, pendingBackfill: false, hideRepoNames: false,
-  hideBranchNames: false, pluginAnswer: null,
+  hideBranchNames: false,
 };
 const scratch: string[] = [];
 afterEach(async () => { await Promise.all(scratch.splice(0).map((p) => rm(p, { recursive: true, force: true }))); });

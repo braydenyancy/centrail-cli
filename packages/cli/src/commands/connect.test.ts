@@ -19,6 +19,7 @@ vi.mock("./scope.js", async (importOriginal) => ({
 }));
 
 import { CLI_VERSION } from "../version.js";
+import { inTerminal } from "../testing/terminal.js";
 import { PRIVATE_DEVICE_NAME, runConnect } from "./connect.js";
 
 const INSTALL_ID = "3f0c2a8e-7d1b-4c55-9a3e-2b8f6d4e1c90";
@@ -122,17 +123,35 @@ describe("runConnect pairing", () => {
     expect(said).toContain("a@example.test keeps its existing copy; b@example.test gets the local history this machine can still read.");
   });
 
-  it("without a terminal never asks about the plugin and never touches Claude Code's settings", async () => {
+  it("without a terminal never asks, never touches an agent's settings, and points at `centrail setup`", async () => {
     const claude = vi.fn();
-    const settingsPath = join(dir, "claude-settings.json");
+    const claudeDir = join(dir, "claude");
+    await mkdir(claudeDir);
     vi.stubGlobal("fetch", serverApproving({ email: "a@example.test" }));
 
-    await runConnect({ baseUrl: "https://centrail.org", noBrowser: true }, { settingsPath, claude, ask: vi.fn() });
+    await runConnect({ baseUrl: "https://centrail.org", noBrowser: true }, { claudeDir, codexHome: join(dir, "codex"), claude, ask: vi.fn() });
 
     expect(claude).not.toHaveBeenCalled();
-    await expect(readFile(settingsPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(claudeDir, "settings.json"))).rejects.toMatchObject({ code: "ENOENT" });
     const said = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join("\n");
-    expect(said).toContain("claude plugin marketplace add braydenyancy/centrail-cli#release");
+    expect(said).toContain("run `npx centrail setup` in a terminal");
+    expect(said).not.toContain("install-hooks");
+  });
+
+  it("in a terminal ends by running setup for the detected agents", async () => {
+    const claudeDir = join(dir, "claude");
+    const codexHome = join(dir, "codex");
+    await mkdir(codexHome, { recursive: true });
+    vi.stubGlobal("fetch", serverApproving({ email: "a@example.test" }));
+    const ask = vi.fn(async () => "y");
+
+    await inTerminal({ tty: true }, () =>
+      runConnect({ baseUrl: "https://centrail.org", noBrowser: true }, { claudeDir, codexHome, claude: null, env: { PATH: "" }, configDir: dir, ask }),
+    );
+
+    expect(ask).toHaveBeenCalledTimes(1);
+    const hooks = JSON.parse(await readFile(join(codexHome, "hooks.json"), "utf-8"));
+    expect(hooks.hooks.Stop[0].hooks[0].command).toContain("centrail-hook");
   });
 
   it("a server that no longer pairs this version says which, and how to update", async () => {
