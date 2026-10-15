@@ -191,8 +191,10 @@ describe("centrail setup", () => {
     const m = await machine({ codexHome: true, script: NPX });
     await runIntegrationSetup({ yes: true }, m.deps);
     const text = await read(launcher(m));
-    expect(text).not.toContain("_npx");
-    expect(await read(codexHooks(m))).not.toContain("_npx");
+    // The npx cache directory, not the `:run_npx` label of the Windows launcher.
+    const npxCache = /[\\/]_npx[\\/]/;
+    expect(text).not.toMatch(npxCache);
+    expect(await read(codexHooks(m))).not.toMatch(npxCache);
     expect(text).toContain("centrail@0");
   });
 
@@ -274,6 +276,8 @@ describe("centrail setup", () => {
 
   it("warns when the launcher would find no centrail to run, and finds npx beside the recorded Node", async () => {
     const m = await machine({ codexHome: true, script: NPX });
+    // A Node that does not exist: CI images have a real one, with npx beside it, at the default path.
+    m.deps.node = join(m.root, "absent-node", win ? "node.exe" : "node");
     await runIntegrationSetup({ dryRun: true }, m.deps);
     expect(said).toContain("the launcher finds no centrail to run here");
     const nodeDir = join(m.root, "node-bin");
