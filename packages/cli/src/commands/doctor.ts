@@ -1,7 +1,7 @@
 import { readState } from "../config.js";
 import { CLI_VERSION } from "../version.js";
 import { copyLabel, detectChannel, here, isOlder, liveVersionRecords, outdatedLine, updateNoticeLine, type UpdateChannel } from "../update.js";
-import { AGENTS, inspectIntegrations, planSetup, runIntegrationSetup, type Action, type Agent, type Inspection, type IntegrationDeps } from "./integrations.js";
+import { AGENTS, HOW, inspectIntegrations, LABEL, planSetup, runIntegrationSetup, type Action, type Agent, type Inspection, type IntegrationDeps } from "./integrations.js";
 
 // `centrail doctor`: read-only. Whether each detected agent runs centrail
 // after every turn, through a hook entry and launcher that resolve, and
@@ -10,13 +10,13 @@ import { AGENTS, inspectIntegrations, planSetup, runIntegrationSetup, type Actio
 // paste). Exits 1 when something needs action; `--fix` runs `setup -y` for
 // the agents that do.
 
-export type AgentStatus = "ok" | "not-detected" | "unreadable" | "missing" | "duplicate" | "outdated-pin" | "unresolved" | "repair";
+export type AgentStatus = "ok" | "not-detected" | "unreadable" | "missing" | "duplicate" | "outdated-pin" | "outdated" | "unresolved" | "repair";
 
 export type AgentReport = {
   detected: boolean;
   integration: "plugin" | "hook" | "none";
   plugin: { enabled: boolean; autoUpdate: boolean; version: string | null } | null; // Claude Code only
-  hooks: number; // centrail's Stop entries in the agent's user hook file
+  hooks: number; // centrail's entries in the agent's user hook file (Pi: its extension)
   usesLauncher: boolean | null; // null without a hook entry
   commandResolves: boolean | null; // null without a hook entry
   status: AgentStatus;
@@ -59,7 +59,7 @@ export async function doctorReport(deps: IntegrationDeps = {}): Promise<DoctorRe
 }
 
 function agentReport(ins: Inspection, agent: Agent, fix: Action): AgentReport {
-  const state = agent === "claude-code" ? ins.claude : ins.codex;
+  const state = ins.agents[agent];
   const plugin = agent === "claude-code" ? ins.claude.plugin : null;
   const hooks = state.hooks;
   const usesLauncher = hooks.length ? hooks.every((h) => h.form === "launcher") : null;
@@ -72,7 +72,8 @@ function agentReport(ins: Inspection, agent: Agent, fix: Action): AgentReport {
     if (hooks.length === 0) return "missing";
     if (hooks.length > 1) return "duplicate";
     if (!usesLauncher) return "outdated-pin";
-    return commandResolves ? "ok" : "unresolved";
+    if (!commandResolves) return "unresolved";
+    return hooks[0].current ? "ok" : "outdated";
   })();
   return {
     detected: state.detected,
@@ -86,15 +87,14 @@ function agentReport(ins: Inspection, agent: Agent, fix: Action): AgentReport {
   };
 }
 
-const LABEL: Record<Agent, string> = { "claude-code": "Claude Code", codex: "Codex" };
-
 const SAY: Record<AgentStatus, string> = {
   ok: "ok",
   "not-detected": "not detected",
   unreadable: "its hook file does not parse",
   missing: "not set up: no centrail hook or plugin",
-  duplicate: "more than one centrail Stop hook (turns would be recorded twice)",
+  duplicate: "more than one centrail hook (turns would be recorded twice)",
   "outdated-pin": "outdated pinned command (breaks when Node or centrail moves)",
+  outdated: "outdated entry: not what this centrail writes",
   unresolved: "hook does not resolve (its launcher or pinned paths are missing)",
   repair: "plugin installed, but auto-update is off or a standalone hook remains",
 };
@@ -108,9 +108,9 @@ export function printDoctor(r: DoctorReport): void {
     const how = a.plugin?.enabled
       ? `plugin${a.plugin.version ? ` ${a.plugin.version}` : ""}, auto-update ${a.plugin.autoUpdate ? "on" : "off"}`
       : a.usesLauncher
-        ? "Stop hook through the launcher"
+        ? `${HOW[agent]} through the launcher`
         : a.hooks
-          ? "Stop hook"
+          ? HOW[agent]
           : "";
     const status = a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status];
     console.log(`  ${LABEL[agent].padEnd(12)} ${status}`);

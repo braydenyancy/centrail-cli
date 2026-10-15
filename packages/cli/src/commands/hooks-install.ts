@@ -29,11 +29,23 @@ export function codexHooksPath(): string {
   return join(codexHomeDir(), "hooks.json");
 }
 
-// The Stop command for a harness: the launcher path, quoted for the shell
-// the harness runs hooks with, and fixed arguments. `--centrail-hook` is
-// the ownership marker; `--surface codex` selects Codex's JSON output.
-export function launcherCommand(launcher: string, surface: "claude-code" | "codex", platform: NodeJS.Platform = process.platform): string {
-  return `${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "codex" ? " --surface codex" : ""}`;
+// Every harness centrail runs after, by the surface name its logs sync under.
+export const HOOK_SURFACES = ["claude-code", "codex", "gemini-cli", "copilot-cli", "pi"] as const;
+export type HookSurface = (typeof HOOK_SURFACES)[number];
+
+// The command a harness's hook entry runs: the launcher path, quoted for the
+// shell the harness runs hooks with, and fixed arguments. `--centrail-hook`
+// is the ownership marker; `--surface` names the harness (Claude Code's
+// plugin-era entries carry none). A PowerShell host (Gemini CLI and Copilot
+// CLI on Windows) needs its call operator `&` before a quoted path.
+export function launcherCommand(
+  launcher: string,
+  surface: HookSurface,
+  platform: NodeJS.Platform = process.platform,
+  opts: { powershell?: boolean } = {},
+): string {
+  const call = opts.powershell && platform === "win32" ? "& " : "";
+  return `${call}${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "claude-code" ? "" : ` --surface ${surface}`}`;
 }
 
 // The pinned form 0.7.4–0.8.x wrote (absolute Node and bundle). Recognised
@@ -47,28 +59,46 @@ export function hookCommand(
   return `${quote(stableInstallPath(node), platform)} ${quote(abs, platform)} hook stop --centrail-hook`;
 }
 
-export function installStopHook(settings: Settings, command: string): Settings {
+// One handler group for centrail under `hooks.<event>` (Claude Code and
+// Codex: "Stop", timeout in seconds; Gemini CLI: "AfterAgent", in ms).
+export function installStopHook(settings: Settings, command: string, event = "Stop", handler: Record<string, unknown> = { timeout: 10 }): Settings {
   const hooks = isObject(settings.hooks) ? { ...settings.hooks } : {};
-  const cleaned = uninstallStopHook(settings);
-  const kept = Array.isArray(cleaned.hooks?.Stop) ? [...cleaned.hooks.Stop] : [];
-  kept.push({ hooks: [{ type: "command", command, timeout: 10 }] });
-  return { ...settings, hooks: { ...hooks, Stop: kept } };
+  const cleaned = uninstallStopHook(settings, event);
+  const kept = Array.isArray(cleaned.hooks?.[event]) ? [...(cleaned.hooks[event] as unknown[])] : [];
+  kept.push({ hooks: [{ ...(handler.name ? { name: handler.name } : {}), type: "command", command, ...omit(handler, "name") }] });
+  return { ...settings, hooks: { ...hooks, [event]: kept } };
 }
 
-export function uninstallStopHook(settings: Settings): Settings {
-  if (!isObject(settings.hooks) || !Array.isArray(settings.hooks.Stop)) return settings;
-  const kept = (settings.hooks.Stop as unknown[]).flatMap((g) => {
+export function uninstallStopHook(settings: Settings, event = "Stop"): Settings {
+  if (!isObject(settings.hooks) || !Array.isArray(settings.hooks[event])) return settings;
+  const kept = (settings.hooks[event] as unknown[]).flatMap((g) => {
     if (!isObject(g) || !Array.isArray(g.hooks)) return [g];
     const handlers = g.hooks.filter((h) => !isObject(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
     if (handlers.length === g.hooks.length) return [g];
     return handlers.length ? [{ ...g, hooks: handlers }] : [];
   });
   const hooks: Record<string, unknown> = { ...settings.hooks };
-  if (kept.length > 0) hooks.Stop = kept;
-  else delete hooks.Stop;
+  if (kept.length > 0) hooks[event] = kept;
+  else delete hooks[event];
   const out: Settings = { ...settings, hooks };
   if (Object.keys(hooks).length === 0) delete out.hooks;
   return out;
+}
+
+// The command handlers under `hooks.<event>` groups.
+export function groupCommands(settings: Settings, event = "Stop"): string[] {
+  const groups = Array.isArray(settings.hooks?.[event]) ? (settings.hooks[event] as unknown[]) : [];
+  const out: string[] = [];
+  for (const g of groups) {
+    if (!isObject(g) || !Array.isArray(g.hooks)) continue;
+    for (const h of g.hooks) if (isObject(h) && h.type === "command" && typeof h.command === "string") out.push(h.command);
+  }
+  return out;
+}
+
+function omit(o: Record<string, unknown>, key: string): Record<string, unknown> {
+  const { [key]: _, ...rest } = o;
+  return rest;
 }
 
 // Recognise emitted launch forms, not arbitrary text mentioning Centrail.
@@ -76,6 +106,9 @@ export function uninstallStopHook(settings: Settings): Settings {
 // many other plugins use it. Never remove it just because it sits beside ours.
 export function commandWords(command: string): string[] | null {
   const words: string[] = [];
+  // PowerShell's call operator before a quoted path (the form written for a
+  // PowerShell host) is not part of the command.
+  if (/^& ["']/.test(command)) command = command.slice(2);
   // Emitted Windows paths keep backslashes literal. POSIX double quotes
   // escape only backslash, quote, dollar and backtick. This isn't a shell:
   // reject expansions/compound commands outside quoted path tokens.
@@ -109,7 +142,13 @@ export function isCentrailCommand(command: string): boolean {
   const base = (s: string) => s.split("/").pop() ?? "";
   const cli = (s: string) => /(?:^|\/)centrail(?:\.cmd|\.exe|@[^/]*)?$/.test(s);
   const bundle = (s: string) => /(?:^|\/)centrail(?:[-@][^/]*)?\/(?:.*\/)?(?:index\.js|centrail\.mjs)$/.test(s) || /\/scripts\/centrail\.mjs$/.test(s);
-  const stopArgs = (args: string[]) => [HOOK_MARK, `${HOOK_MARK} --surface codex`, `${HOOK_MARK} --centrail-hook`, `${HOOK_MARK} --centrail-hook --surface codex`].includes(args.join(" "));
+  // `hook stop`, then optionally `--centrail-hook`, then optionally `--surface <a known surface>`.
+  const stopArgs = (args: string[]) => {
+    const rest = args.join(" ");
+    if (!rest.startsWith(HOOK_MARK)) return false;
+    const tail = rest.slice(HOOK_MARK.length).replace(/^ --centrail-hook/, "");
+    return tail === "" || HOOK_SURFACES.some((s) => s !== "claude-code" && tail === ` --surface ${s}`);
+  };
   const absolute = (s: string) => isAbsolute(s) || win32.isAbsolute(s);
   if (absolute(words[0] ?? "") && /^centrail-hook(?:\.cmd)?$/.test(base(normal[0] ?? "")) && words.includes("--centrail-hook") && stopArgs(words.slice(1))) return true;
   if (words.slice(2).includes("--centrail-hook") && stopArgs(words.slice(2)) && absolute(words[0] ?? "") && absolute(words[1] ?? "")) return true;

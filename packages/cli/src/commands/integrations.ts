@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, win32 } from "node:path";
-import { claudeConfigDirs, codexHomeDir } from "@centrail/parsers";
+import { dirname, join, win32 } from "node:path";
+import { claudeConfigDirs } from "@centrail/parsers";
 import { CONFIG_DIR, readConfig } from "../config.js";
 import {
   isExecutable,
@@ -14,8 +14,9 @@ import {
   writeLauncher,
 } from "../launcher.js";
 import { compareVersions, validVersion } from "../update.js";
+import { AGENT_HOOKS, classifyCommand, defaultHome, type AgentHook, type HookAgent, type HookFile, type HookFinding } from "./agent-hooks.js";
 import {
-  commandWords,
+  groupCommands,
   installStopHook,
   isCentrailCommand,
   launcherCommand,
@@ -50,18 +51,22 @@ import { runSetup as runScopeReview } from "./scope.js";
 //   Claude Code  its plugin, kept current by Claude Code (plugin-setup.ts);
 //                an explicit Stop hook through the launcher only when the
 //                plugin cannot be installed (no `claude`, or it failed)
-//   Codex        a user Stop hook in $CODEX_HOME/hooks.json running the
-//                stable launcher (launcher.ts); Codex trusts it once by hash
+//   Codex, Gemini CLI, Copilot CLI, Pi
+//                one entry each in the agent's own per-turn mechanism,
+//                running the stable launcher (launcher.ts) with fixed
+//                arguments (agent-hooks.ts); Codex trusts it once by hash
 
-export type Agent = "claude-code" | "codex";
-export const AGENTS: readonly Agent[] = ["claude-code", "codex"];
-const LABEL: Record<Agent, string> = { "claude-code": "Claude Code", codex: "Codex" };
+export type { HookAgent, HookFinding } from "./agent-hooks.js";
+export type Agent = "claude-code" | HookAgent;
+export const AGENTS: readonly Agent[] = ["claude-code", ...AGENT_HOOKS.map((h) => h.agent)];
+export const LABEL: Record<Agent, string> = Object.fromEntries([["claude-code", "Claude Code"], ...AGENT_HOOKS.map((h) => [h.agent, h.label])]) as Record<Agent, string>;
+const hookFor = (agent: HookAgent): AgentHook => AGENT_HOOKS.find((h) => h.agent === agent)!;
 
 export function parseAgents(names: string[]): Agent[] | undefined {
   if (names.length === 0) return undefined;
   const out: Agent[] = [];
   for (const name of names.flatMap((n) => n.split(",")).map((n) => n.trim()).filter(Boolean)) {
-    if (!AGENTS.includes(name as Agent)) throw new Error(`Unknown agent "${name}": use ${AGENTS.join(" or ")}.`);
+    if (!AGENTS.includes(name as Agent)) throw new Error(`Unknown agent "${name}": use ${AGENTS.slice(0, -1).join(", ")} or ${AGENTS.at(-1)}.`);
     if (!out.includes(name as Agent)) out.push(name as Agent);
   }
   return out;
@@ -72,6 +77,9 @@ export type IntegrationDeps = {
   platform?: NodeJS.Platform;
   claudeDir?: string; // default: the first Claude config dir (CLAUDE_CONFIG_DIR)
   codexHome?: string; // default: CODEX_HOME or ~/.codex
+  geminiHome?: string; // the .gemini dir; default: $GEMINI_CLI_HOME/.gemini or ~/.gemini
+  copilotHome?: string; // default: COPILOT_HOME or ~/.copilot
+  piAgentDir?: string; // default: PI_CODING_AGENT_DIR or ~/.pi/agent
   configDir?: string; // default: centrail's config dir
   claude?: ClaudeRunner | null; // null: no `claude`; undefined: look on PATH
   ask?: (prompt: string) => Promise<string | null>; // null: input ended
@@ -84,9 +92,9 @@ type Ctx = {
   env: NodeJS.ProcessEnv;
   platform: NodeJS.Platform;
   claudeDir: string;
-  codexHome: string;
   claudeSettings: string;
-  codexHooks: string;
+  homes: Record<HookAgent, string>;
+  files: Record<HookAgent, string>;
   launcher: string;
   recordedNode: string;
   script: string;
@@ -97,14 +105,16 @@ type Ctx = {
 function context(deps: IntegrationDeps): Ctx {
   const platform = deps.platform ?? process.platform;
   const claudeDir = deps.claudeDir ?? claudeConfigDirs()[0];
-  const codexHome = deps.codexHome ?? codexHomeDir();
+  const given: Record<HookAgent, string | undefined> = { codex: deps.codexHome, "gemini-cli": deps.geminiHome, "copilot-cli": deps.copilotHome, pi: deps.piAgentDir };
+  const homes = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, given[h.agent] ?? defaultHome(h.agent)])) as Record<HookAgent, string>;
+  const files = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, h.file(homes[h.agent])])) as Record<HookAgent, string>;
   return {
     env: deps.env ?? process.env,
     platform,
     claudeDir,
-    codexHome,
     claudeSettings: join(claudeDir, "settings.json"),
-    codexHooks: join(codexHome, "hooks.json"),
+    homes,
+    files,
     launcher: launcherPath(deps.configDir ?? CONFIG_DIR, platform),
     recordedNode: join(deps.configDir ?? CONFIG_DIR, "node"),
     script: deps.script ?? process.argv[1] ?? "",
@@ -113,18 +123,12 @@ function context(deps: IntegrationDeps): Ctx {
   };
 }
 
-export type HookFinding = {
-  form: "launcher" | "pinned" | "other"; // launcher: today's; pinned: 0.7.4–0.8.x; other: older forms
-  current: boolean; // exactly the command setup writes now
-  resolves: boolean; // its executable (and bundle) exist
-};
-
-type FileState = { detected: boolean; cli: string | null; readable: boolean; settings: Settings; indent: string; hooks: HookFinding[] };
-export type ClaudeState = FileState & { plugin: { enabled: boolean; autoUpdate: boolean; release: boolean; version: string | null } };
-export type CodexState = FileState;
+export type AgentState = HookFile & { detected: boolean; cli: string | null };
+export type ClaudeState = AgentState & { settings: Settings; indent: string; plugin: { enabled: boolean; autoUpdate: boolean; release: boolean; version: string | null } };
 export type LauncherState = { path: string; present: boolean; executable: boolean; current: boolean; script: string | null; resolvesCli: boolean };
+// `agents`: every agent's state, Claude Code's being `claude`.
 // `expectedResolves`: whether the launcher setup would write finds a centrail to run.
-export type Inspection = { claude: ClaudeState; codex: CodexState; launcher: LauncherState; expected: string; expectedResolves: boolean };
+export type Inspection = { claude: ClaudeState; agents: Record<Agent, AgentState>; launcher: LauncherState; expected: string; expectedResolves: boolean };
 
 // Read-only: what is installed, for setup's plan, doctor and uninstall.
 export async function inspectIntegrations(deps: IntegrationDeps = {}): Promise<Inspection> {
@@ -145,8 +149,7 @@ export async function inspectIntegrations(deps: IntegrationDeps = {}): Promise<I
   };
   const expectedResolves = target.script !== null || (await cliReachable(ctx, target.node));
   const claudeCli = ctx.deps.claude === undefined ? await findExecutable("claude", ctx.env, ctx.platform) : ctx.deps.claude ? "claude" : null;
-  const codexCli = await findExecutable("codex", ctx.env, ctx.platform);
-  const claudeFile = await readHooksFile(ctx, ctx.claudeSettings, "claude-code");
+  const claudeFile = await readClaudeSettings(ctx);
   const settings = claudeFile.settings;
   const entry = marketplaceEntry(settings);
   const claude: ClaudeState = {
@@ -160,12 +163,13 @@ export async function inspectIntegrations(deps: IntegrationDeps = {}): Promise<I
       version: await installedPluginVersion(ctx.claudeDir),
     },
   };
-  const codex: CodexState = {
-    ...(await readHooksFile(ctx, ctx.codexHooks, "codex")),
-    detected: codexCli !== null || (await isDir(ctx.codexHome)),
-    cli: codexCli,
-  };
-  return { claude, codex, launcher, expected, expectedResolves };
+  const agents: Partial<Record<Agent, AgentState>> = { "claude-code": claude };
+  for (const hook of AGENT_HOOKS) {
+    const cli = await findExecutable(hook.bin, ctx.env, ctx.platform);
+    const file = await hook.read(ctx.files[hook.agent], ctx.launcher, ctx.platform);
+    agents[hook.agent] = { ...file, detected: cli !== null || (await isDir(ctx.homes[hook.agent])), cli };
+  }
+  return { claude, agents: agents as Record<Agent, AgentState>, launcher, expected, expectedResolves };
 }
 
 // Without a stable install the launcher runs `centrail` or `npx` from PATH,
@@ -180,36 +184,17 @@ async function cliReachable(ctx: Ctx, pinnedNode: string | null): Promise<boolea
   return false;
 }
 
-async function readHooksFile(ctx: Ctx, path: string, agent: Agent): Promise<Omit<FileState, "detected" | "cli">> {
+// Claude Code's user settings: its plugin state and any standalone Stop hook.
+async function readClaudeSettings(ctx: Ctx): Promise<Omit<ClaudeState, "detected" | "cli" | "plugin">> {
   let file: { settings: Settings; indent: string };
   try {
-    file = await readSettingsFile(path);
+    file = await readSettingsFile(ctx.claudeSettings);
   } catch {
     return { readable: false, settings: {}, indent: "  ", hooks: [] };
   }
-  const expected = launcherCommand(ctx.launcher, agent, ctx.platform);
-  const hooks: HookFinding[] = [];
-  for (const command of stopCommands(file.settings).filter(isCentrailCommand)) {
-    const words = commandWords(command) ?? [];
-    const launcherForm = /(?:^|[\\/])centrail-hook(?:\.cmd)?$/.test(words[0] ?? "");
-    const absolute = words.slice(0, 2).filter((w) => isAbsolute(w) || win32.isAbsolute(w));
-    const pinned = !launcherForm && absolute.length === 2;
-    const resolves = launcherForm
-      ? await isExecutable(words[0], ctx.platform)
-      : pinned && (await Promise.all(absolute.map(exists))).every(Boolean);
-    hooks.push({ form: launcherForm ? "launcher" : pinned ? "pinned" : "other", current: command === expected, resolves });
-  }
+  const expected = launcherCommand(ctx.launcher, "claude-code", ctx.platform);
+  const hooks = await Promise.all(groupCommands(file.settings).filter(isCentrailCommand).map((c) => classifyCommand(c, expected, ctx.platform)));
   return { readable: true, ...file, hooks };
-}
-
-function stopCommands(settings: Settings): string[] {
-  const groups = Array.isArray(settings.hooks?.Stop) ? (settings.hooks.Stop as unknown[]) : [];
-  const out: string[] = [];
-  for (const g of groups) {
-    if (!isObject(g) || !Array.isArray(g.hooks)) continue;
-    for (const h of g.hooks) if (isObject(h) && h.type === "command" && typeof h.command === "string") out.push(h.command);
-  }
-  return out;
 }
 
 // Claude Code's own record of installed plugins: `plugins/installed_plugins.json`
@@ -233,11 +218,14 @@ export type PlanItem = { agent: Agent; action: Action; via: "plugin" | "hook" | 
 
 export function planSetup(ins: Inspection, agents?: Agent[]): PlanItem[] {
   return AGENTS.map((agent): PlanItem => {
-    const state = agent === "claude-code" ? ins.claude : ins.codex;
+    const state = ins.agents[agent];
     const skip = (detail: string): PlanItem => ({ agent, action: "skip", via: null, detail });
     if (agents && !agents.includes(agent)) return skip("not selected");
     if (!state.detected) return skip("not detected");
-    if (!state.readable) return skip(`${agent === "codex" ? "hooks.json" : "settings.json"} does not parse; fix it, then rerun`);
+    if (!state.readable) {
+      if (agent === "pi") return skip("extensions/centrail.js is not centrail's; move it, then rerun");
+      return skip(`${agent === "claude-code" ? "settings.json" : hookFor(agent).fileName} does not parse; fix it, then rerun`);
+    }
     if (agent === "claude-code") {
       const { plugin, hooks } = ins.claude;
       if (plugin.enabled) {
@@ -259,13 +247,17 @@ export function planSetup(ins: Inspection, agents?: Agent[]): PlanItem[] {
   });
 }
 
+// What each agent's entry is called in a plan line.
+export const HOW: Record<Agent, string> = Object.fromEntries([["claude-code", "Stop hook"], ...AGENT_HOOKS.map((h) => [h.agent, h.how])]) as Record<Agent, string>;
+
 function hookPlan(agent: Agent, hooks: HookFinding[], launcher: LauncherState, why: string): PlanItem {
   const via = "hook" as const;
-  if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail Stop hooks → one, through the launcher` };
-  if (hooks.length === 0) return { agent, action: "install", via, detail: `Stop hook through the launcher${why}` };
-  if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : "hook"} → the launcher` };
+  const how = HOW[agent];
+  if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail ${how}s → one, through the launcher` };
+  if (hooks.length === 0) return { agent, action: "install", via, detail: `${how} through the launcher${why}` };
+  if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : how} → the launcher` };
   if (!launcher.current) return { agent, action: "update", via, detail: "refresh the launcher" };
-  return { agent, action: "ok", via, detail: "Stop hook through the launcher" };
+  return { agent, action: "ok", via, detail: `${how} through the launcher` };
 }
 
 const pending = (item: PlanItem) => item.action !== "ok" && item.action !== "skip";
@@ -286,7 +278,7 @@ export async function runIntegrationSetup(opts: SetupOptions, deps: IntegrationD
   const ins = await inspectIntegrations(deps);
   const plan = planSetup(ins, opts.agents);
   if (!plan.some((i) => i.action !== "skip" || i.detail !== "not detected")) {
-    console.log("No supported agent found here (Claude Code, Codex). Install one, then run `centrail setup`.");
+    console.log(`No supported agent found here (${AGENTS.map((a) => LABEL[a]).join(", ")}). Install one, then run \`centrail setup\`.`);
     return { plan, changed: false };
   }
   printPlan(plan, ins.launcher, "centrail setup:");
@@ -309,11 +301,14 @@ export async function runIntegrationSetup(opts: SetupOptions, deps: IntegrationD
   if (usesLauncher) await writeLauncher(ins.expected, ctx.launcher);
   for (const item of plan.filter(pending)) {
     if (item.agent === "claude-code") await applyClaude(ctx, ins, item);
-    else await applyHook(ctx, ctx.codexHooks, "codex");
+    else await applyHook(ctx, item.agent);
   }
   if (plan.some((i) => i.agent === "codex" && pending(i))) {
     console.log("  Codex: open /hooks in Codex once and trust centrail's Stop hook. Codex trusts a hook by its hash;");
     console.log("    this command stays the same across centrail releases, so later updates need no new trust. Restart open sessions.");
+  }
+  if (plan.some((i) => (i.agent === "gemini-cli" || i.agent === "copilot-cli" || i.agent === "pi") && pending(i))) {
+    console.log("  Gemini CLI, Copilot CLI and Pi read their hooks and extensions at start: restart open sessions.");
   }
   console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
   console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
@@ -327,7 +322,7 @@ async function applyClaude(ctx: Ctx, ins: Inspection, item: PlanItem): Promise<v
     if (await setUpPlugin(claude, ctx.claudeSettings)) return;
     console.log("  Recording Claude Code turns through a standalone Stop hook until the plugin installs; rerun `centrail setup` to switch.");
     await writeLauncher(ins.expected, ctx.launcher);
-    await applyHook(ctx, ctx.claudeSettings, "claude-code");
+    await applyClaudeHook(ctx);
     return;
   }
   if (item.via === "plugin") {
@@ -339,13 +334,19 @@ async function applyClaude(ctx: Ctx, ins: Inspection, item: PlanItem): Promise<v
     console.log(`  ✓ Claude Code plugin: auto-update on from #${RELEASE_REF}; standalone centrail hooks removed.`);
     return;
   }
-  await applyHook(ctx, ctx.claudeSettings, "claude-code");
+  await applyClaudeHook(ctx);
 }
 
-async function applyHook(ctx: Ctx, path: string, agent: Agent): Promise<void> {
-  const { settings, indent } = await readSettingsFile(path);
-  await writeSettingsFile(path, installStopHook(settings, launcherCommand(ctx.launcher, agent, ctx.platform)), indent);
-  console.log(`  ✓ ${LABEL[agent]}: Stop hook in ${path} runs the launcher.`);
+async function applyClaudeHook(ctx: Ctx): Promise<void> {
+  const { settings, indent } = await readSettingsFile(ctx.claudeSettings);
+  await writeSettingsFile(ctx.claudeSettings, installStopHook(settings, launcherCommand(ctx.launcher, "claude-code", ctx.platform)), indent);
+  console.log(`  ✓ Claude Code: Stop hook in ${ctx.claudeSettings} runs the launcher.`);
+}
+
+async function applyHook(ctx: Ctx, agent: HookAgent): Promise<void> {
+  const hook = hookFor(agent);
+  await hook.install(ctx.files[agent], ctx.launcher, ctx.platform);
+  console.log(`  ✓ ${hook.label}: ${hook.how} in ${ctx.files[agent]} runs the launcher.`);
 }
 
 function claudeRunner(ctx: Ctx, ins: Inspection): ClaudeRunner | null {
@@ -363,16 +364,15 @@ export async function runUninstall(opts: UninstallOptions, deps: IntegrationDeps
   const ins = await inspectIntegrations(deps);
   const selected = (a: Agent) => !opts.agents || opts.agents.includes(a);
   const removePlugin = selected("claude-code") && !opts.keepPlugin && ins.claude.plugin.enabled;
-  const files: [Agent, string, FileState][] = [
-    ["claude-code", ctx.claudeSettings, ins.claude],
-    ["codex", ctx.codexHooks, ins.codex],
-  ];
-  const hookFiles = files.filter(([a, , s]) => selected(a) && s.hooks.length > 0);
-  const launcherKept = files.some(([a, , s]) => !selected(a) && s.hooks.some((h) => h.form === "launcher"));
+  const hookFiles = AGENTS.filter((a) => selected(a) && ins.agents[a].hooks.length > 0);
+  const launcherKept = AGENTS.some((a) => !selected(a) && ins.agents[a].hooks.some((h) => h.form === "launcher"));
   const removeLauncherFile = ins.launcher.present && !launcherKept;
   const lines = [
     ...(removePlugin ? [`  ${"Claude Code".padEnd(12)} remove   plugin ${PLUGIN_ID} and its marketplace`] : []),
-    ...hookFiles.map(([a, , s]) => `  ${LABEL[a].padEnd(12)} remove   ${s.hooks.length} centrail Stop hook${s.hooks.length > 1 ? "s" : ""}`),
+    ...hookFiles.map((a) => {
+      const n = ins.agents[a].hooks.length;
+      return `  ${LABEL[a].padEnd(12)} remove   ${a === "pi" ? "centrail's extension" : `${n} centrail ${HOW[a]}${n > 1 ? "s" : ""}`}`;
+    }),
     ...(removeLauncherFile ? [`  ${"launcher".padEnd(12)} remove   ${ins.launcher.path}`] : []),
   ];
   if (lines.length === 0) {
@@ -394,10 +394,13 @@ export async function runUninstall(opts: UninstallOptions, deps: IntegrationDeps
       }
     }
   }
-  for (const [agent, path] of hookFiles) {
-    const { settings, indent } = await readSettingsFile(path);
-    await writeSettingsFile(path, uninstallStopHook(settings), indent);
-    console.log(`  ✓ ${LABEL[agent]}: removed centrail's Stop hook from ${path}.`);
+  for (const agent of hookFiles) {
+    const path = agent === "claude-code" ? ctx.claudeSettings : ctx.files[agent];
+    if (agent === "claude-code") {
+      const { settings, indent } = await readSettingsFile(path);
+      await writeSettingsFile(path, uninstallStopHook(settings), indent);
+    } else await hookFor(agent).uninstall(path);
+    console.log(`  ✓ ${LABEL[agent]}: removed centrail's ${HOW[agent]} from ${path}.`);
   }
   if (removeLauncherFile && (await removeLauncher(ins.launcher.path))) console.log("  ✓ Removed the launcher.");
   console.log("Restart or reload open agent sessions. Local usage logs and centrail's pairing are untouched (`centrail sync` still works).");

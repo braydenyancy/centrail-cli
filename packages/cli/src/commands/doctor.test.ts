@@ -35,6 +35,9 @@ beforeEach(async () => {
     env: { PATH: join(root, "bin"), PATHEXT: ".CMD" },
     claudeDir: join(root, "claude"),
     codexHome: join(root, "codex"),
+    geminiHome: join(root, "home", ".gemini"),
+    copilotHome: join(root, "copilot"),
+    piAgentDir: join(root, "pi", "agent"),
     configDir: join(root, "centrail"),
     claude: null,
     script: "/home/u/.npm/_npx/1/node_modules/centrail/dist/index.js",
@@ -57,6 +60,8 @@ const installedPlugin = async (version: string) => {
   await writeFile(join(root, "claude", "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "centrail@centrail": [{ scope: "user", version }] } }));
 };
 
+const notDetected = { detected: false, integration: "none", plugin: null, hooks: 0, usesLauncher: null, commandResolves: null, status: "not-detected", fix: "ok" };
+
 describe("centrail doctor", () => {
   it("reports a stable JSON shape, exit 0 once set up", async () => {
     await runIntegrationSetup({ yes: true }, deps);
@@ -74,6 +79,9 @@ describe("centrail doctor", () => {
       agents: {
         "claude-code": { detected: false, integration: "none", plugin: { enabled: false, autoUpdate: false, version: null }, hooks: 0, usesLauncher: null, commandResolves: null, status: "not-detected", fix: "ok" },
         codex: { detected: true, integration: "hook", plugin: null, hooks: 1, usesLauncher: true, commandResolves: true, status: "ok", fix: "ok" },
+        "gemini-cli": notDetected,
+        "copilot-cli": notDetected,
+        pi: notDetected,
       },
       notices: [],
     });
@@ -133,5 +141,61 @@ describe("centrail doctor", () => {
     const parked = await doctorReport(deps);
     expect(parked.notices.map((n) => n.kind)).toEqual(["below-minimum"]);
     expect(parked.ok).toBe(false);
+  });
+
+  describe("Gemini CLI, Copilot CLI and Pi", () => {
+    const gemini = () => join(root, "home", ".gemini", "settings.json");
+    const copilot = () => join(root, "copilot", "hooks", "centrail.json");
+    const pi = () => join(root, "pi", "agent", "extensions", "centrail.js");
+    beforeEach(async () => {
+      for (const d of [join(root, "home", ".gemini"), join(root, "copilot"), join(root, "pi", "agent")]) await mkdir(d, { recursive: true });
+    });
+
+    it("not set up → missing, exit 1; --fix sets all three up; then ok, exit 0", async () => {
+      const before = await runDoctor({ json: true }, deps);
+      expect(process.exitCode).toBe(1);
+      expect(out).not.toContain(root); // the report names no path
+      for (const a of ["gemini-cli", "copilot-cli", "pi"] as const) expect(before.agents[a]).toMatchObject({ detected: true, status: "missing", fix: "install" });
+
+      process.exitCode = undefined;
+      out = "";
+      const after = await runDoctor({ fix: true }, deps);
+      expect(after.ok).toBe(true);
+      expect(process.exitCode).toBeUndefined();
+      expect(out).toMatch(/Gemini CLI {3}ok: AfterAgent hook through the launcher/);
+      expect(out).toMatch(/Copilot CLI {2}ok: agentStop hook through the launcher/);
+      expect(out).toMatch(/Pi {11}ok: extension through the launcher/);
+      for (const a of ["gemini-cli", "copilot-cli", "pi"] as const) {
+        expect(after.agents[a]).toEqual({ detected: true, integration: "hook", plugin: null, hooks: 1, usesLauncher: true, commandResolves: true, status: "ok", fix: "ok" });
+      }
+    });
+
+    it("an entry this centrail would write differently is outdated; a deleted launcher leaves them unresolved", async () => {
+      await runIntegrationSetup({ yes: true }, deps);
+      await writeFile(pi(), (await readFile(pi(), "utf-8")).replace("agent_end", "agent_settled"));
+      const file = JSON.parse(await readFile(copilot(), "utf-8"));
+      file.hooks.agentStop[0].timeoutSec = 30; // a user edit to anything but the command is kept and fine
+      await writeFile(copilot(), JSON.stringify(file));
+      const r = await doctorReport(deps);
+      expect(r.agents.pi).toMatchObject({ status: "outdated", fix: "update" });
+      expect(r.agents["copilot-cli"].status).toBe("ok");
+      expect(r.ok).toBe(false);
+
+      await rm(join(root, "centrail"), { recursive: true });
+      const gone = await doctorReport(deps);
+      for (const a of ["gemini-cli", "copilot-cli", "pi"] as const) expect(gone.agents[a]).toMatchObject({ status: "unresolved", commandResolves: false });
+      expect(gone.launcher).toMatchObject({ needed: true, present: false });
+    });
+
+    it("an unparsable settings.json, or a centrail.js that is not centrail's, is unreadable and left alone", async () => {
+      await writeFile(gemini(), "{ // comment\n}");
+      await mkdir(join(pi(), ".."), { recursive: true });
+      await writeFile(pi(), "export default () => {}\n");
+      const r = await runDoctor({ fix: true }, deps);
+      expect(r.agents["gemini-cli"].status).toBe("unreadable");
+      expect(r.agents.pi.status).toBe("unreadable");
+      expect(await readFile(gemini(), "utf-8")).toBe("{ // comment\n}");
+      expect(await readFile(pi(), "utf-8")).toBe("export default () => {}\n");
+    });
   });
 });

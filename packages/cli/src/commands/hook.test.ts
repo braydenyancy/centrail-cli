@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CLI_VERSION } from "../version.js";
-import { AUTO_SYNC_INTERVAL_MS, runStopHook, shouldAutoSync } from "./hook.js";
+import { AUTO_SYNC_INTERVAL_MS, hookReply, runStopHook, shouldAutoSync } from "./hook.js";
 import { readSidecar } from "../sidecar.js";
 import { scratch, type Scratch } from "../testing/git-fixture.js";
 import type { SyncState } from "../watermarks.js";
@@ -311,5 +311,34 @@ describe("runStopHook", () => {
     expect(Object.keys(line.roots!).sort()).toEqual([a, b].sort());
     expect(line.offset).toBeGreaterThan(0);
   });
-});
 
+  // Each harness's own payload, as its docs give it, lands as one sidecar
+  // line under the session id that surface's log scanner uses.
+  it.each([
+    ["gemini-cli", { session_id: "g1", transcript_path: "/x/.gemini/tmp/h/chats/session-1.json", hook_event_name: "AfterAgent", timestamp: "2026-10-14T00:00:00Z", prompt: "p", prompt_response: "r", stop_hook_active: false }, "gemini:g1"],
+    ["copilot-cli", { sessionId: "c1", timestamp: 1760400000000, transcriptPath: "/x/.copilot/session-state/c1/events.jsonl", stopReason: "end_turn", stop_hook_active: false }, "c1"],
+    ["copilot-cli", { hook_event_name: "Stop", session_id: "c2", transcript_path: "/x/events.jsonl", stop_reason: "end_turn" }, "c2"],
+    ["pi", { hook_event_name: "agent_end", session_id: "p1" }, "pi:p1"],
+  ])("%s: maps its stdin payload, stamps the scanner's session id, places by cwd", async (surface, payload, sessionId) => {
+    fx = await scratch();
+    const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
+    const sidecarPath = join(fx.root, "sc.jsonl");
+    const line = (await runStopHook(JSON.stringify({ ...payload, cwd: repo }), surface, { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() }))!;
+    expect(line).toMatchObject({ surface, sessionId, cwd: repo, root: repo, repo: { key: "github.com/acme/r" } });
+    // Only Claude Code's and Codex's transcripts are read for touched paths.
+    expect(line.transcript).toBeUndefined();
+    expect(line.offset).toBeUndefined();
+    expect((await readSidecar(sidecarPath)).get(sessionId)?.surface).toBe(surface);
+  });
+
+  it("a named surface is never re-detected from the payload", async () => {
+    fx = await scratch();
+    const sidecarPath = join(fx.root, "sc.jsonl");
+    const line = (await runStopHook(JSON.stringify({ session_id: "g2", cwd: fx.root, turn_id: "t1" }), "gemini-cli", { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() }))!;
+    expect(line.surface).toBe("gemini-cli");
+  });
+
+  it("replies on stdout the way each harness expects", () => {
+    expect([hookReply("claude-code"), hookReply("codex"), hookReply("gemini-cli"), hookReply("copilot-cli"), hookReply("pi")]).toEqual(["", "{}\n", "{}\n", "{}\n", ""]);
+  });
+});

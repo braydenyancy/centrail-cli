@@ -1822,8 +1822,8 @@ function openBrowser(url, baseUrl) {
 }
 
 // src/commands/integrations.ts
-import { readFile as readFile12, stat as stat10 } from "node:fs/promises";
-import { dirname as dirname7, isAbsolute as isAbsolute3, join as join13, win32 as win323 } from "node:path";
+import { readFile as readFile13, stat as stat11 } from "node:fs/promises";
+import { dirname as dirname8, join as join14, win32 as win324 } from "node:path";
 
 // src/launcher.ts
 import { realpathSync as realpathSync2 } from "node:fs";
@@ -1998,6 +1998,11 @@ function cmdValue(s) {
   return s;
 }
 
+// src/commands/agent-hooks.ts
+import { homedir as homedir7 } from "node:os";
+import { mkdir as mkdir4, readFile as readFile9, rm as rm3, stat as stat8, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname4, isAbsolute as isAbsolute3, join as join10, win32 as win322 } from "node:path";
+
 // src/commands/hooks-install.ts
 import { constants } from "node:fs";
 import { copyFile, mkdir as mkdir3, readFile as readFile8, writeFile as writeFile3 } from "node:fs/promises";
@@ -2009,33 +2014,49 @@ function claudeSettingsPath() {
 function codexHooksPath() {
   return join9(codexHomeDir(), "hooks.json");
 }
-function launcherCommand(launcher, surface, platform = process.platform) {
-  return `${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "codex" ? " --surface codex" : ""}`;
+var HOOK_SURFACES = ["claude-code", "codex", "gemini-cli", "copilot-cli", "pi"];
+function launcherCommand(launcher, surface, platform = process.platform, opts = {}) {
+  const call = opts.powershell && platform === "win32" ? "& " : "";
+  return `${call}${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "claude-code" ? "" : ` --surface ${surface}`}`;
 }
-function installStopHook(settings, command2) {
+function installStopHook(settings, command2, event = "Stop", handler = { timeout: 10 }) {
   const hooks = isObject7(settings.hooks) ? { ...settings.hooks } : {};
-  const cleaned = uninstallStopHook(settings);
-  const kept = Array.isArray(cleaned.hooks?.Stop) ? [...cleaned.hooks.Stop] : [];
-  kept.push({ hooks: [{ type: "command", command: command2, timeout: 10 }] });
-  return { ...settings, hooks: { ...hooks, Stop: kept } };
+  const cleaned = uninstallStopHook(settings, event);
+  const kept = Array.isArray(cleaned.hooks?.[event]) ? [...cleaned.hooks[event]] : [];
+  kept.push({ hooks: [{ ...handler.name ? { name: handler.name } : {}, type: "command", command: command2, ...omit(handler, "name") }] });
+  return { ...settings, hooks: { ...hooks, [event]: kept } };
 }
-function uninstallStopHook(settings) {
-  if (!isObject7(settings.hooks) || !Array.isArray(settings.hooks.Stop)) return settings;
-  const kept = settings.hooks.Stop.flatMap((g) => {
+function uninstallStopHook(settings, event = "Stop") {
+  if (!isObject7(settings.hooks) || !Array.isArray(settings.hooks[event])) return settings;
+  const kept = settings.hooks[event].flatMap((g) => {
     if (!isObject7(g) || !Array.isArray(g.hooks)) return [g];
     const handlers = g.hooks.filter((h) => !isObject7(h) || h.type !== "command" || typeof h.command !== "string" || !isCentrailCommand(h.command));
     if (handlers.length === g.hooks.length) return [g];
     return handlers.length ? [{ ...g, hooks: handlers }] : [];
   });
   const hooks = { ...settings.hooks };
-  if (kept.length > 0) hooks.Stop = kept;
-  else delete hooks.Stop;
+  if (kept.length > 0) hooks[event] = kept;
+  else delete hooks[event];
   const out = { ...settings, hooks };
   if (Object.keys(hooks).length === 0) delete out.hooks;
   return out;
 }
+function groupCommands(settings, event = "Stop") {
+  const groups = Array.isArray(settings.hooks?.[event]) ? settings.hooks[event] : [];
+  const out = [];
+  for (const g of groups) {
+    if (!isObject7(g) || !Array.isArray(g.hooks)) continue;
+    for (const h of g.hooks) if (isObject7(h) && h.type === "command" && typeof h.command === "string") out.push(h.command);
+  }
+  return out;
+}
+function omit(o, key) {
+  const { [key]: _, ...rest2 } = o;
+  return rest2;
+}
 function commandWords(command2) {
   const words = [];
+  if (/^& ["']/.test(command2)) command2 = command2.slice(2);
   const windows = /"(?:[a-z]:\\|\\\\)/i.test(command2);
   let word = "", quoted = "", started = false;
   for (let i = 0; i < command2.length; i++) {
@@ -2069,7 +2090,12 @@ function isCentrailCommand(command2) {
   const base = (s) => s.split("/").pop() ?? "";
   const cli = (s) => /(?:^|\/)centrail(?:\.cmd|\.exe|@[^/]*)?$/.test(s);
   const bundle = (s) => /(?:^|\/)centrail(?:[-@][^/]*)?\/(?:.*\/)?(?:index\.js|centrail\.mjs)$/.test(s) || /\/scripts\/centrail\.mjs$/.test(s);
-  const stopArgs = (args) => [HOOK_MARK, `${HOOK_MARK} --surface codex`, `${HOOK_MARK} --centrail-hook`, `${HOOK_MARK} --centrail-hook --surface codex`].includes(args.join(" "));
+  const stopArgs = (args) => {
+    const rest2 = args.join(" ");
+    if (!rest2.startsWith(HOOK_MARK)) return false;
+    const tail = rest2.slice(HOOK_MARK.length).replace(/^ --centrail-hook/, "");
+    return tail === "" || HOOK_SURFACES.some((s) => s !== "claude-code" && tail === ` --surface ${s}`);
+  };
   const absolute2 = (s) => isAbsolute2(s) || win32.isAbsolute(s);
   if (absolute2(words[0] ?? "") && /^centrail-hook(?:\.cmd)?$/.test(base(normal[0] ?? "")) && words.includes("--centrail-hook") && stopArgs(words.slice(1))) return true;
   if (words.slice(2).includes("--centrail-hook") && stopArgs(words.slice(2)) && absolute2(words[0] ?? "") && absolute2(words[1] ?? "")) return true;
@@ -2131,11 +2157,204 @@ function isObject7(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+// src/commands/agent-hooks.ts
+function defaultHome(agent, env = process.env) {
+  if (agent === "codex") return codexHomeDir();
+  if (agent === "gemini-cli") return join10(env.GEMINI_CLI_HOME || homedir7(), ".gemini");
+  if (agent === "copilot-cli") return env.COPILOT_HOME || join10(homedir7(), ".copilot");
+  return dirname4(piSessionsDir());
+}
+async function classifyCommand(command2, expected, platform) {
+  const words = commandWords(command2) ?? [];
+  const launcherForm = /(?:^|[\\/])centrail-hook(?:\.cmd)?$/.test(words[0] ?? "");
+  const absolute2 = words.slice(0, 2).filter((w) => isAbsolute3(w) || win322.isAbsolute(w));
+  const pinned = !launcherForm && absolute2.length === 2;
+  const resolves = launcherForm ? await isExecutable(words[0], platform) : pinned && (await Promise.all(absolute2.map(exists))).every(Boolean);
+  return { form: launcherForm ? "launcher" : pinned ? "pinned" : "other", current: command2 === expected, resolves };
+}
+async function readJson(file) {
+  try {
+    return (await readSettingsFile(file)).settings;
+  } catch {
+    return null;
+  }
+}
+function groupHook(o) {
+  const command2 = (launcher, platform) => launcherCommand(launcher, o.agent, platform, { powershell: o.powershell });
+  return {
+    agent: o.agent,
+    label: o.label,
+    bin: o.bin,
+    how: o.how,
+    fileName: o.fileName,
+    file: (home) => join10(home, o.fileName),
+    async read(file, launcher, platform) {
+      const settings = await readJson(file);
+      if (!settings) return { readable: false, hooks: [] };
+      const expected = command2(launcher, platform);
+      const hooks = await Promise.all(groupCommands(settings, o.event).filter(isCentrailCommand).map((c) => classifyCommand(c, expected, platform)));
+      return { readable: true, hooks };
+    },
+    async install(file, launcher, platform) {
+      const { settings, indent } = await readSettingsFile(file);
+      await writeSettingsFile(file, installStopHook(settings, command2(launcher, platform), o.event, o.handler), indent);
+    },
+    async uninstall(file) {
+      const { settings, indent } = await readSettingsFile(file);
+      await writeSettingsFile(file, uninstallStopHook(settings, o.event), indent);
+    }
+  };
+}
+var COPILOT_EVENT = "agentStop";
+var copilotCommands = (settings) => {
+  const entries = Array.isArray(settings.hooks?.[COPILOT_EVENT]) ? settings.hooks[COPILOT_EVENT] : [];
+  return entries.flatMap((e) => isObject8(e) ? ["bash", "powershell", "command"].map((k) => e[k]).filter((c) => typeof c === "string") : []);
+};
+var ownsCopilotEntry = (e) => isObject8(e) && ["bash", "powershell", "command"].some((k) => typeof e[k] === "string" && isCentrailCommand(e[k]));
+function withoutCopilotEntries(settings) {
+  const hooks = isObject8(settings.hooks) ? { ...settings.hooks } : {};
+  const kept = Array.isArray(hooks[COPILOT_EVENT]) ? hooks[COPILOT_EVENT].filter((e) => !ownsCopilotEntry(e)) : [];
+  if (kept.length) hooks[COPILOT_EVENT] = kept;
+  else delete hooks[COPILOT_EVENT];
+  return { ...settings, hooks };
+}
+var copilotHook = {
+  agent: "copilot-cli",
+  label: "Copilot CLI",
+  bin: "copilot",
+  how: "agentStop hook",
+  fileName: join10("hooks", "centrail.json"),
+  file: (home) => join10(home, "hooks", "centrail.json"),
+  async read(file, launcher, platform) {
+    const settings = await readJson(file);
+    if (!settings) return { readable: false, hooks: [] };
+    const expected = launcherCommand(launcher, "copilot-cli", platform, { powershell: true });
+    const hooks = await Promise.all(copilotCommands(settings).filter(isCentrailCommand).map((c) => classifyCommand(c, expected, platform)));
+    return { readable: true, hooks };
+  },
+  async install(file, launcher, platform) {
+    const { settings, indent } = await readSettingsFile(file);
+    const next = withoutCopilotEntries(settings);
+    const shell = platform === "win32" ? "powershell" : "bash";
+    const entries = Array.isArray(next.hooks?.[COPILOT_EVENT]) ? next.hooks[COPILOT_EVENT] : [];
+    const entry = { type: "command", [shell]: launcherCommand(launcher, "copilot-cli", platform, { powershell: true }), timeoutSec: 10 };
+    await writeSettingsFile(file, { version: 1, ...next, hooks: { ...next.hooks, [COPILOT_EVENT]: [...entries, entry] } }, indent);
+  },
+  async uninstall(file) {
+    const { settings, indent } = await readSettingsFile(file);
+    const next = withoutCopilotEntries(settings);
+    const rest2 = Object.keys(next).filter((k) => k !== "version" && !(k === "hooks" && Object.keys(next.hooks ?? {}).length === 0));
+    if (rest2.length === 0) await rm3(file, { force: true });
+    else await writeSettingsFile(file, next, indent);
+  }
+};
+var PI_EXTENSION_MARK = "centrail-pi-extension";
+function piExtension(launcher) {
+  return `// ${PI_EXTENSION_MARK}: written by \`centrail setup\`, rewritten by each setup,
+// removed by \`centrail uninstall\`; do not edit. After each agent run it starts
+// centrail's stable launcher (--centrail-hook --surface pi) in the background
+// with the session id and folder on stdin. Pi does not wait for it.
+import { spawn } from "node:child_process";
+
+const launcher = ${JSON.stringify(launcher)};
+const args = ["hook", "stop", "--centrail-hook", "--surface", "pi"];
+
+export default function centrail(pi) {
+  pi.on("agent_end", (_event, ctx) => {
+    try {
+      const input = JSON.stringify({
+        hook_event_name: "agent_end",
+        session_id: ctx.sessionManager.getSessionId(),
+        cwd: ctx.cwd,
+      });
+      const options = { detached: true, windowsHide: true, stdio: ["pipe", "ignore", "ignore"] };
+      // A .cmd runs only through a shell on Windows.
+      const child = process.platform === "win32"
+        ? spawn(\`"\${launcher}"\`, args, { ...options, shell: true })
+        : spawn(launcher, args, options);
+      child.on("error", () => {});
+      child.stdin.on("error", () => {});
+      child.stdin.end(input);
+      child.unref();
+    } catch {
+      // never break the agent over a sync
+    }
+  });
+}
+`;
+}
+function piExtensionLauncher(content) {
+  if (!content.includes(PI_EXTENSION_MARK)) return null;
+  const m = /^const launcher = ("(?:[^"\\]|\\.)*");$/m.exec(content);
+  if (!m) return null;
+  try {
+    return JSON.parse(m[1]);
+  } catch {
+    return null;
+  }
+}
+var piHook = {
+  agent: "pi",
+  label: "Pi",
+  bin: "pi",
+  how: "extension",
+  fileName: join10("extensions", "centrail.js"),
+  file: (home) => join10(home, "extensions", "centrail.js"),
+  async read(file, launcher, platform) {
+    let content;
+    try {
+      content = await readFile9(file, "utf-8");
+    } catch {
+      return { readable: true, hooks: [] };
+    }
+    const runs = piExtensionLauncher(content);
+    if (runs === null) return { readable: false, hooks: [] };
+    return { readable: true, hooks: [{ form: "launcher", current: content === piExtension(launcher), resolves: await isExecutable(runs, platform) }] };
+  },
+  async install(file, launcher) {
+    await mkdir4(dirname4(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    await writeFile4(tmp, piExtension(launcher));
+    await replaceFile(tmp, file);
+  },
+  async uninstall(file) {
+    const content = await readFile9(file, "utf-8").catch(() => null);
+    if (content !== null && piExtensionLauncher(content) !== null) await rm3(file, { force: true });
+  }
+};
+var AGENT_HOOKS = [
+  groupHook({ agent: "codex", label: "Codex", bin: "codex", how: "Stop hook", fileName: "hooks.json", event: "Stop", handler: { timeout: 10 }, powershell: false }),
+  groupHook({
+    agent: "gemini-cli",
+    label: "Gemini CLI",
+    bin: "gemini",
+    how: "AfterAgent hook",
+    fileName: "settings.json",
+    event: "AfterAgent",
+    handler: { name: "centrail", timeout: 1e4 },
+    // Gemini CLI runs hook commands through PowerShell on Windows.
+    powershell: true
+  }),
+  copilotHook,
+  piHook
+];
+async function exists(p) {
+  try {
+    await stat8(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isObject8(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
 // src/commands/plugin-setup.ts
 import { execFile } from "node:child_process";
 import { constants as constants2 } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename as basename3, delimiter, join as join10 } from "node:path";
+import { basename as basename3, delimiter, join as join11 } from "node:path";
 import { createInterface } from "node:readline/promises";
 var MARKETPLACE = "centrail";
 var MARKETPLACE_REPO = "braydenyancy/centrail-cli";
@@ -2182,15 +2401,15 @@ async function setUpPlugin(claude, path) {
 var RELEASE_SOURCE = { source: "github", repo: MARKETPLACE_REPO, ref: RELEASE_REF };
 function marketplaceEntry(settings) {
   const all = settings.extraKnownMarketplaces;
-  const entry = isObject8(all) ? all[MARKETPLACE] : void 0;
-  return isObject8(entry) ? entry : void 0;
+  const entry = isObject9(all) ? all[MARKETPLACE] : void 0;
+  return isObject9(entry) ? entry : void 0;
 }
 function withMarketplace(settings, entry) {
-  const all = isObject8(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
+  const all = isObject9(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
   return { ...settings, extraKnownMarketplaces: { ...all, [MARKETPLACE]: entry } };
 }
 function isReleaseSource(source) {
-  return isObject8(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
+  return isObject9(source) && source.source === "github" && source.repo === MARKETPLACE_REPO && source.ref === RELEASE_REF;
 }
 async function readOrSay(path) {
   try {
@@ -2207,7 +2426,7 @@ async function findExecutable(name, env = process.env, platform = process.platfo
   for (const dir of (env.PATH ?? env.Path ?? "").split(win ? ";" : delimiter)) {
     if (!dir) continue;
     for (const ext of exts) {
-      const bin = join10(dir, `${name}${ext}`);
+      const bin = join11(dir, `${name}${ext}`);
       try {
         await access(bin, win ? constants2.F_OK : constants2.X_OK);
         return bin;
@@ -2241,7 +2460,7 @@ async function askLine(prompt) {
     rl.close();
   }
 }
-function isObject8(v) {
+function isObject9(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -2249,12 +2468,12 @@ function isObject8(v) {
 import { createInterface as createInterface2 } from "node:readline/promises";
 
 // src/resolver.ts
-import { stat as stat9 } from "node:fs/promises";
+import { stat as stat10 } from "node:fs/promises";
 
 // src/git.ts
 import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
-import { readFile as readFile9, stat as stat8 } from "node:fs/promises";
-import { basename as basename4, dirname as dirname4, join as join11, win32 as win322 } from "node:path";
+import { readFile as readFile10, stat as stat9 } from "node:fs/promises";
+import { basename as basename4, dirname as dirname5, join as join12, win32 as win323 } from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile2);
 var GIT_REDIRECT_VARS = [
@@ -2295,7 +2514,7 @@ async function resolveRepoRoot(cwd) {
 }
 function nativePath(p, platform = process.platform) {
   if (platform !== "win32") return p;
-  const n = win322.normalize(p);
+  const n = win323.normalize(p);
   return /^[a-z]:/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
 }
 function isWithin(path, root, platform = process.platform) {
@@ -2307,16 +2526,16 @@ function samePath(a, b, platform = process.platform) {
   return platform === "win32" ? winKey(a) === winKey(b) : a === b;
 }
 function winKey(p) {
-  return win322.normalize(p).toLowerCase();
+  return win323.normalize(p).toLowerCase();
 }
 async function nearestDirectory(path) {
   let dir = path;
   for (; ; ) {
     try {
-      if ((await stat8(dir)).isDirectory()) return dir;
+      if ((await stat9(dir)).isDirectory()) return dir;
     } catch {
     }
-    const parent = dirname4(dir);
+    const parent = dirname5(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -2327,9 +2546,9 @@ function deepestRoot(roots, path) {
   return best;
 }
 async function nestedCheckout(root, dir) {
-  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname4(d)) {
+  for (let d = dir; !samePath(d, root) && isWithin(d, root); d = dirname5(d)) {
     try {
-      await stat8(join11(d, ".git"));
+      await stat9(join12(d, ".git"));
       return true;
     } catch {
     }
@@ -2341,7 +2560,7 @@ async function readMainCheckout(repoRoot) {
     const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
     const common = stdout.trim() ? nativePath(stdout.trim()) : "";
     if (!common || basename4(common) !== ".git") return null;
-    const main = dirname4(common);
+    const main = dirname5(common);
     return samePath(main, repoRoot) ? null : main;
   } catch {
     return null;
@@ -2580,7 +2799,7 @@ async function readRepoSize(repoRoot) {
   let totalLoc = 0;
   for (const rel of files) {
     try {
-      const content = await readFile9(`${repoRoot}/${rel}`);
+      const content = await readFile10(`${repoRoot}/${rel}`);
       if (content.byteLength > LOC_BYTES_CAP) continue;
       if (content.includes(0)) continue;
       totalLoc += content.toString("utf-8").split("\n").length;
@@ -2593,9 +2812,9 @@ async function readRepoSize(repoRoot) {
 // src/identity.ts
 import { createHmac } from "node:crypto";
 import { realpathSync as realpathSync3 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { readFile as readFile10 } from "node:fs/promises";
-import { basename as basename5, dirname as dirname5, join as join12 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { readFile as readFile11 } from "node:fs/promises";
+import { basename as basename5, dirname as dirname6, join as join13 } from "node:path";
 function remoteKey(url) {
   const raw = url.trim();
   if (!raw) return null;
@@ -2686,7 +2905,7 @@ async function listRoots(repoRoot, ref) {
 }
 function displayLabel(path) {
   const p = path.replace(/[\/\\]+$/, "");
-  const home = homedir7().replace(/[\/\\]+$/, "");
+  const home = homedir8().replace(/[\/\\]+$/, "");
   if (samePath(p, home)) return "~";
   try {
     if (samePath(realpathSync3.native(p), realpathSync3.native(home))) return "~";
@@ -2710,14 +2929,14 @@ async function staleWorktree(dir) {
   let d = dir;
   for (; ; ) {
     try {
-      const text2 = await readFile10(join12(d, ".git"), "utf-8");
+      const text2 = await readFile11(join13(d, ".git"), "utf-8");
       const m = /^gitdir:\s*(.+?)\s*$/m.exec(text2);
       const wt = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/.exec(m[1]) : null;
       return wt ? { folder: d, main: wt[1] } : null;
     } catch (err) {
       if (err.code === "EISDIR") return null;
     }
-    const parent = dirname5(d);
+    const parent = dirname6(d);
     if (parent === d) return null;
     d = parent;
   }
@@ -2742,11 +2961,11 @@ async function readHeadState(repoRoot) {
 import { basename as basename6 } from "node:path";
 
 // src/sidecar.ts
-import { appendFile, mkdir as mkdir4, readFile as readFile11, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname6 } from "node:path";
+import { appendFile, mkdir as mkdir5, readFile as readFile12, writeFile as writeFile5 } from "node:fs/promises";
+import { dirname as dirname7 } from "node:path";
 var SIDECAR_PATH = `${CONFIG_DIR}/sessions.jsonl`;
 async function appendSidecar(line, path = SIDECAR_PATH) {
-  await mkdir4(dirname6(path), { recursive: true });
+  await mkdir5(dirname7(path), { recursive: true });
   await appendFile(path, `${JSON.stringify(line)}
 `, { mode: 384 });
 }
@@ -2754,7 +2973,7 @@ async function readSidecar(path = SIDECAR_PATH) {
   const out = /* @__PURE__ */ new Map();
   let text2;
   try {
-    text2 = await readFile11(path, "utf-8");
+    text2 = await readFile12(path, "utf-8");
   } catch {
     return out;
   }
@@ -2775,7 +2994,7 @@ var SIDECAR_RETENTION_DAYS = 90;
 async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   let text2;
   try {
-    text2 = await readFile11(path, "utf-8");
+    text2 = await readFile12(path, "utf-8");
   } catch {
     return;
   }
@@ -2800,7 +3019,7 @@ async function compactSidecar(path = SIDECAR_PATH, now = Date.now()) {
   const expired = now - SIDECAR_RETENTION_DAYS * 24 * 60 * 60 * 1e3;
   for (const [sessionId, at] of lastSeen) if (at < expired) keep.delete(sessionId);
   const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile4(tmp, [...keep.values(), ...recent].map((l) => `${l}
+  await writeFile5(tmp, [...keep.values(), ...recent].map((l) => `${l}
 `).join(""), { mode: 384 });
   await replaceFile(tmp, path);
 }
@@ -2961,7 +3180,7 @@ var IdentityResolver = class _IdentityResolver {
     let known = this.existsByCwd.get(cwd);
     if (known === void 0) {
       try {
-        known = (await stat9(cwd)).isDirectory();
+        known = (await stat10(cwd)).isDirectory();
       } catch {
         known = false;
       }
@@ -3153,13 +3372,14 @@ async function runSurfaces(args) {
 }
 
 // src/commands/integrations.ts
-var AGENTS = ["claude-code", "codex"];
-var LABEL = { "claude-code": "Claude Code", codex: "Codex" };
+var AGENTS = ["claude-code", ...AGENT_HOOKS.map((h) => h.agent)];
+var LABEL = Object.fromEntries([["claude-code", "Claude Code"], ...AGENT_HOOKS.map((h) => [h.agent, h.label])]);
+var hookFor = (agent) => AGENT_HOOKS.find((h) => h.agent === agent);
 function parseAgents(names) {
   if (names.length === 0) return void 0;
   const out = [];
   for (const name of names.flatMap((n) => n.split(",")).map((n) => n.trim()).filter(Boolean)) {
-    if (!AGENTS.includes(name)) throw new Error(`Unknown agent "${name}": use ${AGENTS.join(" or ")}.`);
+    if (!AGENTS.includes(name)) throw new Error(`Unknown agent "${name}": use ${AGENTS.slice(0, -1).join(", ")} or ${AGENTS.at(-1)}.`);
     if (!out.includes(name)) out.push(name);
   }
   return out;
@@ -3167,16 +3387,18 @@ function parseAgents(names) {
 function context(deps) {
   const platform = deps.platform ?? process.platform;
   const claudeDir = deps.claudeDir ?? claudeConfigDirs()[0];
-  const codexHome = deps.codexHome ?? codexHomeDir();
+  const given = { codex: deps.codexHome, "gemini-cli": deps.geminiHome, "copilot-cli": deps.copilotHome, pi: deps.piAgentDir };
+  const homes = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, given[h.agent] ?? defaultHome(h.agent)]));
+  const files = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, h.file(homes[h.agent])]));
   return {
     env: deps.env ?? process.env,
     platform,
     claudeDir,
-    codexHome,
-    claudeSettings: join13(claudeDir, "settings.json"),
-    codexHooks: join13(codexHome, "hooks.json"),
+    claudeSettings: join14(claudeDir, "settings.json"),
+    homes,
+    files,
     launcher: launcherPath(deps.configDir ?? CONFIG_DIR, platform),
-    recordedNode: join13(deps.configDir ?? CONFIG_DIR, "node"),
+    recordedNode: join14(deps.configDir ?? CONFIG_DIR, "node"),
     script: deps.script ?? process.argv[1] ?? "",
     node: deps.node ?? process.execPath,
     deps
@@ -3186,7 +3408,7 @@ async function inspectIntegrations(deps = {}) {
   const ctx = context(deps);
   const content = await readLauncher(ctx.launcher);
   const recorded = content ? launcherScriptPath(content) : null;
-  const previous = recorded && await exists(recorded) ? recorded : null;
+  const previous = recorded && await exists2(recorded) ? recorded : null;
   const target = launcherTarget(ctx.script, ctx.node, previous, ctx.env);
   const expected = launcherScript(target, ctx.platform);
   const executable = content !== null && await isExecutable(ctx.launcher, ctx.platform);
@@ -3200,8 +3422,7 @@ async function inspectIntegrations(deps = {}) {
   };
   const expectedResolves = target.script !== null || await cliReachable(ctx, target.node);
   const claudeCli = ctx.deps.claude === void 0 ? await findExecutable("claude", ctx.env, ctx.platform) : ctx.deps.claude ? "claude" : null;
-  const codexCli = await findExecutable("codex", ctx.env, ctx.platform);
-  const claudeFile = await readHooksFile(ctx, ctx.claudeSettings, "claude-code");
+  const claudeFile = await readClaudeSettings(ctx);
   const settings = claudeFile.settings;
   const entry = marketplaceEntry(settings);
   const claude = {
@@ -3215,54 +3436,38 @@ async function inspectIntegrations(deps = {}) {
       version: await installedPluginVersion(ctx.claudeDir)
     }
   };
-  const codex = {
-    ...await readHooksFile(ctx, ctx.codexHooks, "codex"),
-    detected: codexCli !== null || await isDir(ctx.codexHome),
-    cli: codexCli
-  };
-  return { claude, codex, launcher, expected, expectedResolves };
+  const agents = { "claude-code": claude };
+  for (const hook of AGENT_HOOKS) {
+    const cli = await findExecutable(hook.bin, ctx.env, ctx.platform);
+    const file = await hook.read(ctx.files[hook.agent], ctx.launcher, ctx.platform);
+    agents[hook.agent] = { ...file, detected: cli !== null || await isDir(ctx.homes[hook.agent]), cli };
+  }
+  return { claude, agents, launcher, expected, expectedResolves };
 }
 async function cliReachable(ctx, pinnedNode) {
-  const recorded = (await readFile12(ctx.recordedNode, "utf-8").catch(() => "")).trim();
-  const beside = [recorded, pinnedNode].filter((n) => Boolean(n)).map((n) => ctx.platform === "win32" ? win323.dirname(n) : dirname7(n));
+  const recorded = (await readFile13(ctx.recordedNode, "utf-8").catch(() => "")).trim();
+  const beside = [recorded, pinnedNode].filter((n) => Boolean(n)).map((n) => ctx.platform === "win32" ? win324.dirname(n) : dirname8(n));
   const path = [ctx.env.PATH ?? ctx.env.Path ?? "", ...beside].filter(Boolean).join(ctx.platform === "win32" ? ";" : ":");
   const env = { ...ctx.env, PATH: path };
   for (const name of ["centrail", "npx"]) if (await findExecutable(name, env, ctx.platform)) return true;
   return false;
 }
-async function readHooksFile(ctx, path, agent) {
+async function readClaudeSettings(ctx) {
   let file;
   try {
-    file = await readSettingsFile(path);
+    file = await readSettingsFile(ctx.claudeSettings);
   } catch {
     return { readable: false, settings: {}, indent: "  ", hooks: [] };
   }
-  const expected = launcherCommand(ctx.launcher, agent, ctx.platform);
-  const hooks = [];
-  for (const command2 of stopCommands(file.settings).filter(isCentrailCommand)) {
-    const words = commandWords(command2) ?? [];
-    const launcherForm = /(?:^|[\\/])centrail-hook(?:\.cmd)?$/.test(words[0] ?? "");
-    const absolute2 = words.slice(0, 2).filter((w) => isAbsolute3(w) || win323.isAbsolute(w));
-    const pinned = !launcherForm && absolute2.length === 2;
-    const resolves = launcherForm ? await isExecutable(words[0], ctx.platform) : pinned && (await Promise.all(absolute2.map(exists))).every(Boolean);
-    hooks.push({ form: launcherForm ? "launcher" : pinned ? "pinned" : "other", current: command2 === expected, resolves });
-  }
+  const expected = launcherCommand(ctx.launcher, "claude-code", ctx.platform);
+  const hooks = await Promise.all(groupCommands(file.settings).filter(isCentrailCommand).map((c) => classifyCommand(c, expected, ctx.platform)));
   return { readable: true, ...file, hooks };
-}
-function stopCommands(settings) {
-  const groups = Array.isArray(settings.hooks?.Stop) ? settings.hooks.Stop : [];
-  const out = [];
-  for (const g of groups) {
-    if (!isObject9(g) || !Array.isArray(g.hooks)) continue;
-    for (const h of g.hooks) if (isObject9(h) && h.type === "command" && typeof h.command === "string") out.push(h.command);
-  }
-  return out;
 }
 async function installedPluginVersion(claudeDir = claudeConfigDirs()[0]) {
   try {
-    const raw = JSON.parse(await readFile12(join13(claudeDir, "plugins", "installed_plugins.json"), "utf-8"));
+    const raw = JSON.parse(await readFile13(join14(claudeDir, "plugins", "installed_plugins.json"), "utf-8"));
     const entry = raw?.plugins?.[PLUGIN_ID];
-    const versions = (Array.isArray(entry) ? entry : [entry]).map((e) => isObject9(e) ? e.version : void 0).filter(validVersion);
+    const versions = (Array.isArray(entry) ? entry : [entry]).map((e) => isObject10(e) ? e.version : void 0).filter(validVersion);
     return versions.sort(compareVersions).pop() ?? null;
   } catch {
     return null;
@@ -3270,11 +3475,14 @@ async function installedPluginVersion(claudeDir = claudeConfigDirs()[0]) {
 }
 function planSetup(ins, agents) {
   return AGENTS.map((agent) => {
-    const state = agent === "claude-code" ? ins.claude : ins.codex;
+    const state = ins.agents[agent];
     const skip = (detail) => ({ agent, action: "skip", via: null, detail });
     if (agents && !agents.includes(agent)) return skip("not selected");
     if (!state.detected) return skip("not detected");
-    if (!state.readable) return skip(`${agent === "codex" ? "hooks.json" : "settings.json"} does not parse; fix it, then rerun`);
+    if (!state.readable) {
+      if (agent === "pi") return skip("extensions/centrail.js is not centrail's; move it, then rerun");
+      return skip(`${agent === "claude-code" ? "settings.json" : hookFor(agent).fileName} does not parse; fix it, then rerun`);
+    }
     if (agent === "claude-code") {
       const { plugin, hooks } = ins.claude;
       if (plugin.enabled) {
@@ -3293,13 +3501,15 @@ function planSetup(ins, agents) {
     return hookPlan(agent, state.hooks, ins.launcher, agent === "claude-code" ? " (no `claude` command for the plugin)" : "");
   });
 }
+var HOW = Object.fromEntries([["claude-code", "Stop hook"], ...AGENT_HOOKS.map((h) => [h.agent, h.how])]);
 function hookPlan(agent, hooks, launcher, why) {
   const via = "hook";
-  if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail Stop hooks \u2192 one, through the launcher` };
-  if (hooks.length === 0) return { agent, action: "install", via, detail: `Stop hook through the launcher${why}` };
-  if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : "hook"} \u2192 the launcher` };
+  const how = HOW[agent];
+  if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail ${how}s \u2192 one, through the launcher` };
+  if (hooks.length === 0) return { agent, action: "install", via, detail: `${how} through the launcher${why}` };
+  if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : how} \u2192 the launcher` };
   if (!launcher.current) return { agent, action: "update", via, detail: "refresh the launcher" };
-  return { agent, action: "ok", via, detail: "Stop hook through the launcher" };
+  return { agent, action: "ok", via, detail: `${how} through the launcher` };
 }
 var pending = (item) => item.action !== "ok" && item.action !== "skip";
 function printPlan(items, launcher, title) {
@@ -3315,7 +3525,7 @@ async function runIntegrationSetup(opts, deps = {}) {
   const ins = await inspectIntegrations(deps);
   const plan = planSetup(ins, opts.agents);
   if (!plan.some((i) => i.action !== "skip" || i.detail !== "not detected")) {
-    console.log("No supported agent found here (Claude Code, Codex). Install one, then run `centrail setup`.");
+    console.log(`No supported agent found here (${AGENTS.map((a) => LABEL[a]).join(", ")}). Install one, then run \`centrail setup\`.`);
     return { plan, changed: false };
   }
   printPlan(plan, ins.launcher, "centrail setup:");
@@ -3337,11 +3547,14 @@ async function runIntegrationSetup(opts, deps = {}) {
   if (usesLauncher) await writeLauncher(ins.expected, ctx.launcher);
   for (const item of plan.filter(pending)) {
     if (item.agent === "claude-code") await applyClaude(ctx, ins, item);
-    else await applyHook(ctx, ctx.codexHooks, "codex");
+    else await applyHook(ctx, item.agent);
   }
   if (plan.some((i) => i.agent === "codex" && pending(i))) {
     console.log("  Codex: open /hooks in Codex once and trust centrail's Stop hook. Codex trusts a hook by its hash;");
     console.log("    this command stays the same across centrail releases, so later updates need no new trust. Restart open sessions.");
+  }
+  if (plan.some((i) => (i.agent === "gemini-cli" || i.agent === "copilot-cli" || i.agent === "pi") && pending(i))) {
+    console.log("  Gemini CLI, Copilot CLI and Pi read their hooks and extensions at start: restart open sessions.");
   }
   console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
   console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
@@ -3354,7 +3567,7 @@ async function applyClaude(ctx, ins, item) {
     if (await setUpPlugin(claude, ctx.claudeSettings)) return;
     console.log("  Recording Claude Code turns through a standalone Stop hook until the plugin installs; rerun `centrail setup` to switch.");
     await writeLauncher(ins.expected, ctx.launcher);
-    await applyHook(ctx, ctx.claudeSettings, "claude-code");
+    await applyClaudeHook(ctx);
     return;
   }
   if (item.via === "plugin") {
@@ -3365,12 +3578,17 @@ async function applyClaude(ctx, ins, item) {
     console.log(`  \u2713 Claude Code plugin: auto-update on from #${RELEASE_REF}; standalone centrail hooks removed.`);
     return;
   }
-  await applyHook(ctx, ctx.claudeSettings, "claude-code");
+  await applyClaudeHook(ctx);
 }
-async function applyHook(ctx, path, agent) {
-  const { settings, indent } = await readSettingsFile(path);
-  await writeSettingsFile(path, installStopHook(settings, launcherCommand(ctx.launcher, agent, ctx.platform)), indent);
-  console.log(`  \u2713 ${LABEL[agent]}: Stop hook in ${path} runs the launcher.`);
+async function applyClaudeHook(ctx) {
+  const { settings, indent } = await readSettingsFile(ctx.claudeSettings);
+  await writeSettingsFile(ctx.claudeSettings, installStopHook(settings, launcherCommand(ctx.launcher, "claude-code", ctx.platform)), indent);
+  console.log(`  \u2713 Claude Code: Stop hook in ${ctx.claudeSettings} runs the launcher.`);
+}
+async function applyHook(ctx, agent) {
+  const hook = hookFor(agent);
+  await hook.install(ctx.files[agent], ctx.launcher, ctx.platform);
+  console.log(`  \u2713 ${hook.label}: ${hook.how} in ${ctx.files[agent]} runs the launcher.`);
 }
 function claudeRunner(ctx, ins) {
   if (ctx.deps.claude !== void 0) return ctx.deps.claude;
@@ -3381,16 +3599,15 @@ async function runUninstall(opts, deps = {}) {
   const ins = await inspectIntegrations(deps);
   const selected = (a) => !opts.agents || opts.agents.includes(a);
   const removePlugin = selected("claude-code") && !opts.keepPlugin && ins.claude.plugin.enabled;
-  const files = [
-    ["claude-code", ctx.claudeSettings, ins.claude],
-    ["codex", ctx.codexHooks, ins.codex]
-  ];
-  const hookFiles = files.filter(([a, , s]) => selected(a) && s.hooks.length > 0);
-  const launcherKept = files.some(([a, , s]) => !selected(a) && s.hooks.some((h) => h.form === "launcher"));
+  const hookFiles = AGENTS.filter((a) => selected(a) && ins.agents[a].hooks.length > 0);
+  const launcherKept = AGENTS.some((a) => !selected(a) && ins.agents[a].hooks.some((h) => h.form === "launcher"));
   const removeLauncherFile = ins.launcher.present && !launcherKept;
   const lines = [
     ...removePlugin ? [`  ${"Claude Code".padEnd(12)} remove   plugin ${PLUGIN_ID} and its marketplace`] : [],
-    ...hookFiles.map(([a, , s]) => `  ${LABEL[a].padEnd(12)} remove   ${s.hooks.length} centrail Stop hook${s.hooks.length > 1 ? "s" : ""}`),
+    ...hookFiles.map((a) => {
+      const n = ins.agents[a].hooks.length;
+      return `  ${LABEL[a].padEnd(12)} remove   ${a === "pi" ? "centrail's extension" : `${n} centrail ${HOW[a]}${n > 1 ? "s" : ""}`}`;
+    }),
     ...removeLauncherFile ? [`  ${"launcher".padEnd(12)} remove   ${ins.launcher.path}`] : []
   ];
   if (lines.length === 0) {
@@ -3412,10 +3629,13 @@ async function runUninstall(opts, deps = {}) {
       }
     }
   }
-  for (const [agent, path] of hookFiles) {
-    const { settings, indent } = await readSettingsFile(path);
-    await writeSettingsFile(path, uninstallStopHook(settings), indent);
-    console.log(`  \u2713 ${LABEL[agent]}: removed centrail's Stop hook from ${path}.`);
+  for (const agent of hookFiles) {
+    const path = agent === "claude-code" ? ctx.claudeSettings : ctx.files[agent];
+    if (agent === "claude-code") {
+      const { settings, indent } = await readSettingsFile(path);
+      await writeSettingsFile(path, uninstallStopHook(settings), indent);
+    } else await hookFor(agent).uninstall(path);
+    console.log(`  \u2713 ${LABEL[agent]}: removed centrail's ${HOW[agent]} from ${path}.`);
   }
   if (removeLauncherFile && await removeLauncher(ins.launcher.path)) console.log("  \u2713 Removed the launcher.");
   console.log("Restart or reload open agent sessions. Local usage logs and centrail's pairing are untouched (`centrail sync` still works).");
@@ -3435,20 +3655,20 @@ async function confirm(opts, deps, prompt, unattended, byDefault = true) {
 }
 async function isDir(p) {
   try {
-    return (await stat10(p)).isDirectory();
+    return (await stat11(p)).isDirectory();
   } catch {
     return false;
   }
 }
-async function exists(p) {
+async function exists2(p) {
   try {
-    await stat10(p);
+    await stat11(p);
     return true;
   } catch {
     return false;
   }
 }
-function isObject9(v) {
+function isObject10(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -3611,9 +3831,14 @@ var FIELDS_SHOWN_ONCE = `
 // src/commands/hook.ts
 import { spawn as spawn3 } from "node:child_process";
 import { realpathSync as realpathSync4 } from "node:fs";
-import { mkdir as mkdir5, open, readdir as readdir7, rm as rm3, stat as stat11 } from "node:fs/promises";
-import { dirname as dirname8, join as join14 } from "node:path";
+import { mkdir as mkdir6, open, readdir as readdir7, rm as rm4, stat as stat12 } from "node:fs/promises";
+import { dirname as dirname9, join as join15 } from "node:path";
 var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
+var SESSION_PREFIX = { "gemini-cli": "gemini:", pi: "pi:" };
+var TRANSCRIPT_SURFACES = /* @__PURE__ */ new Set(["claude-code", "codex"]);
+function hookReply(surface) {
+  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" ? "{}\n" : "";
+}
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id) return "codex";
   const t = typeof input.transcript_path === "string" ? input.transcript_path.replace(/\\/g, "/") : "";
@@ -3636,10 +3861,12 @@ async function stopHook(raw, surface, deps) {
   } catch {
     return null;
   }
-  const sessionId = typeof input.session_id === "string" ? input.session_id : "";
+  if (!isObject11(input)) return null;
+  const rawId = typeof input.session_id === "string" ? input.session_id : typeof input.sessionId === "string" ? input.sessionId : "";
   const cwd = typeof input.cwd === "string" ? input.cwd : "";
-  if (!sessionId || !cwd) return null;
-  surface = detectSurface(input, surface);
+  if (!rawId || !cwd) return null;
+  if (surface === "claude-code") surface = detectSurface(input, surface);
+  const sessionId = `${SESSION_PREFIX[surface] ?? ""}${rawId}`;
   const now = deps.now ? deps.now() : /* @__PURE__ */ new Date();
   const root = await resolveRepoRoot(cwd);
   const repo = root ? await repoIdentity(root) : null;
@@ -3655,7 +3882,7 @@ async function stopHook(raw, surface, deps) {
     branch: head.branch,
     head: head.head
   };
-  const transcript = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  const transcript = !TRANSCRIPT_SURFACES.has(surface) ? "" : typeof input.transcript_path === "string" ? input.transcript_path : "";
   const previous = (await readSidecar(deps.sidecarPath)).get(sessionId);
   const roots = { ...previous?.roots ?? {} };
   const mains = { ...previous?.mains ?? {} };
@@ -3672,14 +3899,14 @@ async function stopHook(raw, surface, deps) {
   if (Object.keys(roots).length > 0) line.roots = roots;
   if (Object.keys(mains).length > 0) line.mains = mains;
   await appendSidecar(line, deps.sidecarPath);
-  await maybeAutoSync(now, deps, deps.claimPath ?? join14(dirname8(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
+  await maybeAutoSync(now, deps, deps.claimPath ?? join15(dirname9(deps.sidecarPath ?? SIDECAR_PATH), "autosync.claim"));
   return line;
 }
 async function subagentTranscripts(transcript) {
   if (!transcript.endsWith(".jsonl")) return [];
-  const dir = join14(transcript.slice(0, -".jsonl".length), "subagents");
+  const dir = join15(transcript.slice(0, -".jsonl".length), "subagents");
   try {
-    return (await readdir7(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join14(dir, f));
+    return (await readdir7(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join15(dir, f));
   } catch {
     return [];
   }
@@ -3718,11 +3945,11 @@ async function recordTouchedRoots(transcript, offset, roots, mains, cwd) {
       } catch {
         continue;
       }
-      if (!isObject10(line)) continue;
+      if (!isObject11(line)) continue;
       let ev = null;
-      if (line.type === "assistant" && isObject10(line.message)) ev = lineEvidence(line.message);
-      else if (line.type === "turn_context" && isObject10(line.payload) && typeof line.payload.cwd === "string") turnCwd = line.payload.cwd;
-      else if (line.type === "response_item" && isObject10(line.payload) && line.payload.type === "function_call") ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
+      if (line.type === "assistant" && isObject11(line.message)) ev = lineEvidence(line.message);
+      else if (line.type === "turn_context" && isObject11(line.payload) && typeof line.payload.cwd === "string") turnCwd = line.payload.cwd;
+      else if (line.type === "response_item" && isObject11(line.payload) && line.payload.type === "function_call") ev = codexCallEvidence(line.payload.name, line.payload.arguments, turnCwd);
       if (!ev) continue;
       lines.push({ paths: [...ev.writes, ...ev.reads], end: start });
     }
@@ -3763,7 +3990,7 @@ function logicalRoot(dir, root) {
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
 }
-function isObject10(v) {
+function isObject11(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 var CLOCK_STEP_MS = 60 * 1e3;
@@ -3788,7 +4015,7 @@ async function maybeAutoSync(now, deps, claimPath) {
   (deps.spawnSync ?? spawnDetachedSync)();
 }
 async function compactLocked(now, deps) {
-  const release = await acquireSyncLock(deps.lockPath ?? join14(dirname8(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
+  const release = await acquireSyncLock(deps.lockPath ?? join15(dirname9(deps.sidecarPath ?? SIDECAR_PATH), "sync.lock"));
   if (!release) return;
   try {
     await compactSidecar(deps.sidecarPath, now.getTime());
@@ -3799,23 +4026,23 @@ async function compactLocked(now, deps) {
 async function claimAutoSync(claimPath, now) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await mkdir5(claimPath, { recursive: false });
+      await mkdir6(claimPath, { recursive: false });
       return true;
     } catch (err) {
       const code = err.code;
       if (code === "ENOENT") {
-        await mkdir5(dirname8(claimPath), { recursive: true });
+        await mkdir6(dirname9(claimPath), { recursive: true });
         continue;
       }
       if (code !== "EEXIST") return false;
       let at;
       try {
-        at = (await stat11(claimPath)).mtimeMs;
+        at = (await stat12(claimPath)).mtimeMs;
       } catch {
         continue;
       }
       if (!shouldAutoSync({ autoSyncAt: new Date(at).toISOString() }, now)) return false;
-      await rm3(claimPath, { recursive: true, force: true });
+      await rm4(claimPath, { recursive: true, force: true });
     }
   }
   return false;
@@ -3834,7 +4061,7 @@ function spawnDetachedSync() {
 // src/commands/hooks-doctor.ts
 import { constants as constants3 } from "node:fs";
 import { access as access2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, win32 as win324 } from "node:path";
+import { isAbsolute as isAbsolute4, win32 as win325 } from "node:path";
 async function inspectUserHooks(claudePath = claudeSettingsPath(), codexPath = codexHooksPath()) {
   const findings = [];
   const errors = [];
@@ -3863,7 +4090,7 @@ async function inspectUserHooks(claudePath = claudeSettingsPath(), codexPath = c
           continue;
         }
         const paths = words?.slice(0, 2) ?? [];
-        const absolute2 = paths.length === 2 && paths.every((p) => isAbsolute4(p) || win324.isAbsolute(p));
+        const absolute2 = paths.length === 2 && paths.every((p) => isAbsolute4(p) || win325.isAbsolute(p));
         const resolves = !pluginLauncher && absolute2 && (await Promise.all(paths.map(async (p, i) => {
           try {
             await access2(p, i === 0 ? constants3.X_OK : constants3.R_OK);
@@ -3923,7 +4150,7 @@ async function doctorReport(deps = {}) {
   };
 }
 function agentReport(ins, agent, fix) {
-  const state = agent === "claude-code" ? ins.claude : ins.codex;
+  const state = ins.agents[agent];
   const plugin = agent === "claude-code" ? ins.claude.plugin : null;
   const hooks = state.hooks;
   const usesLauncher = hooks.length ? hooks.every((h) => h.form === "launcher") : null;
@@ -3936,7 +4163,8 @@ function agentReport(ins, agent, fix) {
     if (hooks.length === 0) return "missing";
     if (hooks.length > 1) return "duplicate";
     if (!usesLauncher) return "outdated-pin";
-    return commandResolves ? "ok" : "unresolved";
+    if (!commandResolves) return "unresolved";
+    return hooks[0].current ? "ok" : "outdated";
   })();
   return {
     detected: state.detected,
@@ -3949,14 +4177,14 @@ function agentReport(ins, agent, fix) {
     fix: status2 === "ok" || status2 === "not-detected" ? "ok" : fix
   };
 }
-var LABEL2 = { "claude-code": "Claude Code", codex: "Codex" };
 var SAY = {
   ok: "ok",
   "not-detected": "not detected",
   unreadable: "its hook file does not parse",
   missing: "not set up: no centrail hook or plugin",
-  duplicate: "more than one centrail Stop hook (turns would be recorded twice)",
+  duplicate: "more than one centrail hook (turns would be recorded twice)",
   "outdated-pin": "outdated pinned command (breaks when Node or centrail moves)",
+  outdated: "outdated entry: not what this centrail writes",
   unresolved: "hook does not resolve (its launcher or pinned paths are missing)",
   repair: "plugin installed, but auto-update is off or a standalone hook remains"
 };
@@ -3966,9 +4194,9 @@ function printDoctor(r) {
   console.log(`  ${"centrail".padEnd(12)} ${r.cli.version} (${copyLabel(r.cli.copy)})${latest}`);
   for (const agent of AGENTS) {
     const a = r.agents[agent];
-    const how = a.plugin?.enabled ? `plugin${a.plugin.version ? ` ${a.plugin.version}` : ""}, auto-update ${a.plugin.autoUpdate ? "on" : "off"}` : a.usesLauncher ? "Stop hook through the launcher" : a.hooks ? "Stop hook" : "";
+    const how = a.plugin?.enabled ? `plugin${a.plugin.version ? ` ${a.plugin.version}` : ""}, auto-update ${a.plugin.autoUpdate ? "on" : "off"}` : a.usesLauncher ? `${HOW[agent]} through the launcher` : a.hooks ? HOW[agent] : "";
     const status2 = a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status];
-    console.log(`  ${LABEL2[agent].padEnd(12)} ${status2}`);
+    console.log(`  ${LABEL[agent].padEnd(12)} ${status2}`);
   }
   if (r.launcher.needed || r.launcher.present) {
     const l = r.launcher;
@@ -4058,14 +4286,14 @@ function runInherit(command2) {
 }
 
 // src/commands/import.ts
-import { readFile as readFile13 } from "node:fs/promises";
+import { readFile as readFile14 } from "node:fs/promises";
 var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 var MAX_MODEL = 100;
 function parseCcusageExport(json) {
-  if (!isObject11(json)) throw new Error("Not a ccusage export: expected a JSON object");
+  if (!isObject12(json)) throw new Error("Not a ccusage export: expected a JSON object");
   const merged = /* @__PURE__ */ new Map();
   const add = (day, breakdown) => {
-    if (!isObject11(breakdown)) throw new Error("Not a ccusage export: a model breakdown is not an object");
+    if (!isObject12(breakdown)) throw new Error("Not a ccusage export: a model breakdown is not an object");
     if (typeof breakdown.modelName !== "string" || !breakdown.modelName) throw new Error("Not a ccusage export: a model breakdown has no modelName");
     const model = breakdown.modelName.slice(0, MAX_MODEL);
     const key = `${day}\0${model}`;
@@ -4077,12 +4305,12 @@ function parseCcusageExport(json) {
   };
   if (Array.isArray(json.daily)) {
     for (const d of json.daily) {
-      if (!isObject11(d) || typeof d.date !== "string" || !DAY_RE.test(d.date)) throw new Error("Not a ccusage export: a daily row has no YYYY-MM-DD date");
+      if (!isObject12(d) || typeof d.date !== "string" || !DAY_RE.test(d.date)) throw new Error("Not a ccusage export: a daily row has no YYYY-MM-DD date");
       for (const b of Array.isArray(d.modelBreakdowns) ? d.modelBreakdowns : []) add(d.date, b);
     }
   } else if (Array.isArray(json.sessions)) {
     for (const s of json.sessions) {
-      if (!isObject11(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity))) throw new Error("Not a ccusage export: a session has no lastActivity");
+      if (!isObject12(s) || typeof s.lastActivity !== "string" || Number.isNaN(Date.parse(s.lastActivity))) throw new Error("Not a ccusage export: a session has no lastActivity");
       const day = new Date(s.lastActivity).toISOString().slice(0, 10);
       for (const b of Array.isArray(s.modelBreakdowns) ? s.modelBreakdowns : []) add(day, b);
     }
@@ -4102,7 +4330,7 @@ async function runImport(file, deps = {}) {
   assertSecureBaseUrl(auth.baseUrl);
   let json;
   try {
-    json = JSON.parse(await readFile13(file, "utf-8"));
+    json = JSON.parse(await readFile14(file, "utf-8"));
   } catch (err) {
     throw new Error(`Cannot read ${file}: ${err.message}`);
   }
@@ -4124,7 +4352,7 @@ async function runImport(file, deps = {}) {
   const days = new Set(rows.map((r) => r.day));
   console.log(`Imported ${rows.length} day\xB7model row(s) over ${days.size} day(s) as Measured history (provider ccusage). A re-import replaces them.`);
 }
-function isObject11(v) {
+function isObject12(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -4980,8 +5208,9 @@ Usage:
   centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser),
                                     then set up your agents
   centrail setup [--agent <name>] [-y] [--dry-run]
-                                    Sync after every agent turn: Claude Code's plugin, Codex's Stop hook
-                                    (--agent claude-code|codex; asks once unless -y)
+                                    Sync after every agent turn: Claude Code's plugin; a hook in Codex,
+                                    Gemini CLI and Copilot CLI; an extension in Pi
+                                    (--agent claude-code|codex|gemini-cli|copilot-cli|pi; asks once unless -y)
   centrail doctor [--json] [--fix]  Check each agent's integration and centrail's version (read-only; --fix repairs)
   centrail uninstall [--agent <name>] [-y]
                                     Remove centrail's plugin, hooks and launcher
@@ -4995,7 +5224,8 @@ Usage:
   centrail repos                    List them with status
   centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)
   centrail include <repo>           Undo an exclude; in allow mode, add it
-  centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli)
+  centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli,
+                                    gemini-cli, pi)
   centrail import <ccusage.json>    Import a ccusage "claude daily/session --json" file as Measured history
 `;
 var DEPRECATED = {
@@ -5044,12 +5274,13 @@ try {
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {
-    const codex = rest.includes("--surface") && rest[rest.indexOf("--surface") + 1] === "codex";
+    const named = rest.includes("--surface") ? rest[rest.indexOf("--surface") + 1] : void 0;
+    const surface = named && HOOK_SURFACES.includes(named) ? named : "claude-code";
     try {
-      await runStopHook(await readStdin(), codex ? "codex" : "claude-code");
+      await runStopHook(await readStdin(), surface);
     } catch {
     }
-    if (codex) process.stdout.write("{}\n");
+    process.stdout.write(hookReply(surface));
   } else if (command === "scope") {
     await runSetup({ interactive: true });
   } else if (command === "repos") {

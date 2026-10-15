@@ -19,7 +19,7 @@ const cfg = vi.hoisted(() => {
 import { parseConfig, writeConfig } from "../config.js";
 import { launcherPath } from "../launcher.js";
 import { hookCommand, installStopHook } from "./hooks-install.js";
-import { inspectIntegrations, parseAgents, planSetup, runIntegrationSetup, runUninstall, type IntegrationDeps } from "./integrations.js";
+import { AGENTS, inspectIntegrations, parseAgents, planSetup, runIntegrationSetup, runUninstall, type IntegrationDeps } from "./integrations.js";
 import type { ClaudeRunner } from "./plugin-setup.js";
 
 const win = process.platform === "win32";
@@ -27,19 +27,36 @@ const NPM_GLOBAL = win ? "C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\cen
 const NPX = win ? "C:\\Users\\u\\AppData\\Local\\npm-cache\\_npx\\0a1b\\node_modules\\centrail\\dist\\index.js" : "/home/u/.npm/_npx/0a1b/node_modules/centrail/dist/index.js";
 const RELEASE = { source: "github", repo: "braydenyancy/centrail-cli", ref: "release" };
 
-type Machine = { root: string; claudeDir: string; codexHome: string; configDir: string; deps: IntegrationDeps; calls: string[][] };
+type Machine = { root: string; claudeDir: string; codexHome: string; geminiHome: string; copilotHome: string; piDir: string; configDir: string; deps: IntegrationDeps; calls: string[][] };
+type MachineOpts = {
+  claudeBin?: boolean; claudeDir?: boolean; codexBin?: boolean; codexHome?: boolean;
+  geminiBin?: boolean; geminiHome?: boolean; copilotBin?: boolean; copilotHome?: boolean; piBin?: boolean; piDir?: boolean;
+  script?: string;
+};
 let said: string;
 let roots: string[] = [];
 
-async function machine(opts: { claudeBin?: boolean; claudeDir?: boolean; codexBin?: boolean; codexHome?: boolean; script?: string } = {}): Promise<Machine> {
+async function machine(opts: MachineOpts = {}): Promise<Machine> {
   const root = await mkdtemp(join(tmpdir(), "centrail-machine-"));
   roots.push(root);
   const bin = join(root, "bin");
   await mkdir(bin);
-  const m: Machine = { root, claudeDir: join(root, "claude"), codexHome: join(root, "codex"), configDir: join(root, "centrail"), calls: [], deps: {} };
-  if (opts.claudeDir) await mkdir(m.claudeDir);
-  if (opts.codexHome) await mkdir(m.codexHome);
-  for (const [name, on] of [["claude", opts.claudeBin], ["codex", opts.codexBin]] as const) {
+  const m: Machine = {
+    root,
+    claudeDir: join(root, "claude"),
+    codexHome: join(root, "codex"),
+    geminiHome: join(root, "home", ".gemini"),
+    copilotHome: join(root, "copilot"),
+    piDir: join(root, "pi", "agent"),
+    configDir: join(root, "centrail"),
+    calls: [],
+    deps: {},
+  };
+  for (const [dir, on] of [[m.claudeDir, opts.claudeDir], [m.codexHome, opts.codexHome], [m.geminiHome, opts.geminiHome], [m.copilotHome, opts.copilotHome], [m.piDir, opts.piDir]] as const) {
+    if (on) await mkdir(dir, { recursive: true });
+  }
+  const bins = [["claude", opts.claudeBin], ["codex", opts.codexBin], ["gemini", opts.geminiBin], ["copilot", opts.copilotBin], ["pi", opts.piBin]] as const;
+  for (const [name, on] of bins) {
     if (!on) continue;
     // Records its argv; on Windows a .cmd is what PATHEXT finds.
     const file = join(bin, win ? `${name}.cmd` : name);
@@ -49,6 +66,9 @@ async function machine(opts: { claudeBin?: boolean; claudeDir?: boolean; codexBi
     env: { PATH: bin, PATHEXT: ".CMD;.EXE" },
     claudeDir: m.claudeDir,
     codexHome: m.codexHome,
+    geminiHome: m.geminiHome,
+    copilotHome: m.copilotHome,
+    piAgentDir: m.piDir,
     configDir: m.configDir,
     script: opts.script ?? NPM_GLOBAL,
     node: win ? "C:\\Program Files\\nodejs\\node.exe" : "/usr/bin/node",
@@ -98,30 +118,38 @@ afterEach(async () => {
 });
 
 describe("detection", () => {
+  // claude-code, codex, gemini-cli, copilot-cli, pi
   it.each([
-    ["nothing", {}, [false, false]],
-    ["claude on PATH only", { claudeBin: true }, [true, false]],
-    ["Claude config dir only (the desktop app)", { claudeDir: true }, [true, false]],
-    ["codex on PATH only", { codexBin: true }, [false, true]],
-    ["CODEX_HOME only", { codexHome: true }, [false, true]],
-    ["both, every way", { claudeBin: true, claudeDir: true, codexBin: true, codexHome: true }, [true, true]],
-  ])("%s", async (_, opts, [claude, codex]) => {
+    ["nothing", {}, [false, false, false, false, false]],
+    ["claude on PATH only", { claudeBin: true }, [true, false, false, false, false]],
+    ["Claude config dir only (the desktop app)", { claudeDir: true }, [true, false, false, false, false]],
+    ["codex on PATH only", { codexBin: true }, [false, true, false, false, false]],
+    ["CODEX_HOME only", { codexHome: true }, [false, true, false, false, false]],
+    ["gemini on PATH only", { geminiBin: true }, [false, false, true, false, false]],
+    ["~/.gemini only", { geminiHome: true }, [false, false, true, false, false]],
+    ["copilot on PATH only", { copilotBin: true }, [false, false, false, true, false]],
+    ["COPILOT_HOME only", { copilotHome: true }, [false, false, false, true, false]],
+    ["pi on PATH only", { piBin: true }, [false, false, false, false, true]],
+    ["Pi's agent dir only", { piDir: true }, [false, false, false, false, true]],
+    ["all five, every way", { claudeBin: true, claudeDir: true, codexBin: true, codexHome: true, geminiBin: true, geminiHome: true, copilotBin: true, copilotHome: true, piBin: true, piDir: true }, [true, true, true, true, true]],
+  ])("%s", async (_, opts, detected) => {
     const m = await machine(opts);
     const { claudeBin } = opts as { claudeBin?: boolean };
     const ins = await inspectIntegrations({ ...m.deps, claude: undefined });
-    expect([ins.claude.detected, ins.codex.detected]).toEqual([claude, codex]);
+    expect(AGENTS.map((a) => ins.agents[a].detected)).toEqual(detected);
     expect(ins.claude.cli !== null).toBe(Boolean(claudeBin));
     const plan = planSetup(ins);
-    expect(plan.map((p) => p.action)).toEqual([claude ? "install" : "skip", codex ? "install" : "skip"]);
+    expect(plan.map((p) => p.action)).toEqual(detected.map((d) => (d ? "install" : "skip")));
     // Claude Code gets its plugin when `claude` can install it, else a hook.
-    if (claude) expect(plan[0].via).toBe(claudeBin ? "plugin" : "hook");
+    if (detected[0]) expect(plan[0].via).toBe(claudeBin ? "plugin" : "hook");
   });
 
   it("--agent names only the supported agents", () => {
     expect(parseAgents(["codex"])).toEqual(["codex"]);
     expect(parseAgents(["claude-code,codex", "codex"])).toEqual(["claude-code", "codex"]);
     expect(parseAgents([])).toBeUndefined();
-    expect(() => parseAgents(["gemini"])).toThrow(/claude-code or codex/);
+    expect(parseAgents(["gemini-cli,copilot-cli", "pi"])).toEqual(["gemini-cli", "copilot-cli", "pi"]);
+    expect(() => parseAgents(["gemini"])).toThrow(/claude-code, codex, gemini-cli, copilot-cli or pi/);
   });
 });
 
@@ -162,7 +190,7 @@ describe("centrail setup", () => {
     said = "";
     const again = await runIntegrationSetup({ yes: true }, m.deps);
     expect(again.changed).toBe(false);
-    expect(again.plan.map((p) => p.action)).toEqual(["ok", "ok"]);
+    expect(again.plan.map((p) => p.action)).toEqual(["ok", "ok", "skip", "skip", "skip"]);
     expect(said).toContain("Everything is set up; nothing to change.");
     expect(m.calls).toHaveLength(2); // `claude` not run again
     expect(await Promise.all([claudeSettings(m), codexHooks(m), launcher(m)].map(read))).toEqual(files);
@@ -270,7 +298,7 @@ describe("centrail setup", () => {
   it("--agent limits the plan to the named agent", async () => {
     const m = await machine({ claudeBin: true, codexHome: true });
     const r = await runIntegrationSetup({ yes: true, agents: ["codex"] }, m.deps);
-    expect(r.plan.map((p) => [p.agent, p.action])).toEqual([["claude-code", "skip"], ["codex", "install"]]);
+    expect(r.plan.map((p) => [p.agent, p.action])).toEqual([["claude-code", "skip"], ["codex", "install"], ["gemini-cli", "skip"], ["copilot-cli", "skip"], ["pi", "skip"]]);
     expect(m.calls).toEqual([]);
   });
 
@@ -300,6 +328,160 @@ describe("centrail setup", () => {
     const m = await machine({ claudeBin: true });
     await runIntegrationSetup({ yes: true }, { ...m.deps, claude: undefined });
     expect((await read(join(m.root, "claude.argv"))).trim().split("\n")).toEqual(["plugin", "install", "centrail@centrail", "--scope", "user"]);
+  });
+});
+
+// Gemini CLI, Copilot CLI and Pi, each through its own per-turn mechanism
+// (agent-hooks.ts), over real files in scratch homes holding the user's own
+// configuration, which must come through setup and uninstall untouched.
+describe("Gemini CLI, Copilot CLI and Pi", () => {
+  const geminiSettings = (m: Machine) => join(m.geminiHome, "settings.json");
+  const copilotFile = (m: Machine) => join(m.copilotHome, "hooks", "centrail.json");
+  const piFile = (m: Machine) => join(m.piDir, "extensions", "centrail.js");
+  const userGemini = {
+    theme: "Dracula",
+    hooks: {
+      BeforeTool: [{ matcher: "write_file", hooks: [{ name: "lint", type: "command", command: "lint.sh", timeout: 5000 }] }],
+      AfterAgent: [{ hooks: [{ name: "notify", type: "command", command: "notify-send done" }] }],
+    },
+  };
+  const userCopilot = { version: 1, hooks: { sessionEnd: [{ type: "command", bash: "say bye", timeoutSec: 5 }] } };
+  const userPi = "export default function (pi) { pi.on(\"agent_end\", () => {}); }\n";
+
+  async function userMachine(): Promise<Machine> {
+    const m = await machine({ geminiHome: true, copilotHome: true, piDir: true });
+    await writeFile(geminiSettings(m), JSON.stringify(userGemini, null, 2));
+    await mkdir(join(m.copilotHome, "hooks"), { recursive: true });
+    await writeFile(join(m.copilotHome, "hooks", "notify.json"), JSON.stringify(userCopilot));
+    await mkdir(join(m.piDir, "extensions"), { recursive: true });
+    await writeFile(join(m.piDir, "extensions", "mine.ts"), userPi);
+    return m;
+  }
+
+  it("plans one line each, and --dry-run writes nothing", async () => {
+    const m = await userMachine();
+    await runIntegrationSetup({ dryRun: true }, m.deps);
+    expect(said).toMatch(/Gemini CLI {3}install {2}AfterAgent hook through the launcher/);
+    expect(said).toMatch(/Copilot CLI {2}install {2}agentStop hook through the launcher/);
+    expect(said).toMatch(/Pi {11}install {2}extension through the launcher/);
+    expect(await json(geminiSettings(m))).toEqual(userGemini);
+    await expect(read(copilotFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(read(piFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes one owned entry each, keeps every user hook, and a second run changes nothing", async () => {
+    const m = await userMachine();
+    await runIntegrationSetup({ yes: true }, m.deps);
+    // Both run hooks through PowerShell on Windows: its call operator leads.
+    const command = (surface: string) => `${win ? "& " : ""}"${launcher(m)}" hook stop --centrail-hook --surface ${surface}`;
+
+    const gemini = await json(geminiSettings(m));
+    expect(gemini.theme).toBe("Dracula");
+    expect(gemini.hooks.BeforeTool).toEqual(userGemini.hooks.BeforeTool);
+    expect(gemini.hooks.AfterAgent).toEqual([
+      ...userGemini.hooks.AfterAgent,
+      { hooks: [{ name: "centrail", type: "command", command: command("gemini-cli"), timeout: 10000 }] },
+    ]);
+
+    expect(await json(copilotFile(m))).toEqual({ version: 1, hooks: { agentStop: [{ type: "command", [win ? "powershell" : "bash"]: command("copilot-cli"), timeoutSec: 10 }] } });
+    expect(await json(join(m.copilotHome, "hooks", "notify.json"))).toEqual(userCopilot);
+
+    const ext = await read(piFile(m));
+    expect(ext).toContain("centrail-pi-extension");
+    expect(ext).toContain(`const launcher = ${JSON.stringify(launcher(m))};`);
+    expect(ext).toContain('"--centrail-hook", "--surface", "pi"');
+    expect(await read(join(m.piDir, "extensions", "mine.ts"))).toBe(userPi);
+
+    const files = await Promise.all([geminiSettings(m), copilotFile(m), piFile(m), launcher(m)].map(read));
+    said = "";
+    const again = await runIntegrationSetup({ yes: true }, m.deps);
+    expect(again.changed).toBe(false);
+    expect(again.plan.map((p) => p.action)).toEqual(["skip", "skip", "ok", "ok", "ok"]);
+    expect(await Promise.all([geminiSettings(m), copilotFile(m), piFile(m), launcher(m)].map(read))).toEqual(files);
+  });
+
+  it("uninstall removes only what centrail wrote: the user's files come back as they were", async () => {
+    const m = await userMachine();
+    await runIntegrationSetup({ yes: true }, m.deps);
+    await runUninstall({ yes: true }, m.deps);
+    expect(said).toMatch(/Gemini CLI {3}remove {3}1 centrail AfterAgent hook/);
+    expect(said).toMatch(/Pi {11}remove {3}centrail's extension/);
+    expect(await json(geminiSettings(m))).toEqual(userGemini);
+    await expect(read(copilotFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await json(join(m.copilotHome, "hooks", "notify.json"))).toEqual(userCopilot);
+    await expect(read(piFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await read(join(m.piDir, "extensions", "mine.ts"))).toBe(userPi);
+    await expect(read(launcher(m))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps an entry a user added to centrail.json; removes the file only when it held centrail's alone", async () => {
+    const m = await machine({ copilotHome: true });
+    await runIntegrationSetup({ yes: true }, m.deps);
+    const file = await json(copilotFile(m));
+    const mine = { type: "command", bash: "echo mine" };
+    file.hooks.agentStop.unshift(mine);
+    await writeFile(copilotFile(m), JSON.stringify(file));
+    await runIntegrationSetup({ yes: true }, m.deps); // a rerun keeps it too
+    expect((await json(copilotFile(m))).hooks.agentStop).toEqual([mine, expect.objectContaining({ timeoutSec: 10 })]);
+    await runUninstall({ yes: true }, m.deps);
+    expect(await json(copilotFile(m))).toEqual({ version: 1, hooks: { agentStop: [mine] } });
+  });
+
+  it("replaces an outdated entry with today's: another launcher path, an old extension", async () => {
+    const m = await machine({ geminiHome: true, piDir: true });
+    const old = installStopHook({}, `"${join(m.root, "old", "bin", "centrail-hook")}" hook stop --centrail-hook --surface gemini-cli`, "AfterAgent", { name: "centrail", timeout: 10000 });
+    await writeFile(geminiSettings(m), JSON.stringify(old));
+    await mkdir(join(m.piDir, "extensions"), { recursive: true });
+    await writeFile(piFile(m), `// centrail-pi-extension (an older release)\nconst launcher = ${JSON.stringify(launcher(m))};\n`);
+    const plan = planSetup(await inspectIntegrations(m.deps));
+    expect(plan.find((p) => p.agent === "gemini-cli")).toMatchObject({ action: "update", detail: "outdated AfterAgent hook → the launcher" });
+    expect(plan.find((p) => p.agent === "pi")).toMatchObject({ action: "update", detail: "outdated extension → the launcher" });
+    await runIntegrationSetup({ yes: true }, m.deps);
+    const after = (await json(geminiSettings(m))).hooks.AfterAgent;
+    expect(after).toHaveLength(1);
+    expect(after[0].hooks[0].command).toContain(launcher(m));
+    expect(await read(piFile(m))).toContain('"--surface", "pi"');
+  });
+
+  it("never writes over a file it cannot read or does not own", async () => {
+    const m = await machine({ geminiHome: true, piDir: true });
+    const jsonc = '{\n  // a comment Gemini CLI tolerates\n  "theme": "x"\n}\n';
+    await writeFile(geminiSettings(m), jsonc);
+    await mkdir(join(m.piDir, "extensions"), { recursive: true });
+    const foreign = "export default function () {}\n";
+    await writeFile(piFile(m), foreign);
+    const r = await runIntegrationSetup({ yes: true }, m.deps);
+    expect(r.plan.find((p) => p.agent === "gemini-cli")).toMatchObject({ action: "skip", detail: "settings.json does not parse; fix it, then rerun" });
+    expect(r.plan.find((p) => p.agent === "pi")).toMatchObject({ action: "skip", detail: "extensions/centrail.js is not centrail's; move it, then rerun" });
+    await runUninstall({ yes: true }, m.deps);
+    expect(await read(geminiSettings(m))).toBe(jsonc);
+    expect(await read(piFile(m))).toBe(foreign);
+  });
+
+  it("on Windows, writes PowerShell call forms that it recognises as its own on the next run", async () => {
+    const m = await machine({ geminiHome: true, copilotHome: true });
+    const deps = { ...m.deps, platform: "win32" as const };
+    await runIntegrationSetup({ yes: true }, deps);
+    const cmd = launcherPath(m.configDir, "win32");
+    expect(cmd).toMatch(/centrail-hook\.cmd$/);
+    const expected = (surface: string) => `& "${cmd}" hook stop --centrail-hook --surface ${surface}`;
+    expect((await json(geminiSettings(m))).hooks.AfterAgent[0].hooks[0].command).toBe(expected("gemini-cli"));
+    expect((await json(copilotFile(m))).hooks.agentStop).toEqual([{ type: "command", powershell: expected("copilot-cli"), timeoutSec: 10 }]);
+    const again = await runIntegrationSetup({ yes: true }, deps);
+    expect(again.plan.filter((p) => p.agent === "gemini-cli" || p.agent === "copilot-cli").map((p) => p.action)).toEqual(["ok", "ok"]);
+    await runUninstall({ yes: true }, deps);
+    expect((await json(geminiSettings(m))).hooks).toBeUndefined();
+    await expect(read(copilotFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("--agent pi sets up Pi alone and keeps the launcher while Pi runs it", async () => {
+    const m = await machine({ codexHome: true, piDir: true });
+    const r = await runIntegrationSetup({ yes: true, agents: ["pi"] }, m.deps);
+    expect(r.plan.map((p) => p.action)).toEqual(["skip", "skip", "skip", "skip", "install"]);
+    await runIntegrationSetup({ yes: true }, m.deps);
+    await runUninstall({ yes: true, agents: ["codex"] }, m.deps);
+    expect(await read(piFile(m))).toContain("centrail-pi-extension");
+    expect(await read(launcher(m))).toContain("centrail");
   });
 });
 

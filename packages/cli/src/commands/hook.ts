@@ -33,7 +33,28 @@ export type HookInput = {
   transcript_path?: unknown;
   hook_event_name?: unknown;
   turn_id?: unknown; // Codex only ("Codex extension" in its stop.command.input schema)
+  sessionId?: unknown; // Copilot CLI's camelCase agentStop payload
+  transcriptPath?: unknown;
 };
+
+// What each harness's hook passes on stdin, mapped to one shape:
+//   Claude Code, Codex, Gemini CLI  { session_id, cwd, transcript_path }
+//   Copilot CLI (agentStop)         { sessionId, cwd, transcriptPath }
+//   Pi (centrail's extension)       { session_id, cwd }
+// The session id is stamped the way that surface's log scanner names its
+// sessions, so sync joins the sidecar line to the scanned events: Gemini
+// CLI's and Pi's scanners prefix theirs ("gemini:", "pi:").
+const SESSION_PREFIX: Record<string, string> = { "gemini-cli": "gemini:", pi: "pi:" };
+// Transcripts read for the paths a turn touched: the formats lineEvidence
+// and codexCallEvidence understand. Other surfaces are placed by their cwd.
+const TRANSCRIPT_SURFACES = new Set(["claude-code", "codex"]);
+
+// The reply each harness expects on stdout. Codex and Gemini CLI parse
+// stdout as JSON; Copilot CLI takes `{}` as "no decision". Claude Code's
+// plugin hook and Pi's detached extension print nothing.
+export function hookReply(surface: string): string {
+  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" ? "{}\n" : "";
+}
 
 // The processing core accepts both harnesses; installation and launchers
 // have separate owners. Codex adds `turn_id` and keeps its
@@ -82,10 +103,13 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   } catch {
     return null;
   }
-  const sessionId = typeof input.session_id === "string" ? input.session_id : "";
+  if (!isObject(input)) return null;
+  const rawId = typeof input.session_id === "string" ? input.session_id : typeof input.sessionId === "string" ? input.sessionId : "";
   const cwd = typeof input.cwd === "string" ? input.cwd : "";
-  if (!sessionId || !cwd) return null;
-  surface = detectSurface(input, surface);
+  if (!rawId || !cwd) return null;
+  // An unnamed entry (Claude Code's plugin, older Codex forms) is told apart by its payload.
+  if (surface === "claude-code") surface = detectSurface(input, surface);
+  const sessionId = `${SESSION_PREFIX[surface] ?? ""}${rawId}`;
 
   const now = deps.now ? deps.now() : new Date();
   const root = await resolveRepoRoot(cwd);
@@ -105,7 +129,7 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
   // § 3.9: a session outside a repo is placed by the files its turns
   // touch. Their repos must be identified NOW, while the folders exist;
   // the transcript is read from where the last turn's hook left off.
-  const transcript = typeof input.transcript_path === "string" ? input.transcript_path : "";
+  const transcript = !TRANSCRIPT_SURFACES.has(surface) ? "" : typeof input.transcript_path === "string" ? input.transcript_path : "";
   const previous = (await readSidecar(deps.sidecarPath)).get(sessionId);
   const roots = { ...(previous?.roots ?? {}) };
   const mains = { ...(previous?.mains ?? {}) };

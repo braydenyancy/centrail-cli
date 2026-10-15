@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { runConnect } from "./commands/connect.js";
-import { runStopHook } from "./commands/hook.js";
+import { hookReply, runStopHook } from "./commands/hook.js";
+import { HOOK_SURFACES } from "./commands/hooks-install.js";
 import { runHooksDoctor } from "./commands/hooks-doctor.js";
 import { runDoctor } from "./commands/doctor.js";
 import { parseAgents, runIntegrationSetup, runUninstall } from "./commands/integrations.js";
@@ -46,8 +47,9 @@ Usage:
   centrail connect [--url <base>]   Pair this machine with your account (opens your browser; --no-browser),
                                     then set up your agents
   centrail setup [--agent <name>] [-y] [--dry-run]
-                                    Sync after every agent turn: Claude Code's plugin, Codex's Stop hook
-                                    (--agent claude-code|codex; asks once unless -y)
+                                    Sync after every agent turn: Claude Code's plugin; a hook in Codex,
+                                    Gemini CLI and Copilot CLI; an extension in Pi
+                                    (--agent claude-code|codex|gemini-cli|copilot-cli|pi; asks once unless -y)
   centrail doctor [--json] [--fix]  Check each agent's integration and centrail's version (read-only; --fix repairs)
   centrail uninstall [--agent <name>] [-y]
                                     Remove centrail's plugin, hooks and launcher
@@ -61,7 +63,8 @@ Usage:
   centrail repos                    List them with status
   centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)
   centrail include <repo>           Undo an exclude; in allow mode, add it
-  centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli)
+  centrail surfaces [<name> on|off] Enable or disable a source (claude-code, codex, copilot-cli,
+                                    gemini-cli, pi)
   centrail import <ccusage.json>    Import a ccusage "claude daily/session --json" file as Measured history
 `;
 
@@ -119,15 +122,17 @@ try {
   } else if (command === "inspect") {
     await runInspect();
   } else if (command === "hook") {
-    // Shared processor, separate output contract. Codex Stop expects JSON;
-    // Claude's plugin remains silent. Codex's hook entry passes --surface codex.
-    const codex = rest.includes("--surface") && rest[rest.indexOf("--surface") + 1] === "codex";
+    // Shared processor, separate output contracts: each harness's entry
+    // names itself with --surface (none: Claude Code's plugin) and gets the
+    // stdout reply it expects (hookReply).
+    const named = rest.includes("--surface") ? rest[rest.indexOf("--surface") + 1] : undefined;
+    const surface = named && (HOOK_SURFACES as readonly string[]).includes(named) ? named : "claude-code";
     try {
-      await runStopHook(await readStdin(), codex ? "codex" : "claude-code");
+      await runStopHook(await readStdin(), surface);
     } catch {
       // intentionally silent
     }
-    if (codex) process.stdout.write("{}\n");
+    process.stdout.write(hookReply(surface));
   } else if (command === "scope") {
     await runScopeReview({ interactive: true });
   } else if (command === "repos") {
