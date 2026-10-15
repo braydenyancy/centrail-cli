@@ -78,6 +78,31 @@ export async function runSync(opts: { full: boolean }): Promise<void> {
   }
 }
 
+// One surface's answer from the server, summed over its batches. The
+// ingest response carries totals per request, and every request holds one
+// surface, so these are exact.
+type SurfaceTally = { surface: string; inserted: number; skipped: number };
+
+// The result block: the totals line, then one line per surface that sent
+// anything. Printed on stdout whatever the progress mode: it is the result.
+export function summaryLines(t: {
+  inserted: number;
+  skipped: number;
+  inbox: number;
+  heldByScope: number;
+  surfaces: SurfaceTally[];
+}): string[] {
+  const n = (v: number) => v.toLocaleString("en-US");
+  const head =
+    `Inserted ${n(t.inserted)} · Skipped ${n(t.skipped)}` +
+    // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
+    (t.inbox > 0 ? ` · ${n(t.inbox)} not in a project` : "") +
+    (t.heldByScope > 0 ? ` · ${n(t.heldByScope)} held back by scope` : "");
+  const sent = t.surfaces.filter((s) => s.inserted + s.skipped > 0);
+  const width = Math.max(0, ...sent.map((s) => s.surface.length));
+  return [head, ...sent.map((s) => `  ${s.surface.padEnd(width)}  inserted ${n(s.inserted)} · skipped ${n(s.skipped)}`)];
+}
+
 async function syncLocked(opts: { full: boolean }): Promise<void> {
   const auth = await readAuth();
   if (!auth) {
@@ -153,6 +178,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   // its first account. An incremental pass re-reads a day of overlap, which
   // after a move is that account's too; repeating it every sync is noise.
   let heldOnFullRead = 0;
+  const surfaces: SurfaceTally[] = [];
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -254,10 +280,8 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       surfaceSkipped += result.skipped - held;
       surfaceHeld += held;
     }
-    progress(
-      `${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced` +
-        (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : ""),
-    );
+    surfaces.push({ surface: scanner.surface, inserted: surfaceInserted, skipped: surfaceSkipped });
+    if (surfaceHeld > 0) progress(`${scanner.surface}: ${surfaceHeld.toLocaleString("en-US")} with another account`);
 
     if (!since) heldOnFullRead += surfaceHeld;
 
@@ -292,12 +316,9 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   }
 
   progressDone();
-  console.log(
-    `Inserted ${grandInserted} · Skipped ${grandSkipped - grandHeldElsewhere}` +
-      // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
-      (grandInbox > 0 ? ` · ${grandInbox} not in a project` : "") +
-      (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
-  );
+  for (const line of summaryLines({ inserted: grandInserted, skipped: grandSkipped - grandHeldElsewhere, inbox: grandInbox, heldByScope, surfaces })) {
+    console.log(line);
+  }
   if (heldOnFullRead > 0) console.log(heldElsewhereLine(heldOnFullRead));
   if (notice) progress(updateNoticeLine(notice));
 }
