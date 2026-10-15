@@ -55,10 +55,17 @@ import { runSetup as runScopeReview } from "./scope.js";
 //                one entry each in the agent's own per-turn mechanism,
 //                running the stable launcher (launcher.ts) with fixed
 //                arguments (agent-hooks.ts); Codex trusts it once by hash
+//   Cursor, OpenCode
+//                the same, but no log scanner reads their usage yet: the
+//                entry records repo identity only, so setup shows them and
+//                adds one only when named (`--agent cursor`); an entry
+//                already there is kept current
 
 export type { HookAgent, HookFinding } from "./agent-hooks.js";
 export type Agent = "claude-code" | HookAgent;
 export const AGENTS: readonly Agent[] = ["claude-code", ...AGENT_HOOKS.map((h) => h.agent)];
+// Agents whose entry records repo identity only: no usage source to join it to yet.
+export const IDENTITY_ONLY: readonly Agent[] = AGENT_HOOKS.filter((h) => !h.usage).map((h) => h.agent);
 export const LABEL: Record<Agent, string> = Object.fromEntries([["claude-code", "Claude Code"], ...AGENT_HOOKS.map((h) => [h.agent, h.label])]) as Record<Agent, string>;
 const hookFor = (agent: HookAgent): AgentHook => AGENT_HOOKS.find((h) => h.agent === agent)!;
 
@@ -80,6 +87,8 @@ export type IntegrationDeps = {
   geminiHome?: string; // the .gemini dir; default: $GEMINI_CLI_HOME/.gemini or ~/.gemini
   copilotHome?: string; // default: COPILOT_HOME or ~/.copilot
   piAgentDir?: string; // default: PI_CODING_AGENT_DIR or ~/.pi/agent
+  cursorHome?: string; // default: ~/.cursor
+  opencodeConfigDir?: string; // default: $XDG_CONFIG_HOME/opencode or ~/.config/opencode
   configDir?: string; // default: centrail's config dir
   claude?: ClaudeRunner | null; // null: no `claude`; undefined: look on PATH
   ask?: (prompt: string) => Promise<string | null>; // null: input ended
@@ -105,7 +114,14 @@ type Ctx = {
 function context(deps: IntegrationDeps): Ctx {
   const platform = deps.platform ?? process.platform;
   const claudeDir = deps.claudeDir ?? claudeConfigDirs()[0];
-  const given: Record<HookAgent, string | undefined> = { codex: deps.codexHome, "gemini-cli": deps.geminiHome, "copilot-cli": deps.copilotHome, pi: deps.piAgentDir };
+  const given: Record<HookAgent, string | undefined> = {
+    codex: deps.codexHome,
+    "gemini-cli": deps.geminiHome,
+    "copilot-cli": deps.copilotHome,
+    pi: deps.piAgentDir,
+    cursor: deps.cursorHome,
+    opencode: deps.opencodeConfigDir,
+  };
   const homes = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, given[h.agent] ?? defaultHome(h.agent)])) as Record<HookAgent, string>;
   const files = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, h.file(homes[h.agent])])) as Record<HookAgent, string>;
   return {
@@ -223,8 +239,13 @@ export function planSetup(ins: Inspection, agents?: Agent[]): PlanItem[] {
     if (agents && !agents.includes(agent)) return skip("not selected");
     if (!state.detected) return skip("not detected");
     if (!state.readable) {
-      if (agent === "pi") return skip("extensions/centrail.js is not centrail's; move it, then rerun");
-      return skip(`${agent === "claude-code" ? "settings.json" : hookFor(agent).fileName} does not parse; fix it, then rerun`);
+      if (agent !== "claude-code" && hookFor(agent).module) return skip(`${hookFor(agent).fileName.replaceAll("\\", "/")} is not centrail's; move it, then rerun`);
+      return skip(`${agent === "claude-code" ? "settings.json" : hookFor(agent).fileName.replaceAll("\\", "/")} does not parse; fix it, then rerun`);
+    }
+    // Shown, not added: without a usage source the entry would collect repo
+    // identity that nothing joins yet. Named, it is added; present, kept current.
+    if (IDENTITY_ONLY.includes(agent) && state.hooks.length === 0 && !agents?.includes(agent)) {
+      return skip(`${NOT_SUPPORTED}; \`--agent ${agent}\` adds a repo-identity-only ${HOW[agent]}`);
     }
     if (agent === "claude-code") {
       const { plugin, hooks } = ins.claude;
@@ -247,6 +268,8 @@ export function planSetup(ins: Inspection, agents?: Agent[]): PlanItem[] {
   });
 }
 
+export const NOT_SUPPORTED = "usage collection not supported yet (no usage source)";
+
 // What each agent's entry is called in a plan line.
 export const HOW: Record<Agent, string> = Object.fromEntries([["claude-code", "Stop hook"], ...AGENT_HOOKS.map((h) => [h.agent, h.how])]) as Record<Agent, string>;
 
@@ -254,10 +277,11 @@ function hookPlan(agent: Agent, hooks: HookFinding[], launcher: LauncherState, w
   const via = "hook" as const;
   const how = HOW[agent];
   if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail ${how}s → one, through the launcher` };
-  if (hooks.length === 0) return { agent, action: "install", via, detail: `${how} through the launcher${why}` };
+  const only = IDENTITY_ONLY.includes(agent) ? ", repo identity only" : "";
+  if (hooks.length === 0) return { agent, action: "install", via, detail: `${how} through the launcher${why}${only}` };
   if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : how} → the launcher` };
   if (!launcher.current) return { agent, action: "update", via, detail: "refresh the launcher" };
-  return { agent, action: "ok", via, detail: `${how} through the launcher` };
+  return { agent, action: "ok", via, detail: `${how} through the launcher${only}` };
 }
 
 const pending = (item: PlanItem) => item.action !== "ok" && item.action !== "skip";
@@ -307,8 +331,12 @@ export async function runIntegrationSetup(opts: SetupOptions, deps: IntegrationD
     console.log("  Codex: open /hooks in Codex once and trust centrail's Stop hook. Codex trusts a hook by its hash;");
     console.log("    this command stays the same across centrail releases, so later updates need no new trust. Restart open sessions.");
   }
-  if (plan.some((i) => (i.agent === "gemini-cli" || i.agent === "copilot-cli" || i.agent === "pi") && pending(i))) {
-    console.log("  Gemini CLI, Copilot CLI and Pi read their hooks and extensions at start: restart open sessions.");
+  const atStart = plan.filter((i) => ["gemini-cli", "copilot-cli", "pi", "opencode"].includes(i.agent) && pending(i)).map((i) => LABEL[i.agent]);
+  if (atStart.length) console.log(`  ${listed(atStart)} read${atStart.length > 1 ? "" : "s"} hooks, extensions and plugins at start: restart open sessions.`);
+  const identity = plan.filter((i) => IDENTITY_ONLY.includes(i.agent) && pending(i)).map((i) => LABEL[i.agent]);
+  if (identity.length) {
+    console.log(`  ${listed(identity)}: repo identity only. centrail cannot read ${identity.length > 1 ? "their" : "its"} usage yet, so these turns`);
+    console.log("    show no tokens or cost until a usage source for them ships.");
   }
   console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
   console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
@@ -371,7 +399,7 @@ export async function runUninstall(opts: UninstallOptions, deps: IntegrationDeps
     ...(removePlugin ? [`  ${"Claude Code".padEnd(12)} remove   plugin ${PLUGIN_ID} and its marketplace`] : []),
     ...hookFiles.map((a) => {
       const n = ins.agents[a].hooks.length;
-      return `  ${LABEL[a].padEnd(12)} remove   ${a === "pi" ? "centrail's extension" : `${n} centrail ${HOW[a]}${n > 1 ? "s" : ""}`}`;
+      return `  ${LABEL[a].padEnd(12)} remove   ${a !== "claude-code" && hookFor(a).module ? `centrail's ${HOW[a]}` : `${n} centrail ${HOW[a]}${n > 1 ? "s" : ""}`}`;
     }),
     ...(removeLauncherFile ? [`  ${"launcher".padEnd(12)} remove   ${ins.launcher.path}`] : []),
   ];
@@ -420,6 +448,10 @@ async function confirm(opts: { yes?: boolean; interactive?: boolean }, deps: Int
   const yes = answer === undefined ? false : answer === "" ? byDefault : answer.startsWith("y");
   if (!yes) console.log("Nothing changed.");
   return yes;
+}
+
+function listed(names: string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
 }
 
 async function isDir(p: string): Promise<boolean> {

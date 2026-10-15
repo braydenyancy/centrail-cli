@@ -1,7 +1,7 @@
 import { readState } from "../config.js";
 import { CLI_VERSION } from "../version.js";
 import { copyLabel, detectChannel, here, isOlder, liveVersionRecords, outdatedLine, updateNoticeLine, type UpdateChannel } from "../update.js";
-import { AGENTS, HOW, inspectIntegrations, LABEL, planSetup, runIntegrationSetup, type Action, type Agent, type Inspection, type IntegrationDeps } from "./integrations.js";
+import { AGENTS, HOW, IDENTITY_ONLY, inspectIntegrations, LABEL, NOT_SUPPORTED, planSetup, runIntegrationSetup, type Action, type Agent, type Inspection, type IntegrationDeps } from "./integrations.js";
 
 // `centrail doctor`: read-only. Whether each detected agent runs centrail
 // after every turn, through a hook entry and launcher that resolve, and
@@ -10,7 +10,7 @@ import { AGENTS, HOW, inspectIntegrations, LABEL, planSetup, runIntegrationSetup
 // paste). Exits 1 when something needs action; `--fix` runs `setup -y` for
 // the agents that do.
 
-export type AgentStatus = "ok" | "not-detected" | "unreadable" | "missing" | "duplicate" | "outdated-pin" | "outdated" | "unresolved" | "repair";
+export type AgentStatus = "ok" | "not-detected" | "not-supported" | "unreadable" | "missing" | "duplicate" | "outdated-pin" | "outdated" | "unresolved" | "repair";
 
 export type AgentReport = {
   detected: boolean;
@@ -19,6 +19,7 @@ export type AgentReport = {
   hooks: number; // centrail's entries in the agent's user hook file (Pi: its extension)
   usesLauncher: boolean | null; // null without a hook entry
   commandResolves: boolean | null; // null without a hook entry
+  usage: boolean; // centrail reads this agent's usage; false: its entry records repo identity only
   status: AgentStatus;
   fix: Action; // what `centrail setup` would do
 };
@@ -50,7 +51,7 @@ export async function doctorReport(deps: IntegrationDeps = {}): Promise<DoctorRe
   return {
     version: 2,
     // An available update is reported, not failed on: it needs no action to keep collecting.
-    ok: Object.values(agents).every((a) => a.status === "ok" || a.status === "not-detected") && !outdated,
+    ok: Object.values(agents).every((a) => a.status === "ok" || a.status === "not-detected" || a.status === "not-supported") && !outdated,
     cli: { version: CLI_VERSION, copy: at.channel, latest, updateAvailable: latest !== null && isOlder(CLI_VERSION, latest) },
     launcher: { needed, present: ins.launcher.present, executable: ins.launcher.executable, resolvesCli: ins.launcher.resolvesCli },
     agents,
@@ -68,6 +69,8 @@ function agentReport(ins: Inspection, agent: Agent, fix: Action): AgentReport {
   const status = ((): AgentStatus => {
     if (!state.detected) return "not-detected";
     if (!state.readable) return "unreadable";
+    // Detected, nothing of centrail's in it, and setup adds nothing by default.
+    if (IDENTITY_ONLY.includes(agent) && hooks.length === 0) return "not-supported";
     if (plugin?.enabled) return fix === "ok" ? "ok" : "repair";
     if (hooks.length === 0) return "missing";
     if (hooks.length > 1) return "duplicate";
@@ -82,14 +85,16 @@ function agentReport(ins: Inspection, agent: Agent, fix: Action): AgentReport {
     hooks: hooks.length,
     usesLauncher,
     commandResolves,
+    usage: !IDENTITY_ONLY.includes(agent),
     status,
-    fix: status === "ok" || status === "not-detected" ? "ok" : fix,
+    fix: status === "ok" || status === "not-detected" ? "ok" : status === "not-supported" ? "skip" : fix,
   };
 }
 
 const SAY: Record<AgentStatus, string> = {
   ok: "ok",
   "not-detected": "not detected",
+  "not-supported": `${NOT_SUPPORTED}; nothing installed`,
   unreadable: "its hook file does not parse",
   missing: "not set up: no centrail hook or plugin",
   duplicate: "more than one centrail hook (turns would be recorded twice)",
@@ -112,7 +117,8 @@ export function printDoctor(r: DoctorReport): void {
         : a.hooks
           ? HOW[agent]
           : "";
-    const status = a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status];
+    const only = a.usage || a.status === "not-supported" ? "" : " (repo identity only; usage not collected yet)";
+    const status = `${a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status]}${a.status === "not-detected" ? "" : only}`;
     console.log(`  ${LABEL[agent].padEnd(12)} ${status}`);
   }
   if (r.launcher.needed || r.launcher.present) {

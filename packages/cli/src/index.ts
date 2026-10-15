@@ -48,8 +48,10 @@ Usage:
                                     then set up your agents
   centrail setup [--agent <name>] [-y] [--dry-run]
                                     Sync after every agent turn: Claude Code's plugin; a hook in Codex,
-                                    Gemini CLI and Copilot CLI; an extension in Pi
-                                    (--agent claude-code|codex|gemini-cli|copilot-cli|pi; asks once unless -y)
+                                    Gemini CLI and Copilot CLI; an extension in Pi. Cursor and OpenCode
+                                    (repo identity only, no usage yet) only when named
+                                    (--agent claude-code|codex|gemini-cli|copilot-cli|pi|cursor|opencode;
+                                    asks once unless -y)
   centrail doctor [--json] [--fix]  Check each agent's integration and centrail's version (read-only; --fix repairs)
   centrail uninstall [--agent <name>] [-y]
                                     Remove centrail's plugin, hooks and launcher

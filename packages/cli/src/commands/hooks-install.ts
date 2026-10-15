@@ -29,15 +29,16 @@ export function codexHooksPath(): string {
   return join(codexHomeDir(), "hooks.json");
 }
 
-// Every harness centrail runs after, by the surface name its logs sync under.
-export const HOOK_SURFACES = ["claude-code", "codex", "gemini-cli", "copilot-cli", "pi"] as const;
+// Every harness centrail runs after, by the surface name its logs sync under
+// (Cursor and OpenCode: the name their sidecar lines carry; no logs sync yet).
+export const HOOK_SURFACES = ["claude-code", "codex", "gemini-cli", "copilot-cli", "pi", "cursor", "opencode"] as const;
 export type HookSurface = (typeof HOOK_SURFACES)[number];
 
 // The command a harness's hook entry runs: the launcher path, quoted for the
 // shell the harness runs hooks with, and fixed arguments. `--centrail-hook`
 // is the ownership marker; `--surface` names the harness (Claude Code's
-// plugin-era entries carry none). A PowerShell host (Gemini CLI and Copilot
-// CLI on Windows) needs its call operator `&` before a quoted path.
+// plugin-era entries carry none). A PowerShell host (Gemini CLI, Copilot CLI
+// and Cursor on Windows) needs its call operator `&` before a quoted path.
 export function launcherCommand(
   launcher: string,
   surface: HookSurface,

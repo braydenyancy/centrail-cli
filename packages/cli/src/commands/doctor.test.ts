@@ -38,6 +38,8 @@ beforeEach(async () => {
     geminiHome: join(root, "home", ".gemini"),
     copilotHome: join(root, "copilot"),
     piAgentDir: join(root, "pi", "agent"),
+    cursorHome: join(root, "home", ".cursor"),
+    opencodeConfigDir: join(root, "xdg", "opencode"),
     configDir: join(root, "centrail"),
     claude: null,
     script: "/home/u/.npm/_npx/1/node_modules/centrail/dist/index.js",
@@ -60,7 +62,7 @@ const installedPlugin = async (version: string) => {
   await writeFile(join(root, "claude", "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "centrail@centrail": [{ scope: "user", version }] } }));
 };
 
-const notDetected = { detected: false, integration: "none", plugin: null, hooks: 0, usesLauncher: null, commandResolves: null, status: "not-detected", fix: "ok" };
+const notDetected = { detected: false, integration: "none", plugin: null, hooks: 0, usesLauncher: null, commandResolves: null, usage: true, status: "not-detected", fix: "ok" };
 
 describe("centrail doctor", () => {
   it("reports a stable JSON shape, exit 0 once set up", async () => {
@@ -77,11 +79,13 @@ describe("centrail doctor", () => {
       cli: { version: CLI_VERSION, copy: "npx", latest: null, updateAvailable: false },
       launcher: { needed: true, present: true, executable: true, resolvesCli: true },
       agents: {
-        "claude-code": { detected: false, integration: "none", plugin: { enabled: false, autoUpdate: false, version: null }, hooks: 0, usesLauncher: null, commandResolves: null, status: "not-detected", fix: "ok" },
-        codex: { detected: true, integration: "hook", plugin: null, hooks: 1, usesLauncher: true, commandResolves: true, status: "ok", fix: "ok" },
+        "claude-code": { detected: false, integration: "none", plugin: { enabled: false, autoUpdate: false, version: null }, hooks: 0, usesLauncher: null, commandResolves: null, usage: true, status: "not-detected", fix: "ok" },
+        codex: { detected: true, integration: "hook", plugin: null, hooks: 1, usesLauncher: true, commandResolves: true, usage: true, status: "ok", fix: "ok" },
         "gemini-cli": notDetected,
         "copilot-cli": notDetected,
         pi: notDetected,
+        cursor: { ...notDetected, usage: false },
+        opencode: { ...notDetected, usage: false },
       },
       notices: [],
     });
@@ -166,7 +170,7 @@ describe("centrail doctor", () => {
       expect(out).toMatch(/Copilot CLI {2}ok: agentStop hook through the launcher/);
       expect(out).toMatch(/Pi {11}ok: extension through the launcher/);
       for (const a of ["gemini-cli", "copilot-cli", "pi"] as const) {
-        expect(after.agents[a]).toEqual({ detected: true, integration: "hook", plugin: null, hooks: 1, usesLauncher: true, commandResolves: true, status: "ok", fix: "ok" });
+        expect(after.agents[a]).toEqual({ detected: true, integration: "hook", plugin: null, hooks: 1, usesLauncher: true, commandResolves: true, usage: true, status: "ok", fix: "ok" });
       }
     });
 
@@ -196,6 +200,56 @@ describe("centrail doctor", () => {
       expect(r.agents.pi.status).toBe("unreadable");
       expect(await readFile(gemini(), "utf-8")).toBe("{ // comment\n}");
       expect(await readFile(pi(), "utf-8")).toBe("export default () => {}\n");
+    });
+  });
+
+  // No usage source reads them: shown, never failed on, never added by --fix;
+  // once named and set up, checked like any other entry.
+  describe("Cursor and OpenCode", () => {
+    const cursor = () => join(root, "home", ".cursor", "hooks.json");
+    const opencode = () => join(root, "xdg", "opencode", "plugins", "centrail.js");
+    beforeEach(async () => {
+      for (const d of [join(root, "home", ".cursor"), join(root, "xdg", "opencode")]) await mkdir(d, { recursive: true });
+    });
+
+    it("detected without an entry → not-supported, exit 0, and --fix adds nothing", async () => {
+      await runIntegrationSetup({ yes: true }, deps); // Codex only
+      out = "";
+      const r = await runDoctor({ fix: true, json: true }, deps);
+      expect(process.exitCode).toBeUndefined();
+      expect(r.ok).toBe(true);
+      for (const a of ["cursor", "opencode"] as const) {
+        expect(r.agents[a]).toEqual({ detected: true, integration: "none", plugin: null, hooks: 0, usesLauncher: null, commandResolves: null, usage: false, status: "not-supported", fix: "skip" });
+      }
+      await expect(readFile(cursor(), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(opencode(), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+      out = "";
+      await runDoctor({}, deps);
+      expect(out).toMatch(/Cursor {7}usage collection not supported yet \(no usage source\); nothing installed/);
+      expect(out).toMatch(/OpenCode {5}usage collection not supported yet/);
+      expect(out).toContain("Nothing needs action.");
+    });
+
+    it("set up by name → ok, labelled repo identity only; a broken entry needs action and --fix repairs it", async () => {
+      await runIntegrationSetup({ yes: true, agents: ["codex", "cursor", "opencode"] }, deps);
+      const r = await runDoctor({}, deps);
+      expect(r.ok).toBe(true);
+      expect(out).toMatch(/Cursor {7}ok: stop hook through the launcher \(repo identity only; usage not collected yet\)/);
+      expect(out).toMatch(/OpenCode {5}ok: plugin through the launcher \(repo identity only; usage not collected yet\)/);
+      for (const a of ["cursor", "opencode"] as const) expect(r.agents[a]).toMatchObject({ integration: "hook", hooks: 1, usage: false, status: "ok" });
+
+      await writeFile(opencode(), (await readFile(opencode(), "utf-8")).replace("session.idle", "session.ended"));
+      const file = JSON.parse(await readFile(cursor(), "utf-8"));
+      file.hooks.stop.push({ ...file.hooks.stop[0] });
+      await writeFile(cursor(), JSON.stringify(file));
+      const broken = await doctorReport(deps);
+      expect(broken.agents.opencode).toMatchObject({ status: "outdated", fix: "update" });
+      expect(broken.agents.cursor).toMatchObject({ status: "duplicate", fix: "repair" });
+      expect(broken.ok).toBe(false);
+
+      const fixed = await runDoctor({ fix: true }, deps);
+      expect(fixed.ok).toBe(true);
+      expect(JSON.parse(await readFile(cursor(), "utf-8")).hooks.stop).toHaveLength(1);
     });
   });
 });

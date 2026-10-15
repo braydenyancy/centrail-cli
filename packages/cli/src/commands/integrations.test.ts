@@ -27,10 +27,11 @@ const NPM_GLOBAL = win ? "C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\cen
 const NPX = win ? "C:\\Users\\u\\AppData\\Local\\npm-cache\\_npx\\0a1b\\node_modules\\centrail\\dist\\index.js" : "/home/u/.npm/_npx/0a1b/node_modules/centrail/dist/index.js";
 const RELEASE = { source: "github", repo: "braydenyancy/centrail-cli", ref: "release" };
 
-type Machine = { root: string; claudeDir: string; codexHome: string; geminiHome: string; copilotHome: string; piDir: string; configDir: string; deps: IntegrationDeps; calls: string[][] };
+type Machine = { root: string; claudeDir: string; codexHome: string; geminiHome: string; copilotHome: string; piDir: string; cursorHome: string; opencodeDir: string; configDir: string; deps: IntegrationDeps; calls: string[][] };
 type MachineOpts = {
   claudeBin?: boolean; claudeDir?: boolean; codexBin?: boolean; codexHome?: boolean;
   geminiBin?: boolean; geminiHome?: boolean; copilotBin?: boolean; copilotHome?: boolean; piBin?: boolean; piDir?: boolean;
+  cursorBin?: boolean; cursorHome?: boolean; opencodeBin?: boolean; opencodeDir?: boolean;
   script?: string;
 };
 let said: string;
@@ -48,14 +49,16 @@ async function machine(opts: MachineOpts = {}): Promise<Machine> {
     geminiHome: join(root, "home", ".gemini"),
     copilotHome: join(root, "copilot"),
     piDir: join(root, "pi", "agent"),
+    cursorHome: join(root, "home", ".cursor"),
+    opencodeDir: join(root, "xdg", "opencode"),
     configDir: join(root, "centrail"),
     calls: [],
     deps: {},
   };
-  for (const [dir, on] of [[m.claudeDir, opts.claudeDir], [m.codexHome, opts.codexHome], [m.geminiHome, opts.geminiHome], [m.copilotHome, opts.copilotHome], [m.piDir, opts.piDir]] as const) {
+  for (const [dir, on] of [[m.claudeDir, opts.claudeDir], [m.codexHome, opts.codexHome], [m.geminiHome, opts.geminiHome], [m.copilotHome, opts.copilotHome], [m.piDir, opts.piDir], [m.cursorHome, opts.cursorHome], [m.opencodeDir, opts.opencodeDir]] as const) {
     if (on) await mkdir(dir, { recursive: true });
   }
-  const bins = [["claude", opts.claudeBin], ["codex", opts.codexBin], ["gemini", opts.geminiBin], ["copilot", opts.copilotBin], ["pi", opts.piBin]] as const;
+  const bins = [["claude", opts.claudeBin], ["codex", opts.codexBin], ["gemini", opts.geminiBin], ["copilot", opts.copilotBin], ["pi", opts.piBin], ["cursor", opts.cursorBin], ["opencode", opts.opencodeBin]] as const;
   for (const [name, on] of bins) {
     if (!on) continue;
     // Records its argv; on Windows a .cmd is what PATHEXT finds.
@@ -69,6 +72,8 @@ async function machine(opts: MachineOpts = {}): Promise<Machine> {
     geminiHome: m.geminiHome,
     copilotHome: m.copilotHome,
     piAgentDir: m.piDir,
+    cursorHome: m.cursorHome,
+    opencodeConfigDir: m.opencodeDir,
     configDir: m.configDir,
     script: opts.script ?? NPM_GLOBAL,
     node: win ? "C:\\Program Files\\nodejs\\node.exe" : "/usr/bin/node",
@@ -118,20 +123,29 @@ afterEach(async () => {
 });
 
 describe("detection", () => {
-  // claude-code, codex, gemini-cli, copilot-cli, pi
+  // claude-code, codex, gemini-cli, copilot-cli, pi, cursor, opencode
+  const only = (i: number) => [0, 1, 2, 3, 4, 5, 6].map((j) => j === i);
   it.each([
-    ["nothing", {}, [false, false, false, false, false]],
-    ["claude on PATH only", { claudeBin: true }, [true, false, false, false, false]],
-    ["Claude config dir only (the desktop app)", { claudeDir: true }, [true, false, false, false, false]],
-    ["codex on PATH only", { codexBin: true }, [false, true, false, false, false]],
-    ["CODEX_HOME only", { codexHome: true }, [false, true, false, false, false]],
-    ["gemini on PATH only", { geminiBin: true }, [false, false, true, false, false]],
-    ["~/.gemini only", { geminiHome: true }, [false, false, true, false, false]],
-    ["copilot on PATH only", { copilotBin: true }, [false, false, false, true, false]],
-    ["COPILOT_HOME only", { copilotHome: true }, [false, false, false, true, false]],
-    ["pi on PATH only", { piBin: true }, [false, false, false, false, true]],
-    ["Pi's agent dir only", { piDir: true }, [false, false, false, false, true]],
-    ["all five, every way", { claudeBin: true, claudeDir: true, codexBin: true, codexHome: true, geminiBin: true, geminiHome: true, copilotBin: true, copilotHome: true, piBin: true, piDir: true }, [true, true, true, true, true]],
+    ["nothing", {}, only(-1)],
+    ["claude on PATH only", { claudeBin: true }, only(0)],
+    ["Claude config dir only (the desktop app)", { claudeDir: true }, only(0)],
+    ["codex on PATH only", { codexBin: true }, only(1)],
+    ["CODEX_HOME only", { codexHome: true }, only(1)],
+    ["gemini on PATH only", { geminiBin: true }, only(2)],
+    ["~/.gemini only", { geminiHome: true }, only(2)],
+    ["copilot on PATH only", { copilotBin: true }, only(3)],
+    ["COPILOT_HOME only", { copilotHome: true }, only(3)],
+    ["pi on PATH only", { piBin: true }, only(4)],
+    ["Pi's agent dir only", { piDir: true }, only(4)],
+    ["cursor on PATH only", { cursorBin: true }, only(5)],
+    ["~/.cursor only", { cursorHome: true }, only(5)],
+    ["opencode on PATH only", { opencodeBin: true }, only(6)],
+    ["OpenCode's config dir only", { opencodeDir: true }, only(6)],
+    [
+      "all seven, every way",
+      { claudeBin: true, claudeDir: true, codexBin: true, codexHome: true, geminiBin: true, geminiHome: true, copilotBin: true, copilotHome: true, piBin: true, piDir: true, cursorBin: true, cursorHome: true, opencodeBin: true, opencodeDir: true },
+      only(-1).map(() => true),
+    ],
   ])("%s", async (_, opts, detected) => {
     const m = await machine(opts);
     const { claudeBin } = opts as { claudeBin?: boolean };
@@ -139,7 +153,8 @@ describe("detection", () => {
     expect(AGENTS.map((a) => ins.agents[a].detected)).toEqual(detected);
     expect(ins.claude.cli !== null).toBe(Boolean(claudeBin));
     const plan = planSetup(ins);
-    expect(plan.map((p) => p.action)).toEqual(detected.map((d) => (d ? "install" : "skip")));
+    // Cursor and OpenCode are shown, not installed, unless named.
+    expect(plan.map((p) => p.action)).toEqual(detected.map((d, i) => (d && i < 5 ? "install" : "skip")));
     // Claude Code gets its plugin when `claude` can install it, else a hook.
     if (detected[0]) expect(plan[0].via).toBe(claudeBin ? "plugin" : "hook");
   });
@@ -149,7 +164,8 @@ describe("detection", () => {
     expect(parseAgents(["claude-code,codex", "codex"])).toEqual(["claude-code", "codex"]);
     expect(parseAgents([])).toBeUndefined();
     expect(parseAgents(["gemini-cli,copilot-cli", "pi"])).toEqual(["gemini-cli", "copilot-cli", "pi"]);
-    expect(() => parseAgents(["gemini"])).toThrow(/claude-code, codex, gemini-cli, copilot-cli or pi/);
+    expect(parseAgents(["cursor,opencode"])).toEqual(["cursor", "opencode"]);
+    expect(() => parseAgents(["gemini"])).toThrow(/claude-code, codex, gemini-cli, copilot-cli, pi, cursor or opencode/);
   });
 });
 
@@ -190,7 +206,7 @@ describe("centrail setup", () => {
     said = "";
     const again = await runIntegrationSetup({ yes: true }, m.deps);
     expect(again.changed).toBe(false);
-    expect(again.plan.map((p) => p.action)).toEqual(["ok", "ok", "skip", "skip", "skip"]);
+    expect(again.plan.map((p) => p.action)).toEqual(["ok", "ok", "skip", "skip", "skip", "skip", "skip"]);
     expect(said).toContain("Everything is set up; nothing to change.");
     expect(m.calls).toHaveLength(2); // `claude` not run again
     expect(await Promise.all([claudeSettings(m), codexHooks(m), launcher(m)].map(read))).toEqual(files);
@@ -298,7 +314,7 @@ describe("centrail setup", () => {
   it("--agent limits the plan to the named agent", async () => {
     const m = await machine({ claudeBin: true, codexHome: true });
     const r = await runIntegrationSetup({ yes: true, agents: ["codex"] }, m.deps);
-    expect(r.plan.map((p) => [p.agent, p.action])).toEqual([["claude-code", "skip"], ["codex", "install"], ["gemini-cli", "skip"], ["copilot-cli", "skip"], ["pi", "skip"]]);
+    expect(r.plan.map((p) => [p.agent, p.action])).toEqual([["claude-code", "skip"], ["codex", "install"], ["gemini-cli", "skip"], ["copilot-cli", "skip"], ["pi", "skip"], ["cursor", "skip"], ["opencode", "skip"]]);
     expect(m.calls).toEqual([]);
   });
 
@@ -396,7 +412,7 @@ describe("Gemini CLI, Copilot CLI and Pi", () => {
     said = "";
     const again = await runIntegrationSetup({ yes: true }, m.deps);
     expect(again.changed).toBe(false);
-    expect(again.plan.map((p) => p.action)).toEqual(["skip", "skip", "ok", "ok", "ok"]);
+    expect(again.plan.map((p) => p.action)).toEqual(["skip", "skip", "ok", "ok", "ok", "skip", "skip"]);
     expect(await Promise.all([geminiSettings(m), copilotFile(m), piFile(m), launcher(m)].map(read))).toEqual(files);
   });
 
@@ -477,11 +493,116 @@ describe("Gemini CLI, Copilot CLI and Pi", () => {
   it("--agent pi sets up Pi alone and keeps the launcher while Pi runs it", async () => {
     const m = await machine({ codexHome: true, piDir: true });
     const r = await runIntegrationSetup({ yes: true, agents: ["pi"] }, m.deps);
-    expect(r.plan.map((p) => p.action)).toEqual(["skip", "skip", "skip", "skip", "install"]);
+    expect(r.plan.map((p) => p.action)).toEqual(["skip", "skip", "skip", "skip", "install", "skip", "skip"]);
     await runIntegrationSetup({ yes: true }, m.deps);
     await runUninstall({ yes: true, agents: ["codex"] }, m.deps);
     expect(await read(piFile(m))).toContain("centrail-pi-extension");
     expect(await read(launcher(m))).toContain("centrail");
+  });
+});
+
+// Cursor and OpenCode have no usage source yet: setup shows them and adds
+// their repo-identity entry only when named, then keeps it current.
+describe("Cursor and OpenCode", () => {
+  const cursorFile = (m: Machine) => join(m.cursorHome, "hooks.json");
+  const opencodeFile = (m: Machine) => join(m.opencodeDir, "plugins", "centrail.js");
+  const userCursor = {
+    version: 1,
+    hooks: {
+      afterFileEdit: [{ command: "./hooks/format.sh" }],
+      stop: [{ command: "./audit.sh", loop_limit: 10 }],
+    },
+  };
+  const userPlugin = 'export const Notify = async () => ({ event: async () => {} });\n';
+
+  async function userMachine(): Promise<Machine> {
+    const m = await machine({ codexHome: true, cursorBin: true, cursorHome: true, opencodeBin: true, opencodeDir: true });
+    await writeFile(cursorFile(m), `${JSON.stringify(userCursor, null, 2)}\n`);
+    await mkdir(join(m.opencodeDir, "plugins"), { recursive: true });
+    await writeFile(join(m.opencodeDir, "plugins", "notify.js"), userPlugin);
+    return m;
+  }
+
+  it("by default shows them as not supported yet and installs nothing for them", async () => {
+    const m = await userMachine();
+    await runIntegrationSetup({ dryRun: true }, m.deps);
+    expect(said).toMatch(/Cursor {7}skip {5}usage collection not supported yet \(no usage source\); `--agent cursor` adds a repo-identity-only stop hook/);
+    expect(said).toMatch(/OpenCode {5}skip {5}usage collection not supported yet \(no usage source\); `--agent opencode` adds a repo-identity-only plugin/);
+    const r = await runIntegrationSetup({ yes: true }, m.deps);
+    expect(r.plan.map((p) => p.action)).toEqual(["skip", "install", "skip", "skip", "skip", "skip", "skip"]);
+    expect(await json(cursorFile(m))).toEqual(userCursor);
+    await expect(read(opencodeFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("--agent installs one owned entry each, keeps every user hook and plugin, and later runs keep it current", async () => {
+    const m = await userMachine();
+    const r = await runIntegrationSetup({ yes: true, agents: ["cursor", "opencode"] }, m.deps);
+    expect(r.plan.filter((p) => p.agent === "cursor" || p.agent === "opencode").map((p) => [p.action, p.detail])).toEqual([
+      ["install", "stop hook through the launcher, repo identity only"],
+      ["install", "plugin through the launcher, repo identity only"],
+    ]);
+    expect(said).toContain("Cursor and OpenCode: repo identity only.");
+    expect(said).toContain("OpenCode reads hooks, extensions and plugins at start");
+
+    const cursor = await json(cursorFile(m));
+    expect(cursor.hooks.afterFileEdit).toEqual(userCursor.hooks.afterFileEdit);
+    expect(cursor.hooks.stop).toEqual([
+      ...userCursor.hooks.stop,
+      { type: "command", command: `${win ? "& " : ""}"${launcher(m)}" hook stop --centrail-hook --surface cursor`, timeout: 10 },
+    ]);
+    const plugin = await read(opencodeFile(m));
+    expect(plugin.split("\n")[0]).toContain("centrail-opencode-plugin");
+    expect(plugin).toContain(`const launcher = ${JSON.stringify(launcher(m))};`);
+    expect(plugin).toContain('"--centrail-hook", "--surface", "opencode"');
+    expect(await read(join(m.opencodeDir, "plugins", "notify.js"))).toBe(userPlugin);
+
+    // Set up once by name, a plain `centrail setup` keeps them: ok, nothing written.
+    const files = await Promise.all([cursorFile(m), opencodeFile(m), launcher(m)].map(read));
+    const again = await runIntegrationSetup({ yes: true }, m.deps);
+    expect(again.plan.map((p) => p.action)).toEqual(["skip", "install", "skip", "skip", "skip", "ok", "ok"]);
+    const third = await runIntegrationSetup({ yes: true }, m.deps);
+    expect(third.changed).toBe(false);
+    expect(await Promise.all([cursorFile(m), opencodeFile(m), launcher(m)].map(read))).toEqual(files);
+  });
+
+  it("uninstall is the exact inverse: the user's hooks.json and plugins come back as they were", async () => {
+    const m = await userMachine();
+    const before = await read(cursorFile(m));
+    await runIntegrationSetup({ yes: true, agents: ["cursor", "opencode"] }, m.deps);
+    await runUninstall({ yes: true }, m.deps);
+    expect(said).toMatch(/Cursor {7}remove {3}1 centrail stop hook/);
+    expect(said).toMatch(/OpenCode {5}remove {3}centrail's plugin/);
+    expect(await read(cursorFile(m))).toBe(before);
+    await expect(read(opencodeFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await read(join(m.opencodeDir, "plugins", "notify.js"))).toBe(userPlugin);
+    await expect(read(launcher(m))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("a hooks.json centrail created is removed whole; a foreign plugins/centrail.js is never touched", async () => {
+    const m = await machine({ cursorHome: true, opencodeDir: true });
+    await mkdir(join(m.opencodeDir, "plugins"), { recursive: true });
+    const foreign = "export const Mine = async () => ({});\n";
+    await writeFile(opencodeFile(m), foreign);
+    const r = await runIntegrationSetup({ yes: true, agents: ["cursor", "opencode"] }, m.deps);
+    expect(r.plan.find((p) => p.agent === "opencode")).toMatchObject({ action: "skip", detail: "plugins/centrail.js is not centrail's; move it, then rerun" });
+    expect((await json(cursorFile(m))).version).toBe(1);
+    await runUninstall({ yes: true }, m.deps);
+    await expect(read(cursorFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await read(opencodeFile(m))).toBe(foreign);
+  });
+
+  it("on Windows, Cursor gets PowerShell's call form under `command`, recognised as centrail's on the next run", async () => {
+    const m = await machine({ cursorHome: true, opencodeDir: true });
+    const deps = { ...m.deps, platform: "win32" as const };
+    await runIntegrationSetup({ yes: true, agents: ["cursor", "opencode"] }, deps);
+    const cmd = launcherPath(m.configDir, "win32");
+    expect((await json(cursorFile(m))).hooks.stop).toEqual([{ type: "command", command: `& "${cmd}" hook stop --centrail-hook --surface cursor`, timeout: 10 }]);
+    expect(await read(opencodeFile(m))).toContain(`const launcher = ${JSON.stringify(cmd)};`);
+    const again = await runIntegrationSetup({ yes: true }, deps);
+    expect(again.plan.filter((p) => p.agent === "cursor" || p.agent === "opencode").map((p) => p.action)).toEqual(["ok", "ok"]);
+    await runUninstall({ yes: true }, deps);
+    await expect(read(cursorFile(m))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(read(opencodeFile(m))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

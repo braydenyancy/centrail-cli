@@ -35,12 +35,15 @@ export type HookInput = {
   turn_id?: unknown; // Codex only ("Codex extension" in its stop.command.input schema)
   sessionId?: unknown; // Copilot CLI's camelCase agentStop payload
   transcriptPath?: unknown;
+  conversation_id?: unknown; // Cursor: the conversation, stable across turns
+  workspace_roots?: unknown; // Cursor: its stop payload has no cwd
 };
 
 // What each harness's hook passes on stdin, mapped to one shape:
 //   Claude Code, Codex, Gemini CLI  { session_id, cwd, transcript_path }
 //   Copilot CLI (agentStop)         { sessionId, cwd, transcriptPath }
-//   Pi (centrail's extension)       { session_id, cwd }
+//   Pi, OpenCode (centrail's module) { session_id, cwd }
+//   Cursor (stop)                   { conversation_id, workspace_roots }
 // The session id is stamped the way that surface's log scanner names its
 // sessions, so sync joins the sidecar line to the scanned events: Gemini
 // CLI's and Pi's scanners prefix theirs ("gemini:", "pi:").
@@ -51,9 +54,10 @@ const TRANSCRIPT_SURFACES = new Set(["claude-code", "codex"]);
 
 // The reply each harness expects on stdout. Codex and Gemini CLI parse
 // stdout as JSON; Copilot CLI takes `{}` as "no decision". Claude Code's
-// plugin hook and Pi's detached extension print nothing.
+// plugin hook and Pi's and OpenCode's detached modules print nothing.
+// Cursor reads stdout as JSON and takes `{}` as no follow-up message.
 export function hookReply(surface: string): string {
-  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" ? "{}\n" : "";
+  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" || surface === "cursor" ? "{}\n" : "";
 }
 
 // The processing core accepts both harnesses; installation and launchers
@@ -104,8 +108,10 @@ async function stopHook(raw: string, surface: string, deps: HookDeps): Promise<S
     return null;
   }
   if (!isObject(input)) return null;
-  const rawId = typeof input.session_id === "string" ? input.session_id : typeof input.sessionId === "string" ? input.sessionId : "";
-  const cwd = typeof input.cwd === "string" ? input.cwd : "";
+  const rawId = firstString(input.session_id, input.sessionId, surface === "cursor" ? input.conversation_id : undefined);
+  // Cursor's stop payload names the workspace's folders, not a cwd: the first is the one it opened.
+  const workspace = surface === "cursor" && Array.isArray(input.workspace_roots) ? input.workspace_roots : [];
+  const cwd = firstString(input.cwd, workspace[0]);
   if (!rawId || !cwd) return null;
   // An unnamed entry (Claude Code's plugin, older Codex forms) is told apart by its payload.
   if (surface === "claude-code") surface = detectSurface(input, surface);
@@ -266,6 +272,10 @@ function logicalRoot(dir: string, root: string): string | null {
   if (!dir.endsWith(suffix)) return null;
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
+}
+
+function firstString(...values: unknown[]): string {
+  return (values.find((v) => typeof v === "string" && v !== "") as string | undefined) ?? "";
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

@@ -2003,6 +2003,9 @@ import { homedir as homedir7 } from "node:os";
 import { mkdir as mkdir4, readFile as readFile9, rm as rm3, stat as stat8, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname4, isAbsolute as isAbsolute3, join as join10, win32 as win322 } from "node:path";
 
+// src/home-overrides.ts
+var homeOverrides = {};
+
 // src/commands/hooks-install.ts
 import { constants } from "node:fs";
 import { copyFile, mkdir as mkdir3, readFile as readFile8, writeFile as writeFile3 } from "node:fs/promises";
@@ -2014,7 +2017,7 @@ function claudeSettingsPath() {
 function codexHooksPath() {
   return join9(codexHomeDir(), "hooks.json");
 }
-var HOOK_SURFACES = ["claude-code", "codex", "gemini-cli", "copilot-cli", "pi"];
+var HOOK_SURFACES = ["claude-code", "codex", "gemini-cli", "copilot-cli", "pi", "cursor", "opencode"];
 function launcherCommand(launcher, surface, platform = process.platform, opts = {}) {
   const call = opts.powershell && platform === "win32" ? "& " : "";
   return `${call}${quote(launcher, platform)} ${HOOK_MARK} --centrail-hook${surface === "claude-code" ? "" : ` --surface ${surface}`}`;
@@ -2159,10 +2162,17 @@ function isObject7(v) {
 
 // src/commands/agent-hooks.ts
 function defaultHome(agent, env = process.env) {
+  const forTests = homeOverrides[agent];
+  if (forTests) return forTests;
   if (agent === "codex") return codexHomeDir();
   if (agent === "gemini-cli") return join10(env.GEMINI_CLI_HOME || homedir7(), ".gemini");
   if (agent === "copilot-cli") return env.COPILOT_HOME || join10(homedir7(), ".copilot");
+  if (agent === "cursor") return join10(homedir7(), ".cursor");
+  if (agent === "opencode") return opencodeConfigDir(env);
   return dirname4(piSessionsDir());
+}
+function opencodeConfigDir(env = process.env) {
+  return join10(env.XDG_CONFIG_HOME || join10(homedir7(), ".config"), "opencode");
 }
 async function classifyCommand(command2, expected, platform) {
   const words = commandWords(command2) ?? [];
@@ -2186,6 +2196,7 @@ function groupHook(o) {
     label: o.label,
     bin: o.bin,
     how: o.how,
+    usage: true,
     fileName: o.fileName,
     file: (home) => join10(home, o.fileName),
     async read(file, launcher, platform) {
@@ -2205,77 +2216,82 @@ function groupHook(o) {
     }
   };
 }
-var COPILOT_EVENT = "agentStop";
-var copilotCommands = (settings) => {
-  const entries = Array.isArray(settings.hooks?.[COPILOT_EVENT]) ? settings.hooks[COPILOT_EVENT] : [];
-  return entries.flatMap((e) => isObject8(e) ? ["bash", "powershell", "command"].map((k) => e[k]).filter((c) => typeof c === "string") : []);
-};
-var ownsCopilotEntry = (e) => isObject8(e) && ["bash", "powershell", "command"].some((k) => typeof e[k] === "string" && isCentrailCommand(e[k]));
-function withoutCopilotEntries(settings) {
-  const hooks = isObject8(settings.hooks) ? { ...settings.hooks } : {};
-  const kept = Array.isArray(hooks[COPILOT_EVENT]) ? hooks[COPILOT_EVENT].filter((e) => !ownsCopilotEntry(e)) : [];
-  if (kept.length) hooks[COPILOT_EVENT] = kept;
-  else delete hooks[COPILOT_EVENT];
-  return { ...settings, hooks };
+function flatHook(o) {
+  const owns = (e) => isObject8(e) && o.keys.some((k) => typeof e[k] === "string" && isCentrailCommand(e[k]));
+  const entries = (settings) => Array.isArray(settings.hooks?.[o.event]) ? settings.hooks[o.event] : [];
+  const without = (settings) => {
+    const hooks = isObject8(settings.hooks) ? { ...settings.hooks } : {};
+    const kept = entries(settings).filter((e) => !owns(e));
+    if (kept.length) hooks[o.event] = kept;
+    else delete hooks[o.event];
+    return { ...settings, hooks };
+  };
+  const command2 = (launcher, platform) => launcherCommand(launcher, o.agent, platform, { powershell: true });
+  return {
+    agent: o.agent,
+    label: o.label,
+    bin: o.bin,
+    how: o.how,
+    usage: o.usage ?? true,
+    fileName: o.fileName,
+    file: (home) => join10(home, o.fileName),
+    async read(file, launcher, platform) {
+      const settings = await readJson(file);
+      if (!settings) return { readable: false, hooks: [] };
+      const commands = entries(settings).flatMap((e) => isObject8(e) ? o.keys.map((k) => e[k]).filter((c) => typeof c === "string") : []);
+      const expected = command2(launcher, platform);
+      return { readable: true, hooks: await Promise.all(commands.filter(isCentrailCommand).map((c) => classifyCommand(c, expected, platform))) };
+    },
+    async install(file, launcher, platform) {
+      const { settings, indent } = await readSettingsFile(file);
+      const next = without(settings);
+      const entry = { type: "command", [o.key(platform)]: command2(launcher, platform), ...o.extra };
+      await writeSettingsFile(file, { version: 1, ...next, hooks: { ...next.hooks, [o.event]: [...entries(next), entry] } }, indent);
+    },
+    async uninstall(file) {
+      const { settings, indent } = await readSettingsFile(file);
+      const next = without(settings);
+      const rest2 = Object.keys(next).filter((k) => k !== "version" && !(k === "hooks" && Object.keys(next.hooks ?? {}).length === 0));
+      if (rest2.length === 0) await rm3(file, { force: true });
+      else await writeSettingsFile(file, next, indent);
+    }
+  };
 }
-var copilotHook = {
-  agent: "copilot-cli",
-  label: "Copilot CLI",
-  bin: "copilot",
-  how: "agentStop hook",
-  fileName: join10("hooks", "centrail.json"),
-  file: (home) => join10(home, "hooks", "centrail.json"),
-  async read(file, launcher, platform) {
-    const settings = await readJson(file);
-    if (!settings) return { readable: false, hooks: [] };
-    const expected = launcherCommand(launcher, "copilot-cli", platform, { powershell: true });
-    const hooks = await Promise.all(copilotCommands(settings).filter(isCentrailCommand).map((c) => classifyCommand(c, expected, platform)));
-    return { readable: true, hooks };
-  },
-  async install(file, launcher, platform) {
-    const { settings, indent } = await readSettingsFile(file);
-    const next = withoutCopilotEntries(settings);
-    const shell = platform === "win32" ? "powershell" : "bash";
-    const entries = Array.isArray(next.hooks?.[COPILOT_EVENT]) ? next.hooks[COPILOT_EVENT] : [];
-    const entry = { type: "command", [shell]: launcherCommand(launcher, "copilot-cli", platform, { powershell: true }), timeoutSec: 10 };
-    await writeSettingsFile(file, { version: 1, ...next, hooks: { ...next.hooks, [COPILOT_EVENT]: [...entries, entry] } }, indent);
-  },
-  async uninstall(file) {
-    const { settings, indent } = await readSettingsFile(file);
-    const next = withoutCopilotEntries(settings);
-    const rest2 = Object.keys(next).filter((k) => k !== "version" && !(k === "hooks" && Object.keys(next.hooks ?? {}).length === 0));
-    if (rest2.length === 0) await rm3(file, { force: true });
-    else await writeSettingsFile(file, next, indent);
+var spawnLauncher = (detached) => `function run(input) {
+  try {
+    const options = { detached: ${detached}, windowsHide: true, stdio: ["pipe", "ignore", "ignore"] };
+    // A .cmd runs only through a shell on Windows.
+    const child = process.platform === "win32"
+      ? spawn(\`"\${launcher}"\`, args, { ...options, shell: true })
+      : spawn(launcher, args, options);
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(input));
+    child.unref();
+  } catch {
+    // never break the agent over a sync
   }
-};
-var PI_EXTENSION_MARK = "centrail-pi-extension";
-function piExtension(launcher) {
-  return `// ${PI_EXTENSION_MARK}: written by \`centrail setup\`, rewritten by each setup,
-// removed by \`centrail uninstall\`; do not edit. After each agent run it starts
-// centrail's stable launcher (--centrail-hook --surface pi) in the background
-// with the session id and folder on stdin. Pi does not wait for it.
+}`;
+function moduleHeader(mark, agent, launcher, what, detached = "true") {
+  return `// ${mark}: written by \`centrail setup\`, rewritten by each setup,
+// removed by \`centrail uninstall\`; do not edit. ${what}
 import { spawn } from "node:child_process";
 
 const launcher = ${JSON.stringify(launcher)};
-const args = ["hook", "stop", "--centrail-hook", "--surface", "pi"];
+const args = ["hook", "stop", "--centrail-hook", "--surface", "${agent}"];
 
+${spawnLauncher(detached)}
+`;
+}
+var PI_EXTENSION_MARK = "centrail-pi-extension";
+function piExtension(launcher) {
+  return `${moduleHeader(PI_EXTENSION_MARK, "pi", launcher, `After each agent run it starts
+// centrail's stable launcher (--centrail-hook --surface pi) in the background
+// with the session id and folder on stdin. Pi does not wait for it.`)}
 export default function centrail(pi) {
   pi.on("agent_end", (_event, ctx) => {
     try {
-      const input = JSON.stringify({
-        hook_event_name: "agent_end",
-        session_id: ctx.sessionManager.getSessionId(),
-        cwd: ctx.cwd,
-      });
-      const options = { detached: true, windowsHide: true, stdio: ["pipe", "ignore", "ignore"] };
-      // A .cmd runs only through a shell on Windows.
-      const child = process.platform === "win32"
-        ? spawn(\`"\${launcher}"\`, args, { ...options, shell: true })
-        : spawn(launcher, args, options);
-      child.on("error", () => {});
-      child.stdin.on("error", () => {});
-      child.stdin.end(input);
-      child.unref();
+      run({ hook_event_name: "agent_end", session_id: ctx.sessionManager.getSessionId(), cwd: ctx.cwd });
     } catch {
       // never break the agent over a sync
     }
@@ -2283,8 +2299,8 @@ export default function centrail(pi) {
 }
 `;
 }
-function piExtensionLauncher(content) {
-  if (!content.includes(PI_EXTENSION_MARK)) return null;
+function moduleLauncher(content, mark) {
+  if (!content.split("\n", 1)[0].includes(mark)) return null;
   const m = /^const launcher = ("(?:[^"\\]|\\.)*");$/m.exec(content);
   if (!m) return null;
   try {
@@ -2293,35 +2309,77 @@ function piExtensionLauncher(content) {
     return null;
   }
 }
-var piHook = {
-  agent: "pi",
-  label: "Pi",
-  bin: "pi",
-  how: "extension",
-  fileName: join10("extensions", "centrail.js"),
-  file: (home) => join10(home, "extensions", "centrail.js"),
-  async read(file, launcher, platform) {
-    let content;
-    try {
-      content = await readFile9(file, "utf-8");
-    } catch {
-      return { readable: true, hooks: [] };
+function moduleHook(o) {
+  return {
+    agent: o.agent,
+    label: o.label,
+    bin: o.bin,
+    how: o.how,
+    usage: o.usage ?? true,
+    module: true,
+    fileName: o.fileName,
+    file: (home) => join10(home, o.fileName),
+    async read(file, launcher, platform) {
+      let content;
+      try {
+        content = await readFile9(file, "utf-8");
+      } catch {
+        return { readable: true, hooks: [] };
+      }
+      const runs = moduleLauncher(content, o.mark);
+      if (runs === null) return { readable: false, hooks: [] };
+      return { readable: true, hooks: [{ form: "launcher", current: content === o.render(launcher), resolves: await isExecutable(runs, platform) }] };
+    },
+    async install(file, launcher) {
+      await mkdir4(dirname4(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      await writeFile4(tmp, o.render(launcher));
+      await replaceFile(tmp, file);
+    },
+    async uninstall(file) {
+      const content = await readFile9(file, "utf-8").catch(() => null);
+      if (content !== null && moduleLauncher(content, o.mark) !== null) await rm3(file, { force: true });
     }
-    const runs = piExtensionLauncher(content);
-    if (runs === null) return { readable: false, hooks: [] };
-    return { readable: true, hooks: [{ form: "launcher", current: content === piExtension(launcher), resolves: await isExecutable(runs, platform) }] };
+  };
+}
+var OPENCODE_PLUGIN_MARK = "centrail-opencode-plugin";
+function opencodePlugin(launcher) {
+  return `${moduleHeader(
+    OPENCODE_PLUGIN_MARK,
+    "opencode",
+    launcher,
+    `When a session goes idle (a prompt's
+// run ended) it starts centrail's stable launcher (--centrail-hook --surface
+// opencode) in the background with the session id and folder on stdin.
+// OpenCode does not wait for it.`,
+    'process.platform !== "win32"'
+  )}
+const recent = new Map();
+
+export const CentrailPlugin = async ({ client, directory }) => ({
+  event: async ({ event }) => {
+    try {
+      const idle = event.type === "session.idle" || (event.type === "session.status" && event.properties?.status?.type === "idle");
+      const id = event.properties?.sessionID;
+      if (!idle || typeof id !== "string") return;
+      const now = Date.now();
+      if (now - (recent.get(id) ?? 0) < 2000) return; // session.status and session.idle, together
+      recent.set(id, now);
+      let session;
+      try {
+        session = (await client.session.get({ path: { id } })).data;
+      } catch {
+        // an older server: place it by the plugin's folder
+      }
+      if (session?.parentID) return;
+      run({ hook_event_name: "session.idle", session_id: id, cwd: session?.directory || directory });
+    } catch {
+      // never break the agent over a sync
+    }
   },
-  async install(file, launcher) {
-    await mkdir4(dirname4(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile4(tmp, piExtension(launcher));
-    await replaceFile(tmp, file);
-  },
-  async uninstall(file) {
-    const content = await readFile9(file, "utf-8").catch(() => null);
-    if (content !== null && piExtensionLauncher(content) !== null) await rm3(file, { force: true });
-  }
-};
+});
+`;
+}
 var AGENT_HOOKS = [
   groupHook({ agent: "codex", label: "Codex", bin: "codex", how: "Stop hook", fileName: "hooks.json", event: "Stop", handler: { timeout: 10 }, powershell: false }),
   groupHook({
@@ -2335,8 +2393,34 @@ var AGENT_HOOKS = [
     // Gemini CLI runs hook commands through PowerShell on Windows.
     powershell: true
   }),
-  copilotHook,
-  piHook
+  flatHook({
+    agent: "copilot-cli",
+    label: "Copilot CLI",
+    bin: "copilot",
+    how: "agentStop hook",
+    fileName: join10("hooks", "centrail.json"),
+    event: "agentStop",
+    key: (platform) => platform === "win32" ? "powershell" : "bash",
+    keys: ["bash", "powershell", "command"],
+    extra: { timeoutSec: 10 }
+  }),
+  moduleHook({ agent: "pi", label: "Pi", bin: "pi", how: "extension", fileName: join10("extensions", "centrail.js"), mark: PI_EXTENSION_MARK, render: piExtension }),
+  // No usage scanner reads Cursor's or OpenCode's logs yet: their entries
+  // record repo identity only, and setup adds them only when named.
+  flatHook({
+    agent: "cursor",
+    label: "Cursor",
+    bin: "cursor",
+    how: "stop hook",
+    fileName: "hooks.json",
+    event: "stop",
+    // Cursor runs hook commands through PowerShell on Windows.
+    key: () => "command",
+    keys: ["command"],
+    extra: { timeout: 10 },
+    usage: false
+  }),
+  moduleHook({ agent: "opencode", label: "OpenCode", bin: "opencode", how: "plugin", fileName: join10("plugins", "centrail.js"), mark: OPENCODE_PLUGIN_MARK, render: opencodePlugin, usage: false })
 ];
 async function exists(p) {
   try {
@@ -3373,6 +3457,7 @@ async function runSurfaces(args) {
 
 // src/commands/integrations.ts
 var AGENTS = ["claude-code", ...AGENT_HOOKS.map((h) => h.agent)];
+var IDENTITY_ONLY = AGENT_HOOKS.filter((h) => !h.usage).map((h) => h.agent);
 var LABEL = Object.fromEntries([["claude-code", "Claude Code"], ...AGENT_HOOKS.map((h) => [h.agent, h.label])]);
 var hookFor = (agent) => AGENT_HOOKS.find((h) => h.agent === agent);
 function parseAgents(names) {
@@ -3387,7 +3472,14 @@ function parseAgents(names) {
 function context(deps) {
   const platform = deps.platform ?? process.platform;
   const claudeDir = deps.claudeDir ?? claudeConfigDirs()[0];
-  const given = { codex: deps.codexHome, "gemini-cli": deps.geminiHome, "copilot-cli": deps.copilotHome, pi: deps.piAgentDir };
+  const given = {
+    codex: deps.codexHome,
+    "gemini-cli": deps.geminiHome,
+    "copilot-cli": deps.copilotHome,
+    pi: deps.piAgentDir,
+    cursor: deps.cursorHome,
+    opencode: deps.opencodeConfigDir
+  };
   const homes = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, given[h.agent] ?? defaultHome(h.agent)]));
   const files = Object.fromEntries(AGENT_HOOKS.map((h) => [h.agent, h.file(homes[h.agent])]));
   return {
@@ -3480,8 +3572,11 @@ function planSetup(ins, agents) {
     if (agents && !agents.includes(agent)) return skip("not selected");
     if (!state.detected) return skip("not detected");
     if (!state.readable) {
-      if (agent === "pi") return skip("extensions/centrail.js is not centrail's; move it, then rerun");
-      return skip(`${agent === "claude-code" ? "settings.json" : hookFor(agent).fileName} does not parse; fix it, then rerun`);
+      if (agent !== "claude-code" && hookFor(agent).module) return skip(`${hookFor(agent).fileName.replaceAll("\\", "/")} is not centrail's; move it, then rerun`);
+      return skip(`${agent === "claude-code" ? "settings.json" : hookFor(agent).fileName.replaceAll("\\", "/")} does not parse; fix it, then rerun`);
+    }
+    if (IDENTITY_ONLY.includes(agent) && state.hooks.length === 0 && !agents?.includes(agent)) {
+      return skip(`${NOT_SUPPORTED}; \`--agent ${agent}\` adds a repo-identity-only ${HOW[agent]}`);
     }
     if (agent === "claude-code") {
       const { plugin, hooks } = ins.claude;
@@ -3501,15 +3596,17 @@ function planSetup(ins, agents) {
     return hookPlan(agent, state.hooks, ins.launcher, agent === "claude-code" ? " (no `claude` command for the plugin)" : "");
   });
 }
+var NOT_SUPPORTED = "usage collection not supported yet (no usage source)";
 var HOW = Object.fromEntries([["claude-code", "Stop hook"], ...AGENT_HOOKS.map((h) => [h.agent, h.how])]);
 function hookPlan(agent, hooks, launcher, why) {
   const via = "hook";
   const how = HOW[agent];
   if (hooks.length > 1) return { agent, action: "repair", via, detail: `${hooks.length} centrail ${how}s \u2192 one, through the launcher` };
-  if (hooks.length === 0) return { agent, action: "install", via, detail: `${how} through the launcher${why}` };
+  const only = IDENTITY_ONLY.includes(agent) ? ", repo identity only" : "";
+  if (hooks.length === 0) return { agent, action: "install", via, detail: `${how} through the launcher${why}${only}` };
   if (!hooks[0].current) return { agent, action: "update", via, detail: `outdated ${hooks[0].form === "pinned" ? "pinned command" : how} \u2192 the launcher` };
   if (!launcher.current) return { agent, action: "update", via, detail: "refresh the launcher" };
-  return { agent, action: "ok", via, detail: `${how} through the launcher` };
+  return { agent, action: "ok", via, detail: `${how} through the launcher${only}` };
 }
 var pending = (item) => item.action !== "ok" && item.action !== "skip";
 function printPlan(items, launcher, title) {
@@ -3553,8 +3650,12 @@ async function runIntegrationSetup(opts, deps = {}) {
     console.log("  Codex: open /hooks in Codex once and trust centrail's Stop hook. Codex trusts a hook by its hash;");
     console.log("    this command stays the same across centrail releases, so later updates need no new trust. Restart open sessions.");
   }
-  if (plan.some((i) => (i.agent === "gemini-cli" || i.agent === "copilot-cli" || i.agent === "pi") && pending(i))) {
-    console.log("  Gemini CLI, Copilot CLI and Pi read their hooks and extensions at start: restart open sessions.");
+  const atStart = plan.filter((i) => ["gemini-cli", "copilot-cli", "pi", "opencode"].includes(i.agent) && pending(i)).map((i) => LABEL[i.agent]);
+  if (atStart.length) console.log(`  ${listed(atStart)} read${atStart.length > 1 ? "" : "s"} hooks, extensions and plugins at start: restart open sessions.`);
+  const identity = plan.filter((i) => IDENTITY_ONLY.includes(i.agent) && pending(i)).map((i) => LABEL[i.agent]);
+  if (identity.length) {
+    console.log(`  ${listed(identity)}: repo identity only. centrail cannot read ${identity.length > 1 ? "their" : "its"} usage yet, so these turns`);
+    console.log("    show no tokens or cost until a usage source for them ships.");
   }
   console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
   console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
@@ -3606,7 +3707,7 @@ async function runUninstall(opts, deps = {}) {
     ...removePlugin ? [`  ${"Claude Code".padEnd(12)} remove   plugin ${PLUGIN_ID} and its marketplace`] : [],
     ...hookFiles.map((a) => {
       const n = ins.agents[a].hooks.length;
-      return `  ${LABEL[a].padEnd(12)} remove   ${a === "pi" ? "centrail's extension" : `${n} centrail ${HOW[a]}${n > 1 ? "s" : ""}`}`;
+      return `  ${LABEL[a].padEnd(12)} remove   ${a !== "claude-code" && hookFor(a).module ? `centrail's ${HOW[a]}` : `${n} centrail ${HOW[a]}${n > 1 ? "s" : ""}`}`;
     }),
     ...removeLauncherFile ? [`  ${"launcher".padEnd(12)} remove   ${ins.launcher.path}`] : []
   ];
@@ -3652,6 +3753,9 @@ async function confirm(opts, deps, prompt, unattended, byDefault = true) {
   const yes = answer === void 0 ? false : answer === "" ? byDefault : answer.startsWith("y");
   if (!yes) console.log("Nothing changed.");
   return yes;
+}
+function listed(names) {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
 }
 async function isDir(p) {
   try {
@@ -3837,7 +3941,7 @@ var AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1e3;
 var SESSION_PREFIX = { "gemini-cli": "gemini:", pi: "pi:" };
 var TRANSCRIPT_SURFACES = /* @__PURE__ */ new Set(["claude-code", "codex"]);
 function hookReply(surface) {
-  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" ? "{}\n" : "";
+  return surface === "codex" || surface === "gemini-cli" || surface === "copilot-cli" || surface === "cursor" ? "{}\n" : "";
 }
 function detectSurface(input, fallback) {
   if (typeof input.turn_id === "string" && input.turn_id) return "codex";
@@ -3862,8 +3966,9 @@ async function stopHook(raw, surface, deps) {
     return null;
   }
   if (!isObject11(input)) return null;
-  const rawId = typeof input.session_id === "string" ? input.session_id : typeof input.sessionId === "string" ? input.sessionId : "";
-  const cwd = typeof input.cwd === "string" ? input.cwd : "";
+  const rawId = firstString(input.session_id, input.sessionId, surface === "cursor" ? input.conversation_id : void 0);
+  const workspace = surface === "cursor" && Array.isArray(input.workspace_roots) ? input.workspace_roots : [];
+  const cwd = firstString(input.cwd, workspace[0]);
   if (!rawId || !cwd) return null;
   if (surface === "claude-code") surface = detectSurface(input, surface);
   const sessionId = `${SESSION_PREFIX[surface] ?? ""}${rawId}`;
@@ -3989,6 +4094,9 @@ function logicalRoot(dir, root) {
   if (!dir.endsWith(suffix)) return null;
   const logical = dir.slice(0, dir.length - suffix.length);
   return logical && logical !== root ? logical : null;
+}
+function firstString(...values) {
+  return values.find((v) => typeof v === "string" && v !== "") ?? "";
 }
 function isObject11(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -4142,7 +4250,7 @@ async function doctorReport(deps = {}) {
   return {
     version: 2,
     // An available update is reported, not failed on: it needs no action to keep collecting.
-    ok: Object.values(agents).every((a) => a.status === "ok" || a.status === "not-detected") && !outdated,
+    ok: Object.values(agents).every((a) => a.status === "ok" || a.status === "not-detected" || a.status === "not-supported") && !outdated,
     cli: { version: CLI_VERSION, copy: at.channel, latest, updateAvailable: latest !== null && isOlder(CLI_VERSION, latest) },
     launcher: { needed, present: ins.launcher.present, executable: ins.launcher.executable, resolvesCli: ins.launcher.resolvesCli },
     agents,
@@ -4159,6 +4267,7 @@ function agentReport(ins, agent, fix) {
   const status2 = (() => {
     if (!state.detected) return "not-detected";
     if (!state.readable) return "unreadable";
+    if (IDENTITY_ONLY.includes(agent) && hooks.length === 0) return "not-supported";
     if (plugin?.enabled) return fix === "ok" ? "ok" : "repair";
     if (hooks.length === 0) return "missing";
     if (hooks.length > 1) return "duplicate";
@@ -4173,13 +4282,15 @@ function agentReport(ins, agent, fix) {
     hooks: hooks.length,
     usesLauncher,
     commandResolves,
+    usage: !IDENTITY_ONLY.includes(agent),
     status: status2,
-    fix: status2 === "ok" || status2 === "not-detected" ? "ok" : fix
+    fix: status2 === "ok" || status2 === "not-detected" ? "ok" : status2 === "not-supported" ? "skip" : fix
   };
 }
 var SAY = {
   ok: "ok",
   "not-detected": "not detected",
+  "not-supported": `${NOT_SUPPORTED}; nothing installed`,
   unreadable: "its hook file does not parse",
   missing: "not set up: no centrail hook or plugin",
   duplicate: "more than one centrail hook (turns would be recorded twice)",
@@ -4195,7 +4306,8 @@ function printDoctor(r) {
   for (const agent of AGENTS) {
     const a = r.agents[agent];
     const how = a.plugin?.enabled ? `plugin${a.plugin.version ? ` ${a.plugin.version}` : ""}, auto-update ${a.plugin.autoUpdate ? "on" : "off"}` : a.usesLauncher ? `${HOW[agent]} through the launcher` : a.hooks ? HOW[agent] : "";
-    const status2 = a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status];
+    const only = a.usage || a.status === "not-supported" ? "" : " (repo identity only; usage not collected yet)";
+    const status2 = `${a.status === "ok" ? `ok${how ? `: ${how}` : ""}` : SAY[a.status]}${a.status === "not-detected" ? "" : only}`;
     console.log(`  ${LABEL[agent].padEnd(12)} ${status2}`);
   }
   if (r.launcher.needed || r.launcher.present) {
@@ -5209,8 +5321,10 @@ Usage:
                                     then set up your agents
   centrail setup [--agent <name>] [-y] [--dry-run]
                                     Sync after every agent turn: Claude Code's plugin; a hook in Codex,
-                                    Gemini CLI and Copilot CLI; an extension in Pi
-                                    (--agent claude-code|codex|gemini-cli|copilot-cli|pi; asks once unless -y)
+                                    Gemini CLI and Copilot CLI; an extension in Pi. Cursor and OpenCode
+                                    (repo identity only, no usage yet) only when named
+                                    (--agent claude-code|codex|gemini-cli|copilot-cli|pi|cursor|opencode;
+                                    asks once unless -y)
   centrail doctor [--json] [--fix]  Check each agent's integration and centrail's version (read-only; --fix repairs)
   centrail uninstall [--agent <name>] [-y]
                                     Remove centrail's plugin, hooks and launcher

@@ -319,6 +319,7 @@ describe("runStopHook", () => {
     ["copilot-cli", { sessionId: "c1", timestamp: 1760400000000, transcriptPath: "/x/.copilot/session-state/c1/events.jsonl", stopReason: "end_turn", stop_hook_active: false }, "c1"],
     ["copilot-cli", { hook_event_name: "Stop", session_id: "c2", transcript_path: "/x/events.jsonl", stop_reason: "end_turn" }, "c2"],
     ["pi", { hook_event_name: "agent_end", session_id: "p1" }, "pi:p1"],
+    ["opencode", { hook_event_name: "session.idle", session_id: "ses_01" }, "ses_01"],
   ])("%s: maps its stdin payload, stamps the scanner's session id, places by cwd", async (surface, payload, sessionId) => {
     fx = await scratch();
     const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
@@ -331,6 +332,37 @@ describe("runStopHook", () => {
     expect((await readSidecar(sidecarPath)).get(sessionId)?.surface).toBe(surface);
   });
 
+  // Cursor's stop payload (cursor.com/docs/hooks § stop, § Common schema)
+  // carries the conversation and the workspace's folders, but no cwd. The
+  // transcript is Cursor's own format and is not read.
+  it("cursor: the conversation id and first workspace root place the turn", async () => {
+    fx = await scratch();
+    const repo = await fx.repo("r", { remote: "https://github.com/acme/r.git" });
+    const other = await fx.repo("o", { remote: "https://github.com/acme/o.git" });
+    const sidecarPath = join(fx.root, "sc.jsonl");
+    const deps = { sidecarPath, spawnSync: () => {}, connected: async () => false, ...memState() };
+    const payload = {
+      conversation_id: "conv-1",
+      generation_id: "gen-1",
+      model: "m",
+      hook_event_name: "stop",
+      cursor_version: "2.9.1",
+      workspace_roots: [repo, other],
+      user_email: null,
+      transcript_path: join(fx.root, "agent-transcripts", "conv-1.jsonl"),
+      status: "completed",
+      loop_count: 0,
+    };
+    const line = (await runStopHook(JSON.stringify(payload), "cursor", deps))!;
+    expect(line).toMatchObject({ surface: "cursor", sessionId: "conv-1", cwd: repo, root: repo, repo: { key: "github.com/acme/r" } });
+    expect(line.transcript).toBeUndefined();
+    // An explicit cwd wins; the same payload unnamed (Claude Code's hook, which
+    // Cursor also runs) has no cwd or session id it reads and records nothing.
+    expect((await runStopHook(JSON.stringify({ ...payload, cwd: other }), "cursor", deps))!.cwd).toBe(other);
+    expect(await runStopHook(JSON.stringify(payload), "claude-code", deps)).toBeNull();
+    expect(await runStopHook(JSON.stringify({ ...payload, workspace_roots: [] }), "cursor", deps)).toBeNull();
+  });
+
   it("a named surface is never re-detected from the payload", async () => {
     fx = await scratch();
     const sidecarPath = join(fx.root, "sc.jsonl");
@@ -339,6 +371,6 @@ describe("runStopHook", () => {
   });
 
   it("replies on stdout the way each harness expects", () => {
-    expect([hookReply("claude-code"), hookReply("codex"), hookReply("gemini-cli"), hookReply("copilot-cli"), hookReply("pi")]).toEqual(["", "{}\n", "{}\n", "{}\n", ""]);
+    expect(["claude-code", "codex", "gemini-cli", "copilot-cli", "pi", "cursor", "opencode"].map(hookReply)).toEqual(["", "{}\n", "{}\n", "{}\n", "", "{}\n", ""]);
   });
 });
