@@ -38,11 +38,14 @@ repricing. Users upgrade their installation, then normal sync replays eligible l
 
 - Enable GitHub Actions to create pull requests. GitHub combines creation and approval in
   one checkbox; this workflow creates PRs and leaves approval to humans. Require green main checks.
-- Protect published `v*` tags against updates and deletion, and restrict their creation to
-  GitHub Actions (release-please creates them).
-- Protect branch `release` (ruleset: restrict updates, restrict deletions, block force pushes;
-  bypass GitHub Actions only). Installed plugins auto-update from it and run its Stop hook on
-  every turn, so only the publish workflow may advance it, after npm verification.
+- Protect published `v*` tags against updates and deletion. In an organization, also restrict
+  their creation with GitHub Actions as the only bypass (release-please creates them).
+- Protect branch `release`: installed plugins auto-update from it and run its Stop hook on every
+  turn, so only the publish workflow may advance it, after npm verification. In an organization:
+  restrict updates and deletions and block force pushes, with GitHub Actions as the only bypass.
+  A personal-account repository cannot exempt GitHub Actions; there, restrict deletions, block
+  force pushes and require signed commits with no bypass (every `main` commit is GitHub-signed,
+  and the workflow only fast-forwards `release` to those).
 - On npm, set both packages to **Require two-factor authentication and disallow tokens**;
   trusted publishing keeps working and nothing else can publish.
 - Environment `npm`: deployment policy **type tag**, pattern `v*` (a branch rule with that
