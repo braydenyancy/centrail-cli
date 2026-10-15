@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
@@ -150,6 +151,36 @@ export async function readMainCheckout(repoRoot: string): Promise<string | null>
     if (!common || basename(common) !== ".git") return null;
     const main = dirname(common);
     return samePath(main, repoRoot) ? null : main;
+  } catch {
+    return null;
+  }
+}
+
+// The repository a checkout belongs to: every worktree of one repository
+// answers the same common dir, and shares its refs and objects.
+export async function readCommonDir(repoRoot: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec("git", ["-C", repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    return stdout.trim() ? nativePath(stdout.trim()) : null;
+  } catch {
+    return null;
+  }
+}
+
+// A digest of everything the commit graph the fate pass reads can depend on:
+// every ref with its target, every worktree's HEAD (`--all` includes them),
+// and the shallow boundary (a deepening fetch changes history without
+// moving a ref). Objects are immutable by sha, so an equal digest means an
+// equal graph. Null when git cannot answer: the caller then recomputes.
+export async function readRefsDigest(repoRoot: string, commonDir: string): Promise<string | null> {
+  try {
+    const [refs, worktrees] = await Promise.all([
+      exec("git", ["-C", repoRoot, "for-each-ref", "--format=%(objectname) %(refname)"], { maxBuffer: FACT_BUFFER }),
+      exec("git", ["-C", repoRoot, "worktree", "list", "--porcelain"], { maxBuffer: FACT_BUFFER }),
+    ]);
+    const heads = worktrees.stdout.split("\n").filter((l) => l.startsWith("HEAD ") || l.startsWith("detached") || l.startsWith("branch "));
+    const shallow = await readFile(join(commonDir, "shallow"), "utf-8").catch(() => "");
+    return createHash("sha256").update(refs.stdout).update("\0").update(heads.join("\n")).update("\0").update(shallow).digest("hex");
   } catch {
     return null;
   }

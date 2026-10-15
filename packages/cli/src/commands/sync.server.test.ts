@@ -178,6 +178,7 @@ describe("the summary", () => {
     setProgressMode("auto");
     expect(lines[0]).toEqual(["Inserted 1 · Skipped 0", "  claude-code  inserted 1 · skipped 0"]);
     expect(lines[1]).toEqual(lines[0]);
+    expect(stderr.join("")).toMatch(/took: reading logs \d+\.\d s · placing \d+\.\d s · sending \d+\.\d s · commits and ship status \d+\.\d s/);
   });
 });
 
