@@ -1,5 +1,7 @@
 # CLI verification — 2026-10-09
 
+> Historical record; current behavior and commands: [CLI guide](../README.md), [integrations](integrations.md), [wire contract](../CONTRACT.md), [verification](verification.md).
+
 The pending collection, account-local replay and comparison changes were applied
 in an isolated checkout based on `8026d04`. Verification used Linux and Node
 `v24.21.0`. Dependencies were reused locally, with `@centrail/parsers` resolving

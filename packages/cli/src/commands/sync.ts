@@ -221,7 +221,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         source: { surface: scanner.surface, kind: "local_logs" },
         events: batch.map((e) => toWireEvent(e, caps, config, installId, scanner.surface)),
       };
-      await writeLastSync(body); // `centrail inspect --last`: exactly what left
+      await writeLastSync(body); // `centrail inspect --last`: last attempted ingest body
       const res = await fetch(`${auth.baseUrl}/api/cli/ingest`, {
         method: "POST",
         headers: {

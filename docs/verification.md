@@ -4,6 +4,7 @@ After `npm ci`, run the collected local checks with:
 
 ```sh
 npm run verify
+node scripts/check-doc-links.mjs
 ```
 
 This builds the parsers, CLI and plugin, typechecks both packages, runs all parser
@@ -12,7 +13,9 @@ checks coordinated release versions and offline packed consumers,
 and runs the comparison gate's self-tests. A failing stage stops the suite with
 a nonzero exit. It installs no dependencies, calls no production endpoints and
 uses no personal usage logs. It works with the CLI's Node 20+ requirement on
-Linux, macOS and native Windows; Git is needed for the repository fixtures.
+Linux, macOS and native Windows when its prerequisites are installed: Git for
+repository fixtures and Python 3 available as `python3` for the comparison
+gate self-tests. The optional full comparison suite has stricter Linux requirements.
 
 The committed tests cover wire/export allowlists and privacy, compiler-generated
 plugin bundle equality, actual hook subprocess dispatch, generated file trees,
@@ -93,7 +96,7 @@ This is a preparation rehearsal, not proof that owner-side settings permit a rea
 
 Merged PRs without Conventional Commit squash titles may supply Release Please's supported
 `BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` body block. This records intended release notes
-without rewriting history; PR15 uses that correction so the collection changes appear in 0.8.0.
+without rewriting history; the dated rehearsal records PR15 using that correction for the proposed 0.8.0 release.
 
 The verification toolchain uses Vitest 4.1.11 and Vite 6.4.3 to retain Node 20.0 support.
 The root Vite override is intentional; bundler upgrades require rebuilding and reviewing the
@@ -105,5 +108,5 @@ The estate auth atlas §2 row 7/§14 and D40 describe GitHub OIDC into OpenBao f
 provisioning. This publisher talks directly to npm's external OIDC verifier; it does not use
 OpenBao, Zitadel, an estate CI role or human pairing credentials. Existing estate flows are
 unchanged. The old workflow used the long-lived `NPM_TOKEN`; the replacement permits only
-GitHub's scoped workflow token plus npm's short-lived environment-bound credential. npm's
-owner-side trust settings remain unverified until configured and exercised.
+GitHub's scoped workflow token plus npm's short-lived environment-bound credential. Local verification does not inspect npm's owner-side trust settings; publication
+and its retained receipts provide the end-to-end evidence.

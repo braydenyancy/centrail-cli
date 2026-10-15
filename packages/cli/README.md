@@ -1,59 +1,32 @@
 # centrail
 
-One command turns your AI usage into a dashboard: what your coding agents did, what it cost, and what it produced.
+Sync local coding-agent usage and git attribution to [centrail.org](https://centrail.org).
+Requires Node.js 20+ on macOS, Linux or Windows.
 
 ```sh
-npx centrail connect
+npx centrail@latest connect
 ```
 
-That is the whole install. No global package, no SDK, no proxy, no code changes.
+Approve pairing in your browser, choose which repos sync, then confirm agent setup.
+Claude Code, Codex, GitHub Copilot CLI, Gemini CLI and Pi have usage readers;
+Pi and Gemini uploads require server capabilities and scope consent. Cursor and
+OpenCode v1 integrations are opt-in and record repo identity only.
 
-## What it does
+```sh
+npx centrail doctor          # inspect integrations; --fix repairs
+npx centrail sync            # upload usage and git attribution
+npx centrail inspect --last  # inspect the last attempted usage batch
+npx centrail uninstall      # remove integrations; pairing and local logs remain
+```
 
-Centrail is the system of record for AI work. The CLI reads the usage logs your coding agents already write on your machine, attributes tokens to the git commits they helped produce, and syncs usage metadata to your dashboard at [centrail.org](https://centrail.org).
+Usage is parsed locally. The upload allowlist excludes source code, prompts,
+completions, absolute paths, diffs and commit messages. Consented uploads can
+include repo identity, session and branch identifiers, commit SHAs and aggregate
+change counts. See the [privacy boundary](https://github.com/braydenyancy/centrail-cli/blob/main/SECURITY.md).
 
-- **Spend**: estimated cost per day, per project, per model. See a year of AI spend in two minutes.
-- **Git attribution**: cost per commit, per branch, per PR. What did this PR cost? We're the only ones who can tell you.
-- **Budgets and alerts**: get warned when today's burn is a multiple of normal. Your AI bill can never surprise you again.
-- **Savings**: see when a cheaper model does the same job. We find you AI savings.
-- **Footprint**: estimated energy, water, and CO2 for every token, included free.
-- **Teams**: roll the same numbers up per seat and per project. The AI spend report your CFO actually asks for.
+Use the [CLI guide](https://github.com/braydenyancy/centrail-cli#readme) for scope,
+installation and upgrades, and [agent integrations](https://github.com/braydenyancy/centrail-cli/blob/main/docs/integrations.md)
+for setup, removal and troubleshooting. Current product plans are on
+[centrail.org/pricing](https://centrail.org/pricing).
 
-## What it tracks
-
-- **Claude Code** (local session logs)
-- **GitHub Copilot CLI** (local session logs)
-- **Codex** (local session logs)
-- Provider APIs and chat-app usage connect on the web side; the CLI is the coding-agent and git half.
-
-## Privacy first
-
-The CLI reads logs locally. Usage uploads contain an opaque event ID, model,
-token counts, and timestamp. To a server that accepts them, once you have
-chosen which repos sync, they add the repo identity (`github.com/owner/repo`
-or a root-commit hash, its root commit and the folder name), the session id,
-the branch, and a random per-install id.
-Git attribution contains the repo name, branch, commit SHA, commit time and
-aggregate line/file counts, and to a server that accepts them a content hash
-of each commit's change (`git patch-id`) that proves a rebased or squashed
-commit is the same work without revealing it. Absolute paths, hostnames, platform details,
-provider-account details, prompts, completions, diffs, commit messages and
-source code are never uploaded; `npx centrail inspect --last` prints the
-real payload. The full guarantee is documented at [Local token
-capture](https://centrail.org/docs/local-capture) and the [privacy
-policy](https://centrail.org/docs/privacy).
-
-## Pricing
-
-Personal use is free. Team Standard is $99/mo for 10 seats. Team Pro is $199/mo for 10 seats and adds Trails. Personal Pro is $6/mo. Details at [centrail.org/pricing](https://centrail.org/pricing).
-
-## Links
-
-- Website: [centrail.org](https://centrail.org)
-- Docs: [centrail.org/docs](https://centrail.org/docs)
-- CLI reference: [centrail.org/docs/cli](https://centrail.org/docs/cli)
-- Support: support@centrail.org
-
-## License
-
-Apache-2.0. Source at [github.com/braydenyancy/centrail-cli](https://github.com/braydenyancy/centrail-cli).
+Apache-2.0. [Source](https://github.com/braydenyancy/centrail-cli).

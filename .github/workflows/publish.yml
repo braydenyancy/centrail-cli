@@ -75,7 +75,7 @@ jobs:
           path: .release-artifacts/
       - name: Verify artifact source and minimal helper bytes
         run: node scripts/check-release-artifacts.mjs
-      - name: Recheck the deployed contract after publication approval
+      - name: Recheck the deployed contract before publication
         run: node .release-artifacts/publisher/scripts/check-server-contract.mjs
         env:
           CENTRAIL_EXPECTED_SURFACES: ${{ needs.prepare.outputs.surfaces }}

@@ -60,7 +60,7 @@ Usage:
   centrail --version                Print this copy's version
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
-  centrail inspect --last           Print the last payload exactly as it left this machine
+  centrail inspect --last           Print the last attempted usage batch (not attribution)
   centrail scope                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
   centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)

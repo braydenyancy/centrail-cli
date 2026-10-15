@@ -1,5 +1,7 @@
 # Release toolchain repair — 2026-10-12
 
+> Historical receipt; current checks and release procedure: [verification](../verification.md) and [releases](../releases.md).
+
 The release candidate's hosted tests correctly rejected Codex plugin metadata that still
 said `0.7.5-account-local.0` while the CLI said `0.8.0`. The metadata is now aligned, included
 in Release Please's actual updates and checked alongside the Claude metadata, marketplace,

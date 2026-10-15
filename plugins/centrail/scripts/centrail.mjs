@@ -3406,7 +3406,7 @@ async function runRepos() {
   if (!cfg.scopeDecidedAt) console.log(`  ${SCOPE_UNANSWERED}`);
 }
 async function runInspect() {
-  console.log(await readLastSync() ?? "No sync has run on this machine yet.");
+  console.log(await readLastSync() ?? "No usage-ingest batch has been saved on this machine yet.");
   if (!(await readConfig()).scopeDecidedAt) console.error(SCOPE_UNANSWERED);
 }
 function printScope(rows, cfg) {
@@ -3659,7 +3659,7 @@ async function runIntegrationSetup(opts, deps = {}) {
   }
   console.log("Each turn now records session id, folder, repo identity, branch, head and the repos its files touched,");
   console.log("locally, and starts a background `centrail sync` at most every 10 minutes.");
-  console.log("Nothing leaves this machine except what `centrail inspect --last` shows. Check any time: `centrail doctor`.");
+  console.log("Inspect the last attempted usage batch with `centrail inspect --last` (not attribution/fate requests). Check integrations with `centrail doctor`.");
   return { plan, changed: true };
 }
 async function applyClaude(ctx, ins, item) {
@@ -3874,7 +3874,7 @@ async function runConnect(opts, setupDeps = {}) {
           console.log(`  Agent setup did not finish (${err instanceof Error ? err.message : String(err)}); run \`centrail setup\` to retry.`);
         }
       } else {
-        console.log("  To sync after every agent turn (Claude Code, Codex), run `npx centrail setup` in a terminal.");
+        console.log("  To sync after every supported agent turn, run `npx centrail setup` in a terminal.");
       }
       console.log("");
       console.log("  Run `npx centrail sync` to push usage now.");
@@ -3924,11 +3924,14 @@ var FIELDS_SHOWN_ONCE = `
   What leaves this machine on each sync \u2014 and nothing else:
     tokens per model, timestamps, the agent and CLI version, session id,
     repo identity (host/owner/repo or a root-commit hash), folder name,
-    branch, commit shas, line counts and change hashes (git patch-id),
-    a random per-install id.
-  Never: source, prompts, completions, secrets, paths, hostname, platform,
-  account details.
-  Verify any time:  npx centrail inspect --last
+    branch, commit shas, commit times, line/file counts and change hashes,
+    author-match and ship-status flags, a random per-install id;
+    fast-mode/web-search usage and bounded billing-route labels when supported.
+  Never extracted for upload: source, prompts, completions, credential fields,
+  paths, hostname, platform,
+  account details. Allowed names/identifiers are not scanned for secrets.
+  Last attempted usage batch:  npx centrail inspect --last
+  This excludes attribution/fate requests and does not prove delivery.
   Toggles in ~/.config/centrail/config.json: hideRepoNames, hideBranchNames.
 `;
 
@@ -5333,7 +5336,7 @@ Usage:
   centrail --version                Print this copy's version
   centrail sync [--full]            Push new usage events (--full rescans everything)
                                     Progress shows in a terminal; --quiet hides it, --verbose forces it
-  centrail inspect --last           Print the last payload exactly as it left this machine
+  centrail inspect --last           Print the last attempted usage batch (not attribution)
   centrail scope                    Review which repos and folders sync (asked once at connect)
   centrail repos                    List them with status
   centrail exclude <repo>           Nothing about this repo leaves (host/owner/repo or folder name)
