@@ -5125,7 +5125,7 @@ async function syncLocked(opts) {
       console.log(`Nothing in scope to sync \u2014 ${heldByScope} event(s) held back by your scope (see \`centrail repos\`).`);
     } else {
       console.log(
-        anyWatermark ? "No new events since the last sync." : "No agent usage found (Claude Code, Copilot CLI, Codex)."
+        anyWatermark ? "No new events since the last sync." : "No agent usage found (Claude Code, Codex, Copilot CLI, Gemini CLI, Pi)."
       );
     }
     if (notice) progress(updateNoticeLine(notice));

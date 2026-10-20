@@ -278,7 +278,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       console.log(
         anyWatermark
           ? "No new events since the last sync."
-          : "No agent usage found (Claude Code, Copilot CLI, Codex).",
+          : "No agent usage found (Claude Code, Codex, Copilot CLI, Gemini CLI, Pi).",
       );
     }
     if (notice) progress(updateNoticeLine(notice));
