@@ -2,8 +2,9 @@
 
 The Centrail CLI syncs local coding-agent usage from Claude Code, Codex,
 GitHub Copilot CLI, Gemini CLI and Pi to [centrail.org](https://centrail.org),
-with local git attribution. Pi and Gemini uploads require scope consent and
-server support for their surface and billing route.
+with local git attribution. Git commit attribution covers Claude Code and Codex;
+Copilot CLI, Gemini CLI and Pi sync usage only. Pi and Gemini uploads require
+scope consent and server support for their surface and billing route.
 
 ## Install & use
 
@@ -125,7 +126,10 @@ assignment in the dashboard covers all of them, and a session whose worktree
 was deleted before sync still lands on its repo (the hook captured it).
 
 Git attribution links usage to commits by repository, time and available branch
-and author evidence. It does not establish that AI caused a change, saved time or
+and author evidence. It runs for Claude Code and Codex, whose logs carry reliable
+per-event working directories and timestamps; Copilot CLI, Gemini CLI and Pi
+usage is uploaded without commit attribution until their session semantics are
+proven. It does not establish that AI caused a change, saved time or
 produced business value. Token counts come from local logs; dashboard costs and
 energy are estimates, not provider invoices or hardware measurements.
 

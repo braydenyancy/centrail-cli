@@ -19,6 +19,10 @@ Without a terminal, `setup` and `uninstall` change nothing unless `-y` is given.
 
 ## Per agent
 
+Every agent below reports usage; git commit attribution runs only for Claude Code and Codex
+(`packages/cli/src/commands/sync.ts`), whose logs carry per-event working directories and
+timestamps. Copilot CLI, Gemini CLI and Pi usage is uploaded without attribution.
+
 **Claude Code** gets its plugin (`centrail@centrail` from `braydenyancy/centrail-cli#release`),
 installed through `claude plugin …`, with `autoUpdate: true` on the marketplace entry so Claude
 Code keeps it current. Any standalone centrail Stop hook in its user settings is removed so turns

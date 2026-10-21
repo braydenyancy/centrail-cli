@@ -9,6 +9,7 @@ npx centrail@latest connect
 
 Approve pairing in your browser, choose which repos sync, then confirm agent setup.
 Claude Code, Codex, GitHub Copilot CLI, Gemini CLI and Pi have usage readers;
+git commit attribution covers Claude Code and Codex, the others sync usage only.
 Pi and Gemini uploads require server capabilities and scope consent. Cursor and
 OpenCode v1 integrations are opt-in and record repo identity only.
 
