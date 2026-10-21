@@ -3,6 +3,13 @@
 All notable changes are documented here. This project follows semantic
 versioning.
 
+## [0.9.1](https://github.com/braydenyancy/centrail-cli/compare/v0.9.0...v0.9.1) (2026-10-21)
+
+
+### Performance Improvements
+
+* **cli:** fast no-change syncs, a named sync lock and per-tool counts ([#32](https://github.com/braydenyancy/centrail-cli/issues/32)) ([4d922ba](https://github.com/braydenyancy/centrail-cli/commit/4d922ba890703199ce91df6a3e26728b601d5df7))
+
 ## [0.9.0](https://github.com/braydenyancy/centrail-cli/compare/v0.8.1...v0.9.0) (2026-10-15)
 
 
