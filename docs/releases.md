@@ -82,15 +82,16 @@ reviewed Conventional Commit message (for a squash merge, its final commit body)
 See [Release Please's version override](https://github.com/googleapis/release-please#how-do-i-change-the-version-number).
 Review the resulting release PR and bundle normally; do not hand-edit a published tag.
 
-## Open release-channel blocker
+## Release-channel pointer: how it lagged once, and the rule now
 
-Verified read-only on 2026-10-15: ruleset `25045270` still restricts updates to
-`release` with no bypass. The v0.9.0 npm publication succeeded, but its
-plugin-pointer update was blocked.
-That means plugin auto-update can lag the npm CLI even after npm verification.
-The personal-account rule described above is the desired configuration, not a
-claim that the blocker is fixed. An owner must reconcile the ruleset, then rerun
-the existing tag workflow; do not republish under a different tag to repair a pointer.
+For v0.9.0 the npm publication succeeded while ruleset `25045270` still carried an
+`update` restriction on `release` with no bypass, so the plugin-pointer step failed and
+the plugin channel sat at 0.8.1 behind npm 0.9.0. The owner removed the `update` rule
+on 2026-10-15 (keeping deletion, non-fast-forward and required signatures — the
+personal-account rule described above), the failed job of the same tag workflow run was
+re-run, and `release` now equals the `v0.9.0` tag. If the pointer ever lags again: fix
+the ruleset, then re-run the existing tag workflow; never republish under a different
+tag to repair a pointer.
 
 The planned organization move will require reviewing repository owner references,
 trusted-publisher settings and branch protections together. Current `braydenyancy`
