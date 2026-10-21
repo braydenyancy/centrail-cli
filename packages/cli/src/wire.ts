@@ -232,7 +232,8 @@ export type WireFate = {
   // diff against its first parent (absent for a merge or root commit), and
   // of the cumulative diff from its merge base with the default branch up
   // to it — what a squash of the branch up to this commit carries (absent
-  // on the default branch). Content hashes: they reveal no code.
+  // on the default branch). Content hashes: no diff text, but they match a
+  // known patch, so they identify work rather than anonymize it.
   patchId?: string;
   branchPatchId?: string;
 };

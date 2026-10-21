@@ -1,5 +1,7 @@
 # Account-local CLI reconciliation — 2026-10-08
 
+> Historical record; current behavior and commands: [CLI guide](../README.md), [integrations](integrations.md), [wire contract](../CONTRACT.md), [verification](verification.md).
+
 Local candidate: `dvoid/centrail-cli/account-local-compat-current`, based on the
 complete hook candidate `f712d2b`. The prior account-local branch at `2449a55`
 is preserved. The separate hook PR worktree is unchanged. This is uncommitted

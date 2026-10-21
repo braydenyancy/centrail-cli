@@ -221,7 +221,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
         source: { surface: scanner.surface, kind: "local_logs" },
         events: batch.map((e) => toWireEvent(e, caps, config, installId, scanner.surface)),
       };
-      await writeLastSync(body); // `centrail inspect --last`: exactly what left
+      await writeLastSync(body); // `centrail inspect --last`: last attempted ingest body
       const res = await fetch(`${auth.baseUrl}/api/cli/ingest`, {
         method: "POST",
         headers: {
@@ -278,7 +278,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       console.log(
         anyWatermark
           ? "No new events since the last sync."
-          : "No agent usage found (Claude Code, Copilot CLI, Codex).",
+          : "No agent usage found (Claude Code, Codex, Copilot CLI, Gemini CLI, Pi).",
       );
     }
     if (notice) progress(updateNoticeLine(notice));

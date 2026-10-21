@@ -1,7 +1,9 @@
 # Tokscale review implementation — October 2026
 
+> Historical record; current behavior and commands: [CLI guide](../README.md), [integrations](integrations.md), [wire contract](../CONTRACT.md), [verification](verification.md).
+
 Local implementation; no push, release, deployment or historical cleanup. The
-[initial review](../../centrail/docs/decisions/2026-10-tokscale-review.md) identified
+[initial review](https://github.com/braydenyancy/centrail/blob/main/docs/decisions/2026-10-tokscale-review.md) identified
 collection failures and useful source-format coverage. This implements the bounded
 collection and comparison recommendations, retaining Centrail's consent, account
 isolation and explicit uncertainty.

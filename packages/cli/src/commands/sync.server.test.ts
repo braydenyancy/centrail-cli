@@ -20,7 +20,7 @@ vi.mock("@centrail/parsers", async (importOriginal) => ({
 }));
 vi.mock("../ship-status.js", () => ({ formatShipStatusLine: vi.fn(() => ""), runFatePass: vi.fn(async () => null) }));
 
-import { readAuth, readState } from "../config.js";
+import { readAuth, readState, readLastSync } from "../config.js";
 import { CLI_VERSION } from "../version.js";
 import { runStopHook } from "./hook.js";
 import { runStatus } from "./status.js";
@@ -208,4 +208,14 @@ describe("a version the server no longer accepts", () => {
 
     expect((await readState()).outdated).toBeUndefined();
   });
+});
+
+// The inspection file is an attempted batch, not an upload receipt.
+it("retains the attempted ingest body even when the server refuses it", async () => {
+  routes["/api/cli/ingest"] = () => json({ error: "synthetic refusal" }, 503);
+  await expect(runSync({ full: false })).rejects.toThrow("synthetic refusal");
+  const saved = JSON.parse((await readLastSync())!);
+  expect(saved.source.surface).toBe("claude-code");
+  expect(saved.events[0].externalId).toBe("req_001");
+  expect(Object.keys(saved).sort()).toEqual(["events", "source"]);
 });
