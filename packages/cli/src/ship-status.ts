@@ -10,6 +10,8 @@ import {
   listReachableShas,
   listRecentShas,
   patchIds,
+  readCommonDir,
+  readRefsDigest,
   readUserEmail,
   RECENT_SHA_CAP,
   resolveAncestryRef,
@@ -20,6 +22,7 @@ import {
   type RecentCommit,
 } from "./git.js";
 import { parkOutdated, type Config } from "./config.js";
+import { memoKey, type FactsMemo } from "./fate-memo.js";
 import { progressStatus } from "./progress.js";
 import { CliOutdatedError, minimumFrom } from "./update.js";
 import { versionHeaders } from "./version.js";
@@ -204,6 +207,7 @@ export async function runFatePass(
   machineId?: string,
   caps: Capabilities = { fields: new Set(machineId ? ["repo"] : []) },
   cfg: Pick<Config, "hideBranchNames"> = { hideBranchNames: false },
+  memo?: FactsMemo,
 ): Promise<FateTally | null> {
   let anyRepoPassed = false;
   const tally: FateTally = { shipped: 0, inFlight: 0, unshipped: 0 };
@@ -211,7 +215,7 @@ export async function runFatePass(
   for (const [i, { root: one, roots: many, name, key }] of repos.entries()) {
     progressStatus(`Checking ship status — ${i + 1}/${repos.length} repos`); // git per repo: seconds each on a big one
     const roots = many ?? (one ? [one] : []);
-    const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"));
+    const facts = await gatherShipStatusFactsForRoots(roots, caps.fields.has("patch-id"), memo);
     if (!facts) continue; // no resolvable default branch — skip, never guess
     anyRepoPassed = true;
     const root = roots[0];
@@ -256,10 +260,35 @@ type MergedFacts = GatheredFacts & { complete: boolean };
 // Facts for every live checkout of one identity, unioned: a sha alive in
 // any clone is alive; containment, ancestry, cherry and squash facts add up.
 // Incomplete when any clone hit the sha cap.
-export async function gatherShipStatusFactsForRoots(roots: string[], withPatchIds = false): Promise<MergedFacts | null> {
+//
+// With a memo, checkouts are gathered once per repository: worktrees of one
+// repository share its refs, and `--all` includes every worktree's HEAD, so
+// they answer the same facts (the default branch is part of the key: a repo
+// with no origin HEAD, main or master falls back to each checkout's own
+// branch). A repository whose refs have not moved since an earlier sync
+// today answers from the memo without running the gathering git at all.
+export async function gatherShipStatusFactsForRoots(roots: string[], withPatchIds = false, memo?: FactsMemo): Promise<MergedFacts | null> {
   let merged: MergedFacts | null = null;
+  const gathered = new Set<string>();
   for (const root of roots) {
-    const f = await gatherShipStatusFacts(root, new Date(), withPatchIds);
+    const now = new Date();
+    let f: GatheredFacts | null | undefined;
+    if (memo) {
+      const [common, defaultBranch] = await Promise.all([readCommonDir(root), resolveDefaultBranch(root)]);
+      if (!defaultBranch) continue;
+      const key = common ? memoKey(common, defaultBranch, withPatchIds) : undefined;
+      if (key && gathered.has(key)) continue; // another worktree of this repository answered
+      const digest = key && common ? await readRefsDigest(root, common) : null;
+      f = key && digest ? memo.get(key, digest, now) : undefined;
+      if (!f) {
+        f = await gatherShipStatusFacts(root, now, withPatchIds);
+        // Stored only when the refs did not move while git read them.
+        if (f && key && digest && (await readRefsDigest(root, common!)) === digest) memo.set(key, digest, now, f);
+      }
+      if (key) gathered.add(key);
+    } else {
+      f = await gatherShipStatusFacts(root, now, withPatchIds);
+    }
     if (!f) continue;
     const complete = f.shas.length < RECENT_SHA_CAP;
     if (!merged) {

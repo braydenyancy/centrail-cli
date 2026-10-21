@@ -7,7 +7,6 @@ import {
   type ParsedUsageEvent,
 } from "@centrail/parsers";
 import {
-  acquireSyncLock,
   disconnectedMessage,
   ensureInstallId,
   parkAuth,
@@ -24,7 +23,9 @@ import {
   type DisconnectReason,
 } from "../config.js";
 import { checkDevice, refusalReason } from "../device.js";
-import { progress, progressDone, progressStatus } from "../progress.js";
+import { loadFactsMemo } from "../fate-memo.js";
+import { claimSyncLock, heldMessage, reclaimedMessage } from "../sync-lock.js";
+import { progress, progressDetail, progressDone, progressStatus } from "../progress.js";
 import { sinceForSurface, stampWatermark, type SyncState } from "../watermarks.js";
 import { versionHeaders } from "../version.js";
 import { assertSecureBaseUrl } from "../url.js";
@@ -65,16 +66,42 @@ type IngestResponse = {
 };
 
 export async function runSync(opts: { full: boolean }): Promise<void> {
-  const release = await acquireSyncLock();
-  if (!release) {
-    console.log("Another sync is already running on this machine — skipped.");
+  const lock = await claimSyncLock();
+  if (!("release" in lock)) {
+    console.log(heldMessage(lock.held));
     return;
   }
+  if (lock.reclaimed) console.log(reclaimedMessage(lock.reclaimed));
   try {
     await syncLocked(opts);
   } finally {
-    await release();
+    await lock.release();
   }
+}
+
+// One surface's answer from the server, summed over its batches. The
+// ingest response carries totals per request, and every request holds one
+// surface, so these are exact.
+type SurfaceTally = { surface: string; inserted: number; skipped: number };
+
+// The result block: the totals line, then one line per surface that sent
+// anything. Printed on stdout whatever the progress mode: it is the result.
+export function summaryLines(t: {
+  inserted: number;
+  skipped: number;
+  inbox: number;
+  heldByScope: number;
+  surfaces: SurfaceTally[];
+}): string[] {
+  const n = (v: number) => v.toLocaleString("en-US");
+  const head =
+    `Inserted ${n(t.inserted)} · Skipped ${n(t.skipped)}` +
+    // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
+    (t.inbox > 0 ? ` · ${n(t.inbox)} not in a project` : "") +
+    (t.heldByScope > 0 ? ` · ${n(t.heldByScope)} held back by scope` : "");
+  const sent = t.surfaces.filter((s) => s.inserted + s.skipped > 0);
+  const width = Math.max(0, ...sent.map((s) => s.surface.length));
+  return [head, ...sent.map((s) => `  ${s.surface.padEnd(width)}  inserted ${n(s.inserted)} · skipped ${n(s.skipped)}`)];
 }
 
 async function syncLocked(opts: { full: boolean }): Promise<void> {
@@ -152,6 +179,10 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
   // its first account. An incremental pass re-reads a day of overlap, which
   // after a move is that account's too; repeating it every sync is noise.
   let heldOnFullRead = 0;
+  const surfaces: SurfaceTally[] = [];
+  // Where a sync's time went, for `--verbose` (progress only).
+  const took = { reading: 0, placing: 0, sending: 0, commits: 0 };
+  const since0 = () => performance.now();
   let anyEvents = false;
   let anyWatermark = false;
   let heldByScope = 0;
@@ -177,6 +208,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     const scanStartedAt = new Date();
     const reading = `${scanner.surface}: reading logs ${since ? `since ${since.toISOString().slice(0, 10)}` : "(full history)"}`;
     progressStatus(`${reading}…`);
+    let t0 = since0();
     // A recently changed file can contain newly discovered or corrected old
     // usage. Read and place its whole history, then replay every in-scope
     // event through idempotent ingest. Event time is not a delivery cursor;
@@ -187,6 +219,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       onFile: (done, total) =>
         progressStatus(`${reading} — ${done.toLocaleString("en-US")}/${total.toLocaleString("en-US")} files`),
     });
+    took.reading += since0() - t0;
     const candidates = scanned.filter(
       (e) =>
         e.externalId.length > 0 &&
@@ -198,7 +231,9 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     // whose folder is already gone. Then the scope decides what leaves: an
     // excluded repo's events stop here.
     progressStatus(`${scanner.surface}: finding the repo of ${scanned.length.toLocaleString("en-US")} events…`);
+    t0 = since0();
     await placer.place(scanned);
+    took.placing += since0() - t0;
     const events = candidates.filter((e) => eventInScope(e, config));
     heldByScope += candidates.length - events.length;
     if (events.length === 0) {
@@ -214,6 +249,7 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
     let surfaceInserted = 0;
     let surfaceSkipped = 0;
     let surfaceHeld = 0;
+    t0 = since0();
     for (let i = 0; i < events.length; i += BATCH_SIZE) {
       const batch = events.slice(i, i + BATCH_SIZE);
       progressStatus(`${scanner.surface}: sending ${Math.min(i + BATCH_SIZE, events.length).toLocaleString("en-US")} of ${events.length.toLocaleString("en-US")} events`);
@@ -253,10 +289,9 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
       surfaceSkipped += result.skipped - held;
       surfaceHeld += held;
     }
-    progress(
-      `${scanner.surface}: ${surfaceInserted.toLocaleString("en-US")} new, ${surfaceSkipped.toLocaleString("en-US")} already synced` +
-        (surfaceHeld > 0 ? `, ${surfaceHeld.toLocaleString("en-US")} with another account` : ""),
-    );
+    took.sending += since0() - t0;
+    surfaces.push({ surface: scanner.surface, inserted: surfaceInserted, skipped: surfaceSkipped });
+    if (surfaceHeld > 0) progress(`${scanner.surface}: ${surfaceHeld.toLocaleString("en-US")} with another account`);
 
     if (!since) heldOnFullRead += surfaceHeld;
 
@@ -287,16 +322,17 @@ async function syncLocked(opts: { full: boolean }): Promise<void> {
 
   if (attributionEvents.length > 0) {
     progressStatus("Matching events to commits…");
+    const t0 = since0();
     await pushAttributions(auth, attributionEvents, resolver, config, caps, installId);
+    took.commits += since0() - t0;
   }
 
+  const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+  progressDetail(`took: reading logs ${secs(took.reading)} · placing ${secs(took.placing)} · sending ${secs(took.sending)} · commits and ship status ${secs(took.commits)}`);
   progressDone();
-  console.log(
-    `Inserted ${grandInserted} · Skipped ${grandSkipped - grandHeldElsewhere}` +
-      // Projects are optional (2026-10 IA): a neutral count, not a queue to work.
-      (grandInbox > 0 ? ` · ${grandInbox} not in a project` : "") +
-      (heldByScope > 0 ? ` · ${heldByScope} held back by scope` : ""),
-  );
+  for (const line of summaryLines({ inserted: grandInserted, skipped: grandSkipped - grandHeldElsewhere, inbox: grandInbox, heldByScope, surfaces })) {
+    console.log(line);
+  }
   if (heldOnFullRead > 0) console.log(heldElsewhereLine(heldOnFullRead));
   if (notice) progress(updateNoticeLine(notice));
 }
@@ -517,7 +553,8 @@ async function pushAttributions(
     if (!entry) fateRepos.set(id, { roots: [b.root], name: b.name, key: identityAware ? b.key : undefined });
     else if (!entry.roots.includes(b.root)) entry.roots.push(b.root);
   }
-  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined, caps, config);
+  const memo = await loadFactsMemo();
+  const tally = await runFatePass(auth, [...fateRepos.values()], serverMatches ? repos : [], identityAware ? installId : undefined, caps, config, memo).finally(() => memo.save());
   if (tally) {
     console.log(`  ↳ ${formatShipStatusLine(tally)}`);
   }

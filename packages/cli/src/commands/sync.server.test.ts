@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +26,7 @@ import { readAuth, readState, readLastSync } from "../config.js";
 import { CLI_VERSION } from "../version.js";
 import { runStopHook } from "./hook.js";
 import { runStatus } from "./status.js";
-import { heldElsewhereLine, runSync } from "./sync.js";
+import { heldElsewhereLine, runSync, summaryLines } from "./sync.js";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const AUTH = { baseUrl: "https://centrail.org", token: "tok", deviceName: "Centrail CLI" };
@@ -85,6 +87,7 @@ describe("compatibility with a server that still enforces cross-account ownershi
 
     expect(stdout).toEqual([
       "Inserted 1 · Skipped 1",
+      "  claude-code  inserted 1 · skipped 1",
       "1,204 events were already synced from this machine to another account; they stay there.",
     ]);
     expect(heldElsewhereLine(1)).toBe("1 event was already synced from this machine to another account; it stays there.");
@@ -97,7 +100,7 @@ describe("compatibility with a server that still enforces cross-account ownershi
 
     await runSync({ full: false });
 
-    expect(stdout).toEqual(["Inserted 1 · Skipped 1"]);
+    expect(stdout).toEqual(["Inserted 1 · Skipped 1", "  claude-code  inserted 1 · skipped 1"]);
   });
 
   it.each([
@@ -108,7 +111,74 @@ describe("compatibility with a server that still enforces cross-account ownershi
 
     await runSync({ full: false });
 
-    expect(stdout).toEqual(["Inserted 1 · Skipped 2"]);
+    expect(stdout).toEqual(["Inserted 1 · Skipped 2", "  claude-code  inserted 1 · skipped 2"]);
+  });
+});
+
+describe("the sync lock", () => {
+  it("a second sync names the one running and sends nothing", async () => {
+    const { claimSyncLock } = await import("../sync-lock.js");
+    const first = await claimSyncLock(join(mocks.dir, "sync.lock"));
+    if (!("release" in first)) throw new Error("lock should be free");
+    try {
+      await runSync({ full: false });
+    } finally {
+      await first.release();
+    }
+    expect(stdout).toEqual([expect.stringMatching(/^Another sync is already running on this computer: .+ \(centrail \S+, pid \d+, started \d\d:\d\d, \d+ s ago\)\. Try again when it finishes\.$/)]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a lock left by a sync that died is taken over, said once, and the sync runs", async () => {
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"]);
+    await once(child, "exit");
+    await mkdir(join(mocks.dir, "sync.lock"));
+    await writeFile(join(mocks.dir, "sync.lock", "owner.json"), JSON.stringify({ pid: child.pid, nonce: "gone" }));
+
+    await runSync({ full: false });
+
+    expect(stdout).toEqual([
+      expect.stringMatching(new RegExp(`^Took over the sync lock left by an older centrail's sync \\(pid ${child.pid}\\): it is no longer running\\.$`)),
+      "Inserted 1 · Skipped 0",
+      "  claude-code  inserted 1 · skipped 0",
+    ]);
+  });
+});
+
+describe("the summary", () => {
+  it("breaks the totals down by tool, one aligned line per tool that sent anything", () => {
+    expect(
+      summaryLines({
+        inserted: 46,
+        skipped: 10600,
+        inbox: 39,
+        heldByScope: 0,
+        surfaces: [
+          { surface: "claude-code", inserted: 40, skipped: 9800 },
+          { surface: "codex", inserted: 0, skipped: 0 },
+          { surface: "pi", inserted: 6, skipped: 800 },
+        ],
+      }),
+    ).toEqual([
+      "Inserted 46 · Skipped 10,600 · 39 not in a project",
+      "  claude-code  inserted 40 · skipped 9,800",
+      "  pi           inserted 6 · skipped 800",
+    ]);
+  });
+
+  it("prints the same lines on stdout whether progress is quiet or verbose", async () => {
+    const { setProgressMode } = await import("../progress.js");
+    const lines: string[][] = [];
+    for (const mode of ["quiet", "verbose"] as const) {
+      setProgressMode(mode);
+      stdout = [];
+      await runSync({ full: false });
+      lines.push(stdout);
+    }
+    setProgressMode("auto");
+    expect(lines[0]).toEqual(["Inserted 1 · Skipped 0", "  claude-code  inserted 1 · skipped 0"]);
+    expect(lines[1]).toEqual(lines[0]);
+    expect(stderr.join("")).toMatch(/took: reading logs \d+\.\d s · placing \d+\.\d s · sending \d+\.\d s · commits and ship status \d+\.\d s/);
   });
 });
 
@@ -124,7 +194,7 @@ describe("a newer release", () => {
     await runSync({ full: false });
 
     expect(said()).toHaveLength(1);
-    expect(stdout).toEqual(["Inserted 1 · Skipped 0"]); // stdout is the summary, as before
+    expect(stdout).toEqual(["Inserted 1 · Skipped 0", "  claude-code  inserted 1 · skipped 0"]); // stdout is the summary, as before
   });
 
   it("without a terminal says nothing, and is kept for `centrail status`", async () => {
