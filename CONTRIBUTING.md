@@ -4,6 +4,9 @@ Thanks for helping improve the Centrail CLI.
 
 ## Dev setup
 
+Use Node.js 24.22.1 from `.node-version`, or supported Node.js 22.23.4+.
+CI checks these exact security-patched versions on all three operating systems.
+
 ```bash
 npm ci               # installs the locked workspace dependencies
 npm run build        # parsers (tsc) + cli (esbuild bundle)

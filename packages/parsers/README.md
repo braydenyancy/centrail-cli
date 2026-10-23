@@ -4,6 +4,8 @@ Local AI agent-log parsers (Claude Code, GitHub Copilot CLI, Codex, Pi, and Gemi
 Centrail wire payload types shared between the [`centrail` CLI](https://www.npmjs.com/package/centrail)
 and the Centrail server.
 
+Requires Node.js 22.23.4+ (22.x) or 24.22.1+ (24.x).
+
 See the [repo](https://github.com/braydenyancy/centrail-cli#readme) and
 [CONTRACT.md](https://github.com/braydenyancy/centrail-cli/blob/main/CONTRACT.md).
 Apache-2.0.

@@ -1,7 +1,7 @@
 # centrail
 
 Sync local coding-agent usage and git attribution to [centrail.org](https://centrail.org).
-Requires Node.js 20+ on macOS, Linux or Windows.
+Requires Node.js 22.23.4+ (22.x) or 24.22.1+ (24.x) on macOS, Linux or Windows.
 
 ```sh
 npx centrail@latest connect

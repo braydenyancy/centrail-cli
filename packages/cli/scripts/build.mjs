@@ -14,7 +14,7 @@ await build({
   bundle: true,
   platform: "node",
   format: "esm",
-  target: "node20",
+  target: "node22",
   alias: { "@centrail/parsers": "../parsers/src/index.ts" },
   outfile: "dist/index.js",
   logLevel: "warning",

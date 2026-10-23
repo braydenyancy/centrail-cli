@@ -12,7 +12,7 @@ and CLI fixture tests, tests contract policies against synthetic HTTP servers,
 checks coordinated release versions and offline packed consumers,
 and runs the comparison gate's self-tests. A failing stage stops the suite with
 a nonzero exit. It installs no dependencies, calls no production endpoints and
-uses no personal usage logs. It works with the CLI's Node 20+ requirement on
+uses no personal usage logs. It works with the CLI's Node 22.23.4+ (22.x) or 24.22.1+ (24.x) requirement on
 Linux, macOS and native Windows when its prerequisites are installed: Git for
 repository fixtures and Python 3 available as `python3` for the comparison
 gate self-tests. The optional full comparison suite has stricter Linux requirements.
@@ -79,7 +79,7 @@ portable hook subprocess tests in the default suite.
 
 `npm run verify` includes release-policy tests and offline installation of both packed
 consumers. The release-policy fixtures reject branch publication, malformed tags, version
-mismatch and modified artifacts. Hosted checks run on Node 20/24 across all three platforms.
+mismatch and modified artifacts. Hosted checks run on Node 22.23.4 and 24.22.1 across all three platforms.
 
 To rehearse the actual pinned Release Please SDK without creating a PR, tag or release:
 
@@ -98,7 +98,8 @@ Merged PRs without Conventional Commit squash titles may supply Release Please's
 `BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` body block. This records intended release notes
 without rewriting history; the dated rehearsal records PR15 using that correction for the proposed 0.8.0 release.
 
-The verification toolchain uses Vitest 4.1.11 and Vite 6.4.3 to retain Node 20.0 support.
+The verification toolchain retains Vitest 4.1.11 and the existing Vite 6.4.3 override.
+The Node security update does not include the separate Vite major-version upgrade.
 The root Vite override is intentional; bundler upgrades require rebuilding and reviewing the
 committed plugin bundle. See the [toolchain receipt](verification/release-toolchain-2026-10-12.md).
 

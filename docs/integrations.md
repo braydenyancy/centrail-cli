@@ -257,4 +257,4 @@ removal command; complete that step in Claude Code. Restart open agents afterwar
 - OpenCode v2 remains unsupported. Neither Cursor nor OpenCode has a usage
   scanner, even when doctor reports its identity integration as healthy.
 - Plugin auto-update depends on the publisher advancing `release`. See the
-  [open release-channel blocker](releases.md#open-release-channel-blocker).
+  [release process](releases.md).
