@@ -55,3 +55,28 @@ is recorded below; direct diff review and the two complete gates carry the verif
 Final staged detection: 20 files, the same ten documentation section symbols, zero
 reported processes, low risk. New runtime/version metadata and this receipt have no
 indexed execution symbols; this is a scope check, not security assurance.
+
+## Installed hook runtime repair
+
+The installed CLI remains 0.9.0; no unpublished package was installed. An audit of
+`~/.config/centrail/bin/centrail-hook` found that discovery prefers Node on PATH,
+then the recorded `~/.config/centrail/node`, before its stable pinned fallback.
+The recorded path still named `~/.local/share/mise/installs/node/22.23.1/bin/node`
+and executed v22.23.1, even though the stable Node 22 alias now resolves to 22.23.4.
+Thus a GUI-launched hook with no Node on PATH would still use an unpatched runtime.
+
+With owner authorization, only the recorded-node sidecar was atomically replaced
+with `~/.local/share/mise/installs/node/24.22.1/bin/node`, after that executable
+reported v24.22.1. Its existing mode 0664 was preserved. Hook definitions, installed
+CLI/package files, agent settings and running agent processes were not changed.
+
+Discovery-only probes evaluated the existing launcher's prefix before its CLI
+execution block, then printed the selected runtime and ran only `node --version`:
+
+| Environment | Before | After |
+| --- | --- | --- |
+| Terminal PATH | Node 24 alias → v24.22.1 | Node 24 alias → v24.22.1 |
+| Empty GUI PATH | Recorded Node 22.23.1 → v22.23.1 | Recorded Node 24.22.1 → v24.22.1 |
+
+No setup, capture, sync or global package installation ran. This verifies runtime
+discovery in those two environments, not a new end-to-end agent hook execution.
