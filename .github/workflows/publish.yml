@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.22.1'
       - name: Require a reviewed version tag before publication
         run: node scripts/check-release-tag.mjs
       - run: npm ci
@@ -65,7 +65,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           registry-url: 'https://registry.npmjs.org'
       - name: Require trusted publishing support
         run: node -e "const cp=require('node:child_process');const [a,b,c]=cp.execFileSync('npm',['--version'],{encoding:'utf8'}).trim().split('.').map(Number);if(a<11||(a===11&&(b<5||(b===5&&c<1))))throw Error('npm11.5.1+ required')"

@@ -8,7 +8,7 @@ import { consentedCapabilities, toWireEvent, wireBranch, wireRepoRef } from "./w
 
 // Real log files go through the real parsers and the outbound allowlist. Foreign
 // paths are data, not directories to create on the test host. CI also runs this
-// suite natively on Linux, macOS and Windows, under Node 20 and 24.
+// suite natively on Linux, macOS and Windows, under patched Node 22 and 24.
 const paths = [
   ["Linux", "/home/PRIVATE_PERSON/Private Client/秘密"],
   ["macOS", "/Users/PRIVATE_PERSON/Library/Application Support/Private Client"],

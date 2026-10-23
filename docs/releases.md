@@ -27,7 +27,20 @@ flowchart LR
 
 Stable versions use npm `latest`; prereleases use `next` and leave the stable plugin unchanged.
 A prerelease needs a reviewed version PR first. Tags must match coordinated versions on main.
-Publishing uses GitHub-hosted Node 24/npm 11.5.1+; installed CLI support remains Node 20+.
+Publishing uses GitHub-hosted Node 24.22.1/npm 11.5.1+. Installed CLI and parser support
+is Node 22.23.4+ within 22.x or 24.22.1+ within 24.x. The minimum patches come from the
+[October 2026 Node security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases/).
+Node 20 and other untested major lines are no longer supported; upgrade the runtime used
+by terminals and agent hooks before updating Centrail. npm's engines field is advisory
+unless the consumer enables engine-strict; package metadata does not patch an installed runtime.
+
+Removing previously supported Node versions is a breaking compatibility change. Record
+this change with a `fix!` Conventional Commit and a `BREAKING CHANGE` note so the configured
+`bump-minor-pre-major` policy proposes the next 0.x minor (0.10.0 from 0.9.x), not a 0.9.x
+patch. The reviewed release PR must include this runtime migration in its notes and still
+coordinate both packages, plugin metadata and rebuilt bundle. Do not amend an already
+published release or hand-bump versions here. Existing 0.9.1 release preparation must be
+refreshed if this change lands first. Node 26 is not in the tested support range.
 
 Registry visibility is polled for up to 10 minutes per version or dist-tag check
 (`scripts/release-policy.mjs`); publication can succeed before the registry shows it.

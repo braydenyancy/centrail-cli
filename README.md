@@ -28,7 +28,7 @@ npx centrail scope            # ask the scope question again
 npx centrail inspect --last   # the last attempted usage batch (not attribution)
 ```
 
-Node.js 20+ required. Installed integrations record session and repo identity
+Node.js 22.23.4+ (22.x) or 24.22.1+ (24.x) required. Installed integrations record session and repo identity
 locally at the end of each turn and start a background sync at most every 10 minutes. Claude Code
 and Codex also inspect transcript paths to identify the repos a turn touched.
 

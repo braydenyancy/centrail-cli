@@ -31,8 +31,8 @@ on Claude Code's auto-update for this marketplace (off by default for
 third-party ones): `"autoUpdate": true` on `extraKnownMarketplaces.centrail`
 in `~/.claude/settings.json`, or `/plugin` → Marketplaces → centrail →
 Enable auto-update. `#release` is a branch the publish workflow moves to each
-published version (currently blocked by the
-[release ruleset](../../docs/releases.md#open-release-channel-blocker)); once advanced, Claude Code sees the plugin's bumped `version` and loads
+published version through the [release process](../../docs/releases.md); once advanced,
+Claude Code sees the plugin's bumped `version` and loads
 the new one on its next launch.
 
 `npx centrail inspect --last` shows only the last attempted usage-ingest batch,
