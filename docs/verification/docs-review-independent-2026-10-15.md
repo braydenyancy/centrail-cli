@@ -1,5 +1,7 @@
 # Independent documentation review — 2026-10-15
 
+> Historical review of the revisions named below, not a live status report. See [usage](../usage.md), [verification](../verification.md) and [releases](../releases.md) for maintained guidance.
+
 This follow-up rechecked the earlier review's conclusions against implementation,
 including current main and unmerged CLI #32. It supersedes the earlier receipt's
 privacy/disclosure conclusions; its historical test results remain unchanged.

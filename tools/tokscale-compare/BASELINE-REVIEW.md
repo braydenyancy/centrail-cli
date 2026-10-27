@@ -1,5 +1,7 @@
 # Initial comparison baseline review — 2026-10-09
 
+> Historical review of the pinned baseline. See [suite instructions](README.md) for rerunning checks; these findings do not describe later upstream releases.
+
 Accepted as a **regression observation**, not as authority over source usage.
 All fifteen Centrail cases match their independently stated source expectations;
 all supported competitor executions and Centrail executions repeat identically.

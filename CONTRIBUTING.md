@@ -11,7 +11,7 @@ npm test             # vitest across packages
 npm run typecheck
 ```
 
-- `packages/cli` — the `centrail` bin; [command guide](README.md#install--use).
+- `packages/cli` — the `centrail` bin; [command guide](docs/usage.md).
 - `packages/parsers` — local log parsers + shared wire types.
 
 ## Adding a provider parser

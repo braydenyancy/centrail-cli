@@ -72,7 +72,7 @@ module (decision § 3.10); nothing reaches the wire by spreading a parsed
 event, and `packages/cli/src/wire.test.ts` pins the exact keys.
 
 Never uploaded, to any server: absolute paths or working directories,
-hostnames, platform details, provider-account data (email, account or org
+machine hostnames, platform details, provider-account data (email, account or org
 ids), prompts, completions, source code, diffs, commit messages, or any
 encrypted blob a tool stores. `externalId` may be derived from identifiers
 already present in an agent's usage log (a Codex request id embeds its

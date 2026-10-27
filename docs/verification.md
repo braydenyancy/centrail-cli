@@ -12,8 +12,8 @@ and CLI fixture tests, tests contract policies against synthetic HTTP servers,
 checks coordinated release versions and offline packed consumers,
 and runs the comparison gate's self-tests. A failing stage stops the suite with
 a nonzero exit. It installs no dependencies, calls no production endpoints and
-uses no personal usage logs. It works with the CLI's Node 20+ requirement on
-Linux, macOS and native Windows when its prerequisites are installed: Git for
+uses no personal usage logs. Use a Node version accepted by [package.json](../package.json). The default
+suite runs on Linux, macOS and native Windows with these prerequisites: Git for
 repository fixtures and Python 3 available as `python3` for the comparison
 gate self-tests. The optional full comparison suite has stricter Linux requirements.
 
@@ -79,7 +79,7 @@ portable hook subprocess tests in the default suite.
 
 `npm run verify` includes release-policy tests and offline installation of both packed
 consumers. The release-policy fixtures reject branch publication, malformed tags, version
-mismatch and modified artifacts. Hosted checks run on Node 20/24 across all three platforms.
+mismatch and modified artifacts. The [CI workflow](../.github/workflows/ci.yml) declares the Node/platform matrix.
 
 To rehearse the actual pinned Release Please SDK without creating a PR, tag or release:
 
@@ -98,15 +98,14 @@ Merged PRs without Conventional Commit squash titles may supply Release Please's
 `BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` body block. This records intended release notes
 without rewriting history; the dated rehearsal records PR15 using that correction for the proposed 0.8.0 release.
 
-The verification toolchain uses Vitest 4.1.11 and Vite 6.4.3 to retain Node 20.0 support.
-The root Vite override is intentional; bundler upgrades require rebuilding and reviewing the
-committed plugin bundle. See the [toolchain receipt](verification/release-toolchain-2026-10-12.md).
+The locked toolchain and root overrides live in [package.json](../package.json)
+and [package-lock.json](../package-lock.json). Bundler upgrades require rebuilding
+and reviewing the committed plugin bundle. The [dated toolchain receipt](verification/release-toolchain-2026-10-12.md)
+records the rationale for the earlier Node 20-compatible setup.
 
 ## Publishing credential boundary
 
-The estate auth atlas §2 row 7/§14 and D40 describe GitHub OIDC into OpenBao for infrastructure
-provisioning. This publisher talks directly to npm's external OIDC verifier; it does not use
-OpenBao, Zitadel, an estate CI role or human pairing credentials. Existing estate flows are
-unchanged. The old workflow used the long-lived `NPM_TOKEN`; the replacement permits only
-GitHub's scoped workflow token plus npm's short-lived environment-bound credential. Local verification does not inspect npm's owner-side trust settings; publication
-and its retained receipts provide the end-to-end evidence.
+The publisher authenticates directly to npm through GitHub OIDC. It does not use
+human pairing credentials or a long-lived npm token. Local verification cannot
+prove npm's owner-side trust settings; a successful tag publication and registry
+verification provide that evidence. See [releases](releases.md).

@@ -1,5 +1,7 @@
 # Documentation review — 2026-10-15
 
+> Historical review of the revisions named below, not a live status report. See [usage](../usage.md), [verification](../verification.md) and [releases](../releases.md) for maintained guidance.
+
 Privacy/disclosure conclusions superseded by the [independent follow-up](docs-review-independent-2026-10-15.md); historical results below are retained.
 
 Reviewed the 29 pre-existing Markdown files (including hidden GitHub templates),

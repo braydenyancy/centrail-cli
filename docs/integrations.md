@@ -19,7 +19,8 @@ Without a terminal, `setup` and `uninstall` change nothing unless `-y` is given.
 
 ## Per agent
 
-Every agent below reports usage; git commit attribution runs only for Claude Code and Codex
+Claude Code, Codex, Copilot CLI, Gemini CLI and Pi report usage;
+git commit attribution runs only for Claude Code and Codex
 (`packages/cli/src/commands/sync.ts`), whose logs carry per-event working directories and
 timestamps. Copilot CLI, Gemini CLI and Pi usage is uploaded without attribution.
 
@@ -219,7 +220,8 @@ are not inspected; each agent's `/hooks` is authoritative for those.
 
 ## Migration from the old commands
 
-Kept for one release; each prints a one-line pointer on stderr, then runs:
+Deprecated compatibility aliases print a pointer on stderr, then run the commands
+below. Update scripts to the replacement commands rather than relying on aliases:
 
 | Old | Now runs |
 | --- | --- |
@@ -250,11 +252,12 @@ removal command; complete that step in Claude Code. Restart open agents afterwar
 - Copilot hook setup honors `COPILOT_HOME`; its usage scanner still reads only
   `~/.copilot/session-state`. A healthy hook does not prove logs in a custom home
   will upload.
-- “Another sync is running” does not display the holder or age. Wait for the
-  running sync to finish and retry. Locks with a live owner are retained; dead
-  owners are reclaimed automatically, while ownerless locks have a 15-minute
-  grace period. Do not delete a lock while a sync is active.
+- “Another sync is running”: wait for the running sync to finish and retry.
+  This checkout reports the holder and age when available; older releases may
+  show only a generic message. Abandoned locks are reclaimed automatically;
+  do not delete a lock while a sync is active. See `packages/cli/src/sync-lock.ts`
+  for owner detection and heartbeat expiry.
 - OpenCode v2 remains unsupported. Neither Cursor nor OpenCode has a usage
   scanner, even when doctor reports its identity integration as healthy.
 - Plugin auto-update depends on the publisher advancing `release`. See the
-  [open release-channel blocker](releases.md#open-release-channel-blocker).
+  [release-channel recovery](releases.md#release-channel-recovery).

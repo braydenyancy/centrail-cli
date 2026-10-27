@@ -27,7 +27,8 @@ flowchart LR
 
 Stable versions use npm `latest`; prereleases use `next` and leave the stable plugin unchanged.
 A prerelease needs a reviewed version PR first. Tags must match coordinated versions on main.
-Publishing uses GitHub-hosted Node 24/npm 11.5.1+; installed CLI support remains Node 20+.
+Publishing uses GitHub-hosted Node 24/npm 11.5.1+. Installed CLI runtime requirements
+are declared by each published package’s `engines` field.
 
 Registry visibility is polled for up to 10 minutes per version or dist-tag check
 (`scripts/release-policy.mjs`); publication can succeed before the registry shows it.
@@ -64,7 +65,7 @@ repricing. Users upgrade their installation, then normal sync replays eligible l
 
 Owner settings and a real publication require external verification; local checks do not prove them.
 The manifest records the last release and advances through the reviewed release PR.
-Local development identifiers do not reserve npm versions; the receipts record the first proposal.
+Local development identifiers do not reserve npm versions.
 
 Run `npm run verify`; optional SDK commands are in [verification](verification.md).
 Receipts: [actual SDK rehearsal](verification/release-automation-2026-10-12.json),
@@ -82,19 +83,13 @@ reviewed Conventional Commit message (for a squash merge, its final commit body)
 See [Release Please's version override](https://github.com/googleapis/release-please#how-do-i-change-the-version-number).
 Review the resulting release PR and bundle normally; do not hand-edit a published tag.
 
-## Release-channel pointer: how it lagged once, and the rule now
+## Release-channel recovery
 
-For v0.9.0 the npm publication succeeded while ruleset `25045270` still carried an
-`update` restriction on `release` with no bypass, so the plugin-pointer step failed and
-the plugin channel sat at 0.8.1 behind npm 0.9.0. The owner removed the `update` rule
-on 2026-10-15 (keeping deletion, non-fast-forward and required signatures — the
-personal-account rule described above), the failed job of the same tag workflow run was
-re-run, and `release` now equals the `v0.9.0` tag. If the pointer ever lags again: fix
-the ruleset, then re-run the existing tag workflow; never republish under a different
-tag to repair a pointer.
+If npm publication succeeds but the plugin pointer lags, inspect the failed
+workflow step and branch protections, then rerun the existing tag workflow.
+Never republish under a different version to repair the pointer. This occurred
+for v0.9.0: a branch update restriction prevented advancement until the owner
+corrected the protection and reran the same workflow on 2026-10-15.
 
-The planned organization move will require reviewing repository owner references,
-trusted-publisher settings and branch protections together. Current `braydenyancy`
-references remain intentional until that move occurs. The calculations package's
-separate `npm` environment still requires a reviewer; whether to align it with the
-CLI's single release-PR gate is an open owner decision.
+A repository ownership move requires reviewing repository references, npm trusted
+publishers and branch protections together.
