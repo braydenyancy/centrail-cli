@@ -97,3 +97,15 @@ identify configuration overrides, not shell-specific assignment commands.
 The parsers retain limited local context long enough to compute attribution,
 but that context is removed by an explicit network allowlist before upload.
 They never extract your code, prompts, or completions.
+
+## Collection limits
+
+Deleting a local log does not delete usage already received by the server. Full
+rescans replay recoverable source evidence; they do not repair previously stored
+duplicates or apply downward token corrections. Missing or contradictory identity
+evidence can prevent reconciliation. Pi and Gemini conflict checks read their
+configured stores even when only changed identities need uploading.
+
+Billing-provider labels are route evidence, not proof of an API charge. In
+particular, a provider can also serve subscription-authenticated requests.
+Keep missing routes and prices visible rather than treating them as free usage.

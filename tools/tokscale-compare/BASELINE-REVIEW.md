@@ -1,26 +1,9 @@
-# Initial comparison baseline review — 2026-10-09
+# Comparison baseline rationale
 
-> Historical review of the pinned baseline. See [suite instructions](README.md) for rerunning checks; these findings do not describe later upstream releases.
-
-Accepted as a **regression observation**, not as authority over source usage.
-All fifteen Centrail cases match their independently stated source expectations;
-all supported competitor executions and Centrail executions repeat identically.
-Claude-monitor is explicitly not applicable to non-Claude fixtures. That coverage
-matrix is recorded; losing previously executed coverage fails the gate.
-
-The source/pin/observation candidate was independently inspected before adoption.
-After the compiler-provenance hardening, its tool pins and every case observation
-were compared exactly with the reviewed candidate and were unchanged; only the
-adapter protocol fingerprint changed. No source expectation was rewritten to make
-a competitor pass. Future updates must repeat this review rather than copy a
-candidate automatically.
-
-Reviewed candidate SHA256:
-`def12243f1dc4e95bb90381494274ad3dfee71e1e9782d91e35ab3b38ba67248`.
-Review report SHA256:
-`b01a45f71601cc816c82e8c933baca57f8395f4bb55ec8d7de347eaeb9898a67`.
-Retained final executable receipt: [evidence/suite-report.json](evidence/suite-report.json).
-Exact observations and protocol/tool pins: [baseline.json](baseline.json).
+The observations in [baseline.json](baseline.json) are regression expectations
+for the pinned tools and fixtures, not authority over source usage. Review changes
+using the [suite instructions](README.md); do not copy a candidate automatically.
+This table explains the accepted differences so future reviews can challenge them.
 
 | Shared fixture | Review of observed differences |
 |---|---|
@@ -41,6 +24,5 @@ Exact observations and protocol/tool pins: [baseline.json](baseline.json).
 | Pi partial trailing write | All retain the complete prior response and ignore the unfinished tail. |
 
 No comparison establishes invoice accuracy, price correctness, field-level session
-privacy, production prevalence or support for every client version. Full raw
-synthetic records and individual source hashes are available in the report so
-future reviewers can challenge the conclusions rather than inherit opaque totals.
+privacy, production prevalence or support for every client version. The baseline retains tool observations and source hashes; rerunning the suite
+generates a fresh report with raw synthetic records for review.

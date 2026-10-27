@@ -68,8 +68,6 @@ The manifest records the last release and advances through the reviewed release 
 Local development identifiers do not reserve npm versions.
 
 Run `npm run verify`; optional SDK commands are in [verification](verification.md).
-Receipts: [actual SDK rehearsal](verification/release-automation-2026-10-12.json),
-[toolchain verification](verification/release-toolchain-2026-10-12.md).
 Sources: [Release Please](https://github.com/googleapis/release-please-action),
 [GitHub event triggering](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow),
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).

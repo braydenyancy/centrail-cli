@@ -21,7 +21,6 @@ The committed tests cover wire/export allowlists and privacy, compiler-generated
 plugin bundle equality, actual hook subprocess dispatch, generated file trees,
 worktree moves/deletion/copies, capability/consent and watermark behavior. Browser
 opening is mocked at the spawn boundary, so pairing tests open no desktop browser.
-These checks previously listed in dated receipts remain runnable tests.
 
 ## Optional pinned competitor suite
 
@@ -96,12 +95,13 @@ This is a preparation rehearsal, not proof that owner-side settings permit a rea
 
 Merged PRs without Conventional Commit squash titles may supply Release Please's supported
 `BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` body block. This records intended release notes
-without rewriting history; the dated rehearsal records PR15 using that correction for the proposed 0.8.0 release.
+without rewriting history.
 
 The locked toolchain and root overrides live in [package.json](../package.json)
 and [package-lock.json](../package-lock.json). Bundler upgrades require rebuilding
-and reviewing the committed plugin bundle. The [dated toolchain receipt](verification/release-toolchain-2026-10-12.md)
-records the rationale for the earlier Node 20-compatible setup.
+and reviewing the committed plugin bundle. Preserve the supported Node floor
+when changing test tooling; development dependency upgrades must not silently
+raise the installed CLI’s runtime requirement.
 
 ## Publishing credential boundary
 
