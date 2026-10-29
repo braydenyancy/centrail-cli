@@ -5,6 +5,10 @@ for the pinned tools and fixtures, not authority over source usage. Review chang
 using the [suite instructions](README.md); do not copy a candidate automatically.
 This table explains the accepted differences so future reviews can challenge them.
 
+The initial adoption receipts, candidate/report hashes and protocol-only provenance
+change are archived at `4d922ba`; read the original rationale with
+`git show 4d922ba:tools/tokscale-compare/BASELINE-REVIEW.md`.
+
 | Shared fixture | Review of observed differences |
 |---|---|
 | Claude copies | All token totals agree; Tokscale reports a filename-derived session ID. ccusage daily totals and monitor records cannot validate session identity they do not expose. |
