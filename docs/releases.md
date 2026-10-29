@@ -27,11 +27,11 @@ flowchart LR
 
 Stable versions use npm `latest`; prereleases use `next` and leave the stable plugin unchanged.
 A prerelease needs a reviewed version PR first. Tags must match coordinated versions on main.
-Publishing uses GitHub-hosted Node 24/npm 11.5.1+. Installed CLI runtime requirements
-are declared by each published package’s `engines` field.
+The [publish workflow](../.github/workflows/publish.yml) declares the publishing
+toolchain; installed CLI runtime requirements come from the package’s `engines` field.
 
-Registry visibility is polled for up to 10 minutes per version or dist-tag check
-(`scripts/release-policy.mjs`); publication can succeed before the registry shows it.
+Publication can succeed before the registry shows it; polling limits live in
+[`waitForRegistry`](../scripts/release-policy.mjs).
 
 For interruption recovery, rerun the failed tag workflow or dispatch `publish.yml` at that
 existing tag. Matching immutable versions are verified and reused; mismatches fail. Never
@@ -54,8 +54,7 @@ repricing. Users upgrade their installation, then normal sync replays eligible l
   trusted publishing keeps working and nothing else can publish.
 - Environment `npm`: deployment policy **type tag**, pattern `v*` (a branch rule with that
   text does not admit version tags). No required reviewers: merging the reviewed release PR
-  publishes end to end (decided 2026-10-14; a second click by the same person added no review
-  and was easy to miss). Only `v*` tags created from reviewed main can reach npm trust.
+  publishes end to end. Only `v*` tags created from reviewed main can reach npm trust.
 - Configure trusted publishing for **both** `centrail` and `@centrail/parsers`: owner
   `braydenyancy`, repository `centrail-cli`, workflow `publish.yml`, environment `npm`.
   Allow direct `npm publish` and `npm dist-tag`. No long-lived npm token fallback is used.
@@ -74,10 +73,10 @@ Sources: [Release Please](https://github.com/googleapis/release-please-action),
 
 ## Excluded-path releases
 
-`release-please-config.json` excludes `docs`, `scripts`, `.github`, `tools` and
-`packages/parsers/test` from normal release detection. When a release is needed
-for changes only in those paths, include a `Release-As: <version>` footer in the
-reviewed Conventional Commit message (for a squash merge, its final commit body).
+[`exclude-paths` in the release config](../release-please-config.json) controls
+which paths do not trigger releases. When a release is needed only for excluded
+paths, include a `Release-As: <version>` footer in the reviewed Conventional Commit
+message (for a squash merge, its final commit body).
 See [Release Please's version override](https://github.com/googleapis/release-please#how-do-i-change-the-version-number).
 Review the resulting release PR and bundle normally; do not hand-edit a published tag.
 
@@ -85,9 +84,7 @@ Review the resulting release PR and bundle normally; do not hand-edit a publishe
 
 If npm publication succeeds but the plugin pointer lags, inspect the failed
 workflow step and branch protections, then rerun the existing tag workflow.
-Never republish under a different version to repair the pointer. This occurred
-for v0.9.0: a branch update restriction prevented advancement until the owner
-corrected the protection and reran the same workflow on 2026-10-15.
+Never republish under a different version to repair the pointer.
 
 A repository ownership move requires reviewing repository references, npm trusted
 publishers and branch protections together.

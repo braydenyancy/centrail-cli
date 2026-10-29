@@ -30,34 +30,22 @@ Prepare the pinned tools and run all checks with the explicit networked option:
 npm run verify -- --comparisons-setup
 ```
 
-That invokes `tools/tokscale-compare/provision.py` with Python 3.12, fetching the
-pinned checkouts, compiler, executable and hashed wheel into a fresh temporary
-directory, and writing the ignored local tool config. It fails before downloads
-when prerequisites or isolation are unavailable. It does not install system
-packages or relax host namespace policy. Set `CENTRAIL_COMPARISON_PYTHON` to choose
-a system Python 3.12 executable when `python3.12` is unavailable. For the full
-prerequisites see [the comparison instructions](../tools/tokscale-compare/README.md).
+This prepares pinned tools before running the offline suite. It requires Linux
+x64 with bubblewrap namespaces and Python 3.12; see the
+[comparison instructions](../tools/tokscale-compare/README.md#prepare-once-then-run-offline)
+for all prerequisites, pins and isolation behavior. Set `CENTRAIL_COMPARISON_PYTHON`
+to choose the provisioning Python executable. Native macOS/Windows hosts can use
+the [Linux comparison workflow](../.github/workflows/comparisons.yml).
 
-Once tools are prepared, rerun offline with:
+Once prepared, rerun offline with `npm run verify -- --comparisons`. To run only
+comparisons and choose the report directory:
 
 ```sh
-npm run verify -- --comparisons
+npm run test:comparisons -- --out <new-directory>
 ```
 
-The fixture comparison runner requires Linux, Python 3.12 and bubblewrap network
-and mount namespaces; native macOS/Windows hosts can use the dedicated Linux CI
-workflow. Tool provisioning is explicit and occurs before the offline runner.
-The runner fails closed if tools or isolation are unavailable. Its fresh report
-contains fixture/tool coverage, two repeated executions per case, source-oracle
-checks and reviewed baseline differences. Run just the comparisons with
-`npm run test:comparisons -- --out <new-directory>` to choose the report directory.
-
-No Docker image is needed for this existing isolation contract. Containers that
-disable user namespaces cannot run bubblewrap without additional privileges;
-adding a generic container wrapper would not itself reproduce the proven gate.
-The pinned preparation is a runnable script; the dedicated
-[Linux comparison workflow](../.github/workflows/comparisons.yml) supplies an
-ephemeral host with the needed packages and namespace policy.
+The runner fails closed if tools or isolation are unavailable. Each report records
+coverage, repeated executions, source-oracle checks and reviewed baseline differences.
 
 ## Optional installed Codex runtime probe
 
@@ -103,9 +91,4 @@ and reviewing the committed plugin bundle. Preserve the supported Node floor
 when changing test tooling; development dependency upgrades must not silently
 raise the installed CLI’s runtime requirement.
 
-## Publishing credential boundary
-
-The publisher authenticates directly to npm through GitHub OIDC. It does not use
-human pairing credentials or a long-lived npm token. Local verification cannot
-prove npm's owner-side trust settings; a successful tag publication and registry
-verification provide that evidence. See [releases](releases.md).
+Publication and owner-side verification are covered in [releases](releases.md).
