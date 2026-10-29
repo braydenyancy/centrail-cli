@@ -51,13 +51,10 @@ including request/message identity and source-account marker. `UsageEntry` does
 not expose a source session ID; the adapter says so rather than inferring it from
 path or request identity. No raw transcript payloads are requested.
 
-The executed [probe](evidence/claude-monitor-probe.json) ran each of four fixtures
-twice with identical results. Copied completed records and subagent records matched
-source token totals. Streaming and spaced streaming JSON retained the first output
-snapshot (5 tokens), losing the final 140-token count. These are fixture-level
-findings, not evidence of real-user prevalence, upstream full-suite correctness,
-pricing accuracy or native cross-platform compatibility. The shared comparison
-suite retains its own reviewed baseline and source requirements separately.
+The [baseline rationale](BASELINE-REVIEW.md) records the accepted fixture-level
+streaming and duplicate differences. Run the shared suite for fresh execution
+results; these observations do not prove real-user prevalence, pricing accuracy,
+upstream full-suite correctness or native cross-platform compatibility.
 
 [Monitor MIT license](CLAUDE-MONITOR-LICENSE) and
 [pytz distribution copyright](PYTZ-COPYRIGHT) are retained. Neither the monitor

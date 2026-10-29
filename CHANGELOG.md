@@ -45,7 +45,7 @@ versioning.
   correction. It supersedes the stale 0.7.3 account-local candidate without
   replacing released 0.7.3 or the separate 0.7.4 hook PR.
 - This prerelease identifier is local bookkeeping, not a release reservation.
-  See `docs/account-local-reconciliation-2026-10.md` for release dependencies.
+  See [the wire contract](CONTRACT.md) for account-local server compatibility.
 
 ### 0.7.3 — plugin setup says to reload open Claude Code sessions
 - **Open sessions keep recording.** Claude Code loads a plugin when a

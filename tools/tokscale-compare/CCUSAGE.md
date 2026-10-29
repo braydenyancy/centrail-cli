@@ -7,8 +7,8 @@ The executable was already present in the local npm cache; no live user logs wer
 used to establish its results. This is a pinned published binary, not a claim
 that this workstream reproduced its release build.
 
-The current [upstream repository](https://github.com/ccusage/ccusage) has Rust
-adapters and an npm launcher that selects platform binaries. Earlier ccusage
+The pinned release from the [upstream repository](https://github.com/ccusage/ccusage)
+uses Rust adapters and an npm launcher that selects platform binaries. Earlier ccusage
 versions used another implementation; do not identify the executable by the
 project name alone.
 

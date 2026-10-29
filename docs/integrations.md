@@ -1,8 +1,10 @@
 # Agent integrations
 
-How centrail runs after every agent turn, and how it stays working across releases.
-Source: `packages/cli/src/commands/integrations.ts`, `agent-hooks.ts`, `doctor.ts`, `upgrade.ts`,
-`packages/cli/src/launcher.ts`.
+Use `centrail setup` to install owned integrations and `centrail doctor` to check them.
+The [supported-source matrix](../README.md#supported-sources) distinguishes usage collection
+from Git attribution. Generated hook definitions and config-path overrides live in
+[agent-hooks.ts](../packages/cli/src/commands/agent-hooks.ts); Claude Code setup lives in
+[integrations.ts](../packages/cli/src/commands/integrations.ts).
 
 ## Commands
 
@@ -18,10 +20,6 @@ Source: `packages/cli/src/commands/integrations.ts`, `agent-hooks.ts`, `doctor.t
 Without a terminal, `setup` and `uninstall` change nothing unless `-y` is given.
 
 ## Per agent
-
-Every agent below reports usage; git commit attribution runs only for Claude Code and Codex
-(`packages/cli/src/commands/sync.ts`), whose logs carry per-event working directories and
-timestamps. Copilot CLI, Gemini CLI and Pi usage is uploaded without attribution.
 
 **Claude Code** gets its plugin (`centrail@centrail` from `braydenyancy/centrail-cli#release`),
 installed through `claude plugin …`, with `autoUpdate: true` on the marketplace entry so Claude
@@ -43,107 +41,48 @@ the first install it needs one review in `/hooks`; because the command never cha
 releases need none. The plugin's `.codex-plugin` manifest declares no hooks, so importing it into
 Codex never registers a second Stop hook.
 
-**Gemini CLI** gets one `AfterAgent` handler (once per turn, after the final response) in its user
-settings, `~/.gemini/settings.json` (`$GEMINI_CLI_HOME/.gemini/settings.json` when set):
+**Gemini CLI** gets one `AfterAgent` handler in its user settings. User-level hooks
+need no project trust prompt; `/hooks disable centrail` disables it. Settings with
+comments are reported as unreadable and never rewritten. See Gemini's
+[hook reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md).
 
-```json
-{ "hooks": { "AfterAgent": [ { "hooks": [ { "name": "centrail", "type": "command",
-  "command": "\"<config dir>/bin/centrail-hook\" hook stop --centrail-hook --surface gemini-cli",
-  "timeout": 10000 } ] } ] } }
-```
+**Copilot CLI** gets one `agentStop` entry in `centrail.json` under its hooks directory.
+Uninstall removes the file only when no other entries remain. Windows uses the
+`powershell` handler; other platforms use `bash`. See Copilot's
+[hook reference](https://docs.github.com/en/copilot/reference/hooks-reference).
 
-User-level hooks run without the trust prompt Gemini gives project hooks; `/hooks disable centrail`
-turns it off there. `SessionEnd` was not used: it fires once at exit, and Gemini does not wait for
-it. A `settings.json` that is not plain JSON (Gemini tolerates comments) is reported as unreadable
-and never rewritten. Docs: [hooks](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/index.md),
-[reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md).
-
-**Copilot CLI** loads every `*.json` in `~/.copilot/hooks/` (`$COPILOT_HOME/hooks/`); centrail owns
-one, `centrail.json`, with one `agentStop` entry (the main agent finished a turn):
-
-```json
-{ "version": 1, "hooks": { "agentStop": [ { "type": "command",
-  "bash": "\"<config dir>/bin/centrail-hook\" hook stop --centrail-hook --surface copilot-cli",
-  "timeoutSec": 10 } ] } }
-```
-
-On Windows the field is `powershell` and the command starts with PowerShell's call operator `&`.
-Uninstall removes the file when only centrail's entry is in it. `sessionEnd` was not used for the
-same reason as Gemini's. Docs: [use hooks](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks),
-[reference](https://docs.github.com/en/copilot/reference/hooks-reference).
-
-**Pi** has no hook file; per-turn code is an extension. centrail writes one plain-JavaScript module,
-`~/.pi/agent/extensions/centrail.js` (`$PI_CODING_AGENT_DIR/extensions/`), which Pi loads at start
-with no package to publish or install. At each `agent_end` it starts the launcher detached with
-`hook stop --centrail-hook --surface pi` and `{ session_id, cwd }` on stdin, so Pi never waits on
-it. The file is centrail's by its `centrail-pi-extension` header; a `centrail.js` without it is
-never touched. Docs: [extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md),
-[configuration](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/configuration.md).
-Checked against Pi 1.1.0 with a local OpenAI-compatible stub: the extension fired once per run,
-and the sidecar's `pi:<id>` matched the Pi scanner's session id for that run.
+**Pi** gets `extensions/centrail.js`, loaded at startup. Its `agent_end` handler starts
+the launcher detached so Pi never waits for sync. Setup never overwrites a module
+without the `centrail-pi-extension` ownership header. See Pi's
+[extension documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md).
 
 ### Cursor and OpenCode: repo identity only
 
-No log scanner in `packages/parsers` reads Cursor's or OpenCode's usage, so their hook can record
-only the per-turn repo identity (session, folder, repo, branch, head) and start a sync; sync has no
-usage events to join those lines to, and the dashboard shows nothing for them yet. Installing a hook
-that collects nothing visible by default would be a surprise, and leaving them out of the plan would
-hide that they were found. So `setup` shows them, detected, as `skip  usage collection not supported
-yet (no usage source)`, installs nothing for them, and `--agent cursor` / `--agent opencode` installs
-the identity entry on purpose (the sidecar is ready when a scanner lands). Once installed, a plain
-`setup` keeps it current like any other; `uninstall` removes it. `doctor` reports a detected agent
-with no entry as `not-supported` (not a failure; `--fix` adds nothing) and an installed one as `ok`
-with `"usage": false` (printed: "repo identity only; usage not collected yet").
+These opt-in integrations record repository identity but collect no usage. The
+dashboard therefore shows no usage for them. `setup` detects and skips them unless
+`--agent cursor` or `--agent opencode` is explicit; later setup runs maintain an
+installed entry. `doctor` reports uninstalled entries as `not-supported` (not a
+failure) and installed ones with `usage: false`. `doctor --fix` does not opt them in.
 
-**Cursor** reads user hooks from `~/.cursor/hooks.json` (no variable moves it), shared with the
-user's own; centrail adds one entry to `stop`, which fires when the agent loop ends, i.e. once per
-turn:
+**Cursor** gets one `stop` hook in `~/.cursor/hooks.json`. The payload uses
+`conversation_id` and the first `workspace_roots` entry; its transcript is not read.
+On Windows the command uses PowerShell's `&` call operator. Cursor may also run
+Claude Code's user hooks, but its payload lacks the Claude fields required for
+that hook to record a duplicate. See [Cursor hooks](https://cursor.com/docs/agent/hooks).
 
-```json
-{ "version": 1, "hooks": { "stop": [ { "type": "command",
-  "command": "\"<config dir>/bin/centrail-hook\" hook stop --centrail-hook --surface cursor",
-  "timeout": 10 } ] } }
-```
+**OpenCode v1** (`opencode-ai`) gets `plugins/centrail.js` in its global config dir:
+`$XDG_CONFIG_HOME/opencode`, default `~/.config/opencode`, including on Windows.
+`OPENCODE_CONFIG_DIR` adds a directory rather than replacing the global one.
+The plugin handles `session.status` idle and legacy `session.idle`, deduplicates
+the pair, skips child sessions, and uses the SDK session directory (falling back
+to the plugin directory). The launcher is detached except on Windows. Setup never
+overwrites a module without the `centrail-opencode-plugin` ownership header.
+OpenCode v2 (`@opencode/cli`) is unsupported. See [OpenCode plugins](https://opencode.ai/docs/plugins/).
 
-On Windows Cursor runs hook commands through PowerShell, so the command starts with `&`. `stop`'s
-payload has no `cwd`: the session is `conversation_id` (stable across turns) and the folder the first
-of `workspace_roots`. `transcript_path` is Cursor's own format and is not read. Cursor parses stdout
-as JSON; `{}` asks for no follow-up message. `afterAgentResponse` fires per assistant message, and
-`sessionEnd` is tied to the IDE session (window close), so neither marks a turn. Cursor also runs
-Claude Code's user hooks (third-party hooks, on by default); a standalone Claude Code centrail hook
-there sees Cursor's payload, finds no `session_id` or `cwd`, and records nothing. Docs:
-[hooks](https://cursor.com/docs/agent/hooks) (agent-readable: https://cursor.com/docs/hooks.md),
-[third-party hooks](https://cursor.com/docs/reference/third-party-hooks.md); Windows shell:
-[forum](https://forum.cursor.com/t/hooks-in-windows/150377).
-
-**OpenCode** (v1, the `opencode-ai` package) loads every `plugin/*.{js,ts}` and `plugins/*.{js,ts}`
-in its global config dir, `$XDG_CONFIG_HOME/opencode` else `~/.config/opencode` (on Windows too;
-`OPENCODE_CONFIG_DIR` adds a directory rather than replacing it). centrail writes one plain-JS
-module, `plugins/centrail.js`, whose only export is a plugin function (OpenCode calls every export,
-and skips a file with a non-function one). On `session.status` with an idle status (a prompt's run
-ended), or the deprecated `session.idle` published with it, it looks the session up through the SDK
-client, skips child sessions (`parentID`: a subagent going idle is not a turn), and starts the
-launcher with `{ session_id, cwd: session.directory }` on stdin (the plugin's own `directory` when
-the lookup fails), detached except on Windows, where OpenCode starts no detached child itself. Owned
-by its first-line `centrail-opencode-plugin` header, like Pi's extension. OpenCode v2 (`@opencode/cli`)
-loads only `Plugin.define` modules and no longer publishes `session.idle`; it is not covered. Docs:
-[plugins](https://opencode.ai/docs/plugins/); source checked at `anomalyco/opencode` v1.19.0
-(`packages/opencode/src/config/plugin.ts`, `src/plugin/index.ts`, `src/session/status.ts`) and v2.0.29.
-Checked against opencode-ai 1.19.0 with a local OpenAI-compatible stub: per prompt `session.status`
-idle then `session.idle` 1 ms later, one launcher run (`--continue` adds one to the same `ses_…`
-session), `cwd` the folder `opencode run` started in, and the detached launcher outlived the process.
-Not exercised live: a subagent's child session.
-
-Usage sources for later, not built: Cursor keeps none documented locally; OpenCode v1 keeps sessions
-and messages (with `tokens` and `cost`) in SQLite at `$XDG_DATA_HOME/opencode/opencode.db`, session
-ids `ses_…`, which the identity lines already use as given.
-
-Detection: an agent counts as installed when its command is on PATH (`claude`, `codex`, `gemini`,
-`copilot`, `pi`, `cursor`, `opencode`) or its config dir exists (`CLAUDE_CONFIG_DIR` else `~/.claude`;
-`CODEX_HOME` else `~/.codex`; `GEMINI_CLI_HOME/.gemini` else `~/.gemini`; `COPILOT_HOME` else
-`~/.copilot`; `PI_CODING_AGENT_DIR` else `~/.pi/agent`; `~/.cursor`; `$XDG_CONFIG_HOME/opencode` else
-`~/.config/opencode`). Tests never reach these homes: `src/testing/agent-homes.ts` points the
-variables, and for Cursor and OpenCode the defaults themselves (`src/home-overrides.ts`), at scratch.
+Detection uses each agent's executable on PATH or its config directory; exact
+paths and overrides are defined in [agent-hooks.ts](../packages/cli/src/commands/agent-hooks.ts).
+Tests redirect homes through [agent-homes.ts](../packages/cli/src/testing/agent-homes.ts)
+and [home-overrides.ts](../packages/cli/src/home-overrides.ts).
 
 ## What `hook stop` receives
 
@@ -169,10 +108,9 @@ the paths a turn touched; the others are placed by their folder.
 ## The stable launcher
 
 `<config dir>/bin/centrail-hook` (POSIX `sh`, mode 0755) or `centrail-hook.cmd` on Windows,
-rewritten atomically by each setup and upgrade. It is the one file that knows where centrail
-lives, the pattern version managers use for shims (mise, asdf, Volta): callers keep a fixed path,
-the shim resolves the current install. It finds Node as the plugin's `hook.sh` does (the
-discovery block is shared verbatim and tested), then runs the first of:
+rewritten atomically by each setup and upgrade. Callers keep a fixed path; the
+launcher resolves the current install. It finds Node as the plugin's `hook.sh` does
+(the discovery block is shared verbatim and tested), then runs the first of:
 
 1. the install that ran setup, when that is a stable location: a mise install through its
    `latest`/major alias, or a global npm prefix (an earlier stable install is kept when setup
@@ -181,8 +119,6 @@ discovery block is shared verbatim and tested), then runs the first of:
 3. `npx -y centrail@<major>`.
 
 An npx cache path (`/_npx/`) or the Claude plugin cache is never written into it or into a hook.
-Earlier releases pinned the Node and bundle that ran `install-hooks`; run via npx that pinned
-npx's cache, which npx may clear.
 
 ## Staying current
 
@@ -219,7 +155,8 @@ are not inspected; each agent's `/hooks` is authoritative for those.
 
 ## Migration from the old commands
 
-Kept for one release; each prints a one-line pointer on stderr, then runs:
+Deprecated compatibility aliases print a pointer on stderr, then run the commands
+below. Update scripts to the replacement commands rather than relying on aliases:
 
 | Old | Now runs |
 | --- | --- |
@@ -250,11 +187,12 @@ removal command; complete that step in Claude Code. Restart open agents afterwar
 - Copilot hook setup honors `COPILOT_HOME`; its usage scanner still reads only
   `~/.copilot/session-state`. A healthy hook does not prove logs in a custom home
   will upload.
-- “Another sync is running” does not display the holder or age. Wait for the
-  running sync to finish and retry. Locks with a live owner are retained; dead
-  owners are reclaimed automatically, while ownerless locks have a 15-minute
-  grace period. Do not delete a lock while a sync is active.
+- “Another sync is running”: wait for the running sync to finish and retry.
+  This checkout reports the holder and age when available; older releases may
+  show only a generic message. Abandoned locks are reclaimed automatically;
+  do not delete a lock while a sync is active. See `packages/cli/src/sync-lock.ts`
+  for owner detection and heartbeat expiry.
 - OpenCode v2 remains unsupported. Neither Cursor nor OpenCode has a usage
   scanner, even when doctor reports its identity integration as healthy.
 - Plugin auto-update depends on the publisher advancing `release`. See the
-  [open release-channel blocker](releases.md#open-release-channel-blocker).
+  [release-channel recovery](releases.md#release-channel-recovery).

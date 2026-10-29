@@ -1,7 +1,8 @@
 # centrail
 
 Sync local coding-agent usage and git attribution to [centrail.org](https://centrail.org).
-Requires Node.js 20+ on macOS, Linux or Windows.
+Use a patched, supported Node.js LTS release on macOS, Linux or Windows.
+The package’s `engines` field declares accepted Node versions.
 
 ```sh
 npx centrail@latest connect
@@ -25,9 +26,9 @@ completions, absolute paths, diffs and commit messages. Consented uploads can
 include repo identity, session and branch identifiers, commit SHAs and aggregate
 change counts. See the [privacy boundary](https://github.com/braydenyancy/centrail-cli/blob/main/SECURITY.md).
 
-Use the [CLI guide](https://github.com/braydenyancy/centrail-cli#readme) for scope,
+Use the [CLI guide](https://github.com/braydenyancy/centrail-cli/blob/main/docs/usage.md) for scope,
 installation and upgrades, and [agent integrations](https://github.com/braydenyancy/centrail-cli/blob/main/docs/integrations.md)
-for setup, removal and troubleshooting. Current product plans are on
-[centrail.org/pricing](https://centrail.org/pricing).
+for setup, removal and troubleshooting. Documentation on `main` may include
+unreleased changes; use the matching release tag for your installed version.
 
 Apache-2.0. [Source](https://github.com/braydenyancy/centrail-cli).

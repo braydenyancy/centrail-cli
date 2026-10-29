@@ -114,8 +114,8 @@ synthetic titles/path sentinels for adversarial testing; they are never wire eve
 This is a small explicit corpus, not proof of all real-world versions, pricing,
 native Windows/macOS behavior or complete upstream suites. Aggregate competitors
 cannot validate request identity they do not expose. See `BASELINE-REVIEW.md` for
-case-specific conclusions and the retained `evidence/suite-report.json` receipt.
+case-specific conclusions and `baseline.json` for the gate’s exact observations.
 
-The earlier `run.py` initial probe and `evidence/discrepancies.json` are
-historical receipts; `suite.py` is the supported regression command. Upstream
+`suite.py` is the supported regression command; `run.py` is the earlier
+three-case probe, retained because its protocol hash is part of the baseline. Upstream
 notices are retained alongside each adapter; no native binary is distributed here.
